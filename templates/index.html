@@ -2,22 +2,25 @@
 <html>
 <head>
   <meta charset="utf-8">
-  <title>{{ define "title" }}Camberry{{ end }}</title>
+  <title>{{ define "title" }}eye{{ end }}</title>
   <style>
     #remoteVideo {
       background: #222;
-      height: 720px;
-      width: 1280px;
+      height: 360px;
+      width: 640px;
     }
   </style>
 </head>
 <body>
-  <h1>Camberry</h1>
+  <p>This page demonstrates viewing receive-only webrtc video+audio, from an embedded, device natively in the browser.</p>
   <video id="remoteVideo" autoplay></video>
   <script src="/static/js/adapter-latest.js"></script>
   <script>
     // Create a websocket connection for exchanging SDP data
-    const ws = new WebSocket("ws://localhost:8000/ws");
+    addr = 'ws://' +
+           location.hostname+(location.port ? ':'+location.port: '') +
+           '/ws';
+    const ws = new WebSocket(addr);
 
     ws.addEventListener("message", function (event) {
       console.log("websocket received:", event.data);
@@ -32,7 +35,10 @@
       pc.onicecandidate = function(event) {
         if (event.candidate) {
           console.log("onicecandidate:", event.candidate);
-          ws.send(JSON.stringify(event.candidate));
+          ws.send(JSON.stringify({
+            type: "onIceCandidate",
+            text: event.candidate.candidate
+          }));
         } else {
           console.log("all sent");
         }
@@ -43,7 +49,10 @@
       .then(function(desc) {
         console.log("createOffer success:", desc.sdp);
         pc.setLocalDescription(desc);
-        ws.send(desc.sdp);
+        ws.send(JSON.stringify({
+          type: "setLocalDescription",
+          text: desc.sdp
+        }));
       })
       .catch(function(error) {
         console.log("createOffer failure:", error);
