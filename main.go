@@ -12,6 +12,8 @@ import (
 	"strings"
 
 	"github.com/gorilla/websocket"
+
+	"github.com/maufl/dtls"
 )
 
 // Command-line flags
@@ -80,7 +82,22 @@ func websocketHandler(w http.ResponseWriter, r *http.Request) {
 		var sdp SDP
 		switch msg.Type {
 		case "onIceCandidate":
-			log.Println(msg.Text)
+			fields := strings.Fields(msg.Text)
+
+			raddr, err := net.ResolveUDPAddr(
+				"udp",
+				fmt.Sprintf("%s:%s", fields[4], fields[5]),
+			)
+			if err != nil {
+				log.Fatalf("Unable to resolve remote address: %s\n", err)
+			}
+			conn, err := net.DialUDP("udp", nil, raddr)
+			if err != nil {
+				log.Fatalf("Unable to connect to remote addr: %v\n", err)
+			}
+			dtlsConn := dtls.NewConn(conn, false)
+			defer dtlsConn.Close()
+
 		case "setLocalDescription":
 			sdp.UnmarshalBinary([]byte(msg.Text))
 		default:
