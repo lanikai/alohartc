@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title>Callee</title>
+    <meta charset="utf-8">
+  </head>
+  <body>
+    <h1>Callee</h1>
+
+    <textarea cols="80" rows="24" id="channel"></textarea>
+
+    <script src="js/adapter-latest.js"></script>
+    <script>
+      'use strict';
+
+      document.getElementById('channel').addEventListener('paste', handlePaste)
+  
+      let localStream;
+      let pc;
+
+      window.onload = callee;
+
+      function trace(arg) {
+        var now = (window.performance.now() / 1000).toFixed(3);
+        console.log(now + ': ', arg);
+      }
+
+      // Handle pasted data
+      function handlePaste(e) {
+        var clipboardData, pastedData;
+
+        clipboardData = e.clipboardData || window.clipboardData;
+        pastedData = clipboardData.getData('Text');
+
+        let json = JSON.parse(pastedData)
+        switch (json.type) {
+        case "offer":
+          console.log(json);
+
+          // Use received SDP to set remote description
+          pc.setRemoteDescription(json).then(
+            onSetRemoteSuccess,
+            onSetSessionDescriptionError
+          );
+
+          // Create answer
+          pc.createAnswer().then(
+            onCreateAnswerSuccess,
+            onCreateSessionDescriptionError
+          );
+
+          break;
+
+        case "ice":
+          let data = json.data
+          console.log(data);
+          pc.addIceCandidate(data).then(() => onAddIceCandidateSuccess(pc), err => onAddIceCandidateError(pc, err));
+          break;
+        }
+      }
+
+      function onAddIceCandidateSuccess(pc) {
+        trace(`addIceCandidate success`);
+      }
+
+      function onAddIceCandidateError(pc, error) {
+        trace(`failed to add ICE Candidate: ${error.toString()}`);
+      }
+
+      function onSetLocalSuccess(pc) {
+        trace(`setLocalDescription complete`);
+      }
+
+      function onCreateSessionDescriptionError(error) {
+        trace(`Failed to create session description: ${error.toString()}`);
+      }
+
+      function onCreateAnswerSuccess(desc) {
+        trace(`Answer from pc2:\n${desc.sdp}`);
+        document.getElementById("channel").value += JSON.stringify(desc);
+        trace('setLocalDescription start');
+        pc.setLocalDescription(desc).then(
+          onSetLocalSuccess,
+          onSetSessionDescriptionError
+        );
+      }
+
+      function onSetRemoteSuccess() {
+        trace(`setRemoteDescription complete`);
+      }
+
+      function onSetSessionDescriptionError(error) {
+        trace(`Failed to set session description: ${error.toString()}`);
+      }
+
+      function callee() {
+        pc = new RTCPeerConnection();
+
+        // Start user media
+        navigator.mediaDevices.getUserMedia({ audio: false, video: true })
+          .then(gotUserMedia)
+          .catch(e => alert(`getUserMedia() error: ${e.name}`));
+
+      }
+
+      function gotUserMedia(stream) {
+        localStream = stream;
+
+        localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+      }
+    </script>
+  </body>
+</html>

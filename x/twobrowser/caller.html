@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title>Caller</title>
+    <meta charset="utf-8">
+    <style>
+      video {
+        background: #222;
+        margin: 0 0 20px 0;
+        width: 640px;
+        height: 480px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Caller</h1>
+
+    <div style="float:left;">
+      <video id="remoteVideo" autoplay muted></video>
+    </div>
+    <div style="float:right;">
+      <textarea cols="80" rows="24" id="channel"></textarea>
+    </div>
+
+    <script src="js/adapter-latest.js"></script>
+    <script>
+      'use strict';
+
+      document.getElementById('channel').addEventListener('paste', handlePaste)
+  
+      const remoteVideo = document.getElementById("remoteVideo")
+  
+      let pc;
+
+      const offerOptions = {
+        offerToReceiveAudio: false,
+        offerToReceiveVideo: true
+      };
+
+      window.onload = caller;
+
+      // Handle pasted data
+      function handlePaste(e) {
+        var clipboardData, pastedData;
+
+        clipboardData = e.clipboardData || window.clipboardData;
+        pastedData = clipboardData.getData('Text');
+
+        let json = JSON.parse(pastedData)
+        switch (json.type) {
+        case "answer":
+          console.log(json);
+
+          // Use received SDP to set remote description
+          pc.setRemoteDescription(json).then(
+            onSetRemoteSuccess,
+            onSetSessionDescriptionError
+          );
+
+          break;
+
+        case "ice":
+          console.log("ice");
+          break;
+        }
+      }
+
+      function onSetRemoteSuccess(pc) {
+        trace(`setRemoteDescription complete`);
+      }
+
+      function trace(arg) {
+        var now = (window.performance.now() / 1000).toFixed(3);
+        console.log(now + ': ', arg);
+      }
+
+      function caller() {
+        pc = new RTCPeerConnection();
+        pc.onicecandidate = e => onIceCandidate(pc, e);
+        pc.oniceconnectionstatechange = e => onIceStateChange(pc, e);
+        pc.ontrack = gotRemoteStream;
+        pc.createOffer(offerOptions).then(
+          onCreateOfferSuccess,
+          onCreateSessionDescriptionError
+        );
+      }
+
+      function gotRemoteStream(e) {
+        if (remoteVideo.srcObject !== e.streams[0]) {
+          remoteVideo.srcObject = e.streams[0];
+          trace('received remote stream');
+        }
+      }
+
+      function onCreateOfferSuccess(desc) {
+        trace(`Offer: ${desc.sdp}`);
+        trace('setLocalDescription start');
+        document.getElementById("channel").value += JSON.stringify(desc);
+        pc.setLocalDescription(desc).then(
+          () => onSetLocalSuccess(pc),
+          onSetSessionDescriptionError
+        );
+      }
+
+      function onCreateSessionDescriptionError(error) {
+        trace(`Failed to create session description: ${error.toString()}`);
+      }
+
+      function onSetLocalSuccess(pc) {
+        trace(`setLocalDescription complete`);
+      }
+
+      function onSetSessionDescriptionError(error) {
+        trace(`Failed to set session description: ${error.toString()}`);
+      }
+
+      function onIceCandidate(pc, event) {
+        console.log(event.candidate);
+        trace(`ICE candidate:\n${event.candidate ? event.candidate.candidate : '(null)'}`);
+        if (event.candidate) {
+          let data = { "type": "ice", "data": event.candidate }
+
+          document.getElementById("channel").value += JSON.stringify(data);
+        }
+      }
+
+      function onAddIceCandidateSuccess(pc) {
+        trace(`addIceCandidate success`);
+      }
+
+      function onAddIceCandidateError(pc, error) {
+        trace(`Failed to add ICE Candidate: ${error.toString()}`);
+      }
+
+      function onIceStateChange(pc, event) {
+        if (pc) {
+          trace(`ICE state: ${pc.iceConnectionState}`);
+          console.log('ICE state change event: ', event);
+        }
+      }
+    </script>
+  </body>
+</html>
