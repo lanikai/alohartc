@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>{{ define "title" }}{{ end }}</title>
+  <style>
+    html {
+      padding: 0;
+      margin: 0;
+    }
+    body {
+      padding: 0;
+      margin: 0;
+      overflow-y: hidden;
+    }
+    video {
+      background: #222;
+      width: 100vw;
+      height: 100vh;
+      max-width: 100%;
+      max-height: 100%;
+    }
+  </style>
+</head>
+<body>
+  <video id="remoteVideo" autoplay muted></video>
+
+  <script src="/static/js/adapter-latest.js"></script>
+  <script>
+    // Create a websocket connection for exchanging SDP data
+    addr = 'ws://' +
+           location.hostname+(location.port ? ':'+location.port: '') +
+           '/ws';
+
+    const ws = new WebSocket(addr);
+
+    // Placeholder for now
+    ws.addEventListener("message", function (event) {
+      console.log("websocket received:", event.data);
+    });
+
+    ws.addEventListener("open", function (event) {
+      console.log("websocket opened");
+      // Create WebRTC peer-to-peer connection
+      var pc = new RTCPeerConnection();
+
+      pc.onicecandidate = onIceCandidate;
+
+      // Called on ICE candidate
+      function onIceCandidate(event) {
+        console.log("onIceCandidate:", event.candidate);
+        if (event.candidate) {
+          ws.send(JSON.stringify({
+            type: "iceCandidate",
+            text: event.candidate.candidate
+          }));
+        }
+      }
+
+      // Called upon successful offer creation
+      function onCreateOfferSuccess(desc) {
+        console.log("onCreateOfferSuccess:", desc.sdp);
+        pc.setLocalDescription(desc);
+        ws.send(JSON.stringify({
+          type: "offer",
+          text: desc.sdp
+        }));
+      }
+
+      // Create offer and send to callee
+      pc.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: true })
+        .then(onCreateOfferSuccess)
+        .catch(function(error) {
+          console.log("createOffer failure:", error);
+        });
+    });
+  </script>
+</body>
+</html>
