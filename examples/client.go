@@ -60,6 +60,16 @@ func websocketHandler(w http.ResponseWriter, r *http.Request) {
 		case "offer":
 			log.Println("offer")
 			pc.SetRemoteDescription(msg.Text)
+
+			// Answer
+			sdp, _ := pc.CreateAnswer()
+			if err := ws.WriteMessage(
+				websocket.TextMessage,
+				[]byte(sdp),
+			); err != nil {
+				ws.Close()
+				break
+			}
 		case "iceCandidate":
 			log.Println("ice candidate")
 			pc.AddIceCandidate(msg.Text)
