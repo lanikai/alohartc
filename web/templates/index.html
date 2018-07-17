@@ -27,6 +27,8 @@
 
   <script src="/static/js/adapter-latest.js"></script>
   <script>
+    let pc;
+
     // Create a websocket connection for exchanging SDP data
     addr = 'ws://' +
            location.hostname+(location.port ? ':'+location.port: '') +
@@ -37,12 +39,13 @@
     // Placeholder for now
     ws.addEventListener("message", function (event) {
       console.log("websocket received:", event.data);
+      pc.setRemoteDescription({ "type": "answer", "sdp": event.data });
     });
 
     ws.addEventListener("open", function (event) {
       console.log("websocket opened");
       // Create WebRTC peer-to-peer connection
-      var pc = new RTCPeerConnection();
+      pc = new RTCPeerConnection();
 
       pc.onicecandidate = onIceCandidate;
 
@@ -68,7 +71,7 @@
       }
 
       // Create offer and send to callee
-      pc.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: true })
+      pc.createOffer({ offerToReceiveAudio: false, offerToReceiveVideo: true })
         .then(onCreateOfferSuccess)
         .catch(function(error) {
           console.log("createOffer failure:", error);
