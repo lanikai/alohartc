@@ -27,8 +27,7 @@ const (
 )
 
 // Cipher suites
-var TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA = CipherSuite{ 0xC0, 0x13 }
-var TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256 = CipherSuite{ 0xC0, 0x2F }
+var TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA = CipherSuite{ 0xC0, 0x09 }
 
 type HandshakeType uint
 
@@ -99,8 +98,8 @@ func NewClientHello() *Handshake{
 			Random: NewRandom(),
 			SessionID: nil,
 			CipherSuites: []CipherSuite{
-				// Only cipher suite required for DTLS 1.0
-				TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA,
+				// Only cipher suite required for DTLS 1.2
+				TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA,
 			},
 			CompressionMethods: []CompressionMethod{
 				NullCompressionMethod,
