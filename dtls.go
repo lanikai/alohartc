@@ -2,7 +2,9 @@ package webrtc
 
 import (
 	"crypto/rand"
+	"crypto/x509"
 	"encoding/binary"
+	"errors"
 	"io"
 	"log"
 	"net"
@@ -68,6 +70,7 @@ const (
 // Protection profiles
 var SRTP_AES128_CM_HMAC_SHA1_80 = protectionProfile{0x00, 0x01}
 
+
 ///////////////////////////////////  TYPES  ///////////////////////////////////
 
 // DTLS packet
@@ -96,13 +99,27 @@ type handshake struct {
 	extensions      []extension
 }
 
+// Handshake certificate
+type handshakeCertificate struct {
+	certificates	[]x509.Certificate
+}
+
+// Handshake server key exchange
+type serverKeyExchange struct {
+	curveType	uint8
+	namedCurve	uint16
+	publicKey	[]byte
+	signatureAlgorithm
+	signature	[]byte
+}
+
 // Random type
 type random struct {
 	time  time.Time
 	bytes [28]byte
 }
 
-// Handshake record: ClientHello
+// Handshake client hello
 type cipherSuite [2]uint8
 type compressionMethod uint8
 type clientHello struct {
@@ -138,6 +155,7 @@ type ecPointFormats []ecPointFormat
 
 type supportedGroup uint16
 type supportedGroups []supportedGroup
+
 
 ////////////////////////////////  SERIALIZERS  ////////////////////////////////
 
@@ -307,7 +325,158 @@ func (e *extension) marshal() []byte {
 	return b
 }
 
+
 ///////////////////////////////  DESERIALIZERS  //////////////////////////////
+
+func (hc *handshakeCertificate) unmarshal(b []byte) error {
+	// Verify have at least 3 bytes. First 3 bytes contain length.
+	if len(b) < 3 {
+		return errors.New("Malformed handshake certificate. Too short.")
+	}
+
+	// Read length and verify agrees with number of bytes in slice.
+	totlen := int(binary.BigEndian.Uint32(append([]byte{0}, b[0:3]...)))
+	if 3 + totlen != len(b) {
+		return errors.New("Malformed handshake certificate. Incorrect length.")
+	}
+
+	// Parse certificates
+	offset := 3
+	for offset < len(b) {
+		certlen := int(binary.BigEndian.Uint32(append(
+			[]byte{0},
+			b[offset+0:offset+3]...
+		)))
+		cert, err := x509.ParseCertificate(b[offset+3:offset+3+certlen])
+		if err != nil {
+			return err
+		}
+		hc.certificates = append(hc.certificates, *cert)
+		offset += 3 + certlen
+	}
+
+	return nil
+}
+
+func (ske *serverKeyExchange) unmarshal(b []byte) error {
+	if len(b) < 4 {
+		return errors.New("Malformed handshake server key exchange. Too short.")
+	}
+
+	// Read elliptic curve parameters
+	ske.curveType = b[0]
+	ske.namedCurve = binary.BigEndian.Uint16(b[1:3])
+
+	// Read public key
+	pubkeyLength := int(b[3])
+	ske.publicKey = b[4:4+pubkeyLength]
+
+	// Read signature algorithm
+	ske.signatureAlgorithm = signatureAlgorithm{
+		hash: b[4+pubkeyLength],
+		cipher: b[5+pubkeyLength],
+	}
+
+	// Read signature
+	sigLength := int(binary.BigEndian.Uint16(b[6+pubkeyLength:8+pubkeyLength]))
+	ske.signature = b[8+pubkeyLength:8+pubkeyLength+sigLength]
+
+	return nil
+}
+
+func (h *handshake) unmarshal(b []byte) error {
+	if len(b) < 12 {
+		return errors.New("Malformed handshake. Too short.")
+	}
+
+	length := int(binary.BigEndian.Uint32(b[0:4]) & 0x00ffffff)
+	if 12 + length != len(b) {
+		return errors.New("Malformed handshake. Incorrect length.")
+	}
+
+	h.messageType = HandshakeType(b[0])
+
+	switch h.messageType {
+	case ServerHelloHandshakeType:
+		log.Println("Server Hello")
+	case ServerHelloDoneHandshakeType:
+		log.Println("Server Hello Done")
+	case CertificateHandshakeType:
+		log.Println("Certificate Handshake")
+		hc := handshakeCertificate{}
+		if err := hc.unmarshal(b[12:]); err != nil {
+			return err
+		}
+		h.body = hc
+	case ServerKeyExchangeHandshakeType:
+		log.Println("Server Key Exchange")
+		ske := serverKeyExchange{}
+		if err := ske.unmarshal(b[12:]); err != nil {
+			return err
+		}
+		h.body = ske
+	case CertificateRequestHandshakeType:
+		log.Println("Certificate Request")
+	}
+
+	h.length = uint32(length)
+	h.messageSequence = binary.BigEndian.Uint16(b[4:6])
+	h.fragmentOffset = binary.BigEndian.Uint32(b[5:9]) & 0x00ffffff
+	h.fragmentLength = binary.BigEndian.Uint32(b[8:12]) & 0x00ffffff
+
+	return nil
+}
+
+func (r *record) unmarshal(b []byte) error {
+	if len(b) < 13 {
+		return errors.New("Malformed record. Too short.")
+	}
+
+	if 13 + binary.BigEndian.Uint16(b[11:13]) != uint16(len(b)) {
+		return errors.New("Malformed record. Incorrect length.")
+	}
+
+	r.contentType = ContentType(b[0])
+
+	switch r.contentType {
+	case HandshakeContentType:
+		hs := handshake{}
+		if err := hs.unmarshal(b[13:]); err != nil {
+			return err
+		}
+		r.fragment = hs
+	}
+
+	r.version = binary.BigEndian.Uint16(b[1:3])
+	r.epoch = binary.BigEndian.Uint16(b[3:5])
+	r.sequenceNumber = 0x0000ffffffffffff & binary.BigEndian.Uint64(b[3:11])
+	r.length = uint16(len(b) - 13)
+
+	return nil
+}
+
+func (p *packet) unmarshal(b []byte) error {
+	offset := uint16(0)
+
+	for offset < uint16(len(b)) {
+		r := record{}
+
+		size := 13 + binary.BigEndian.Uint16(b[offset+11:offset+13])
+		if (offset + size) > uint16(len(b)) {
+			return errors.New("Malformed packet. Invalid length.")
+		}
+		if err := r.unmarshal(b[offset:offset + size]); err != nil {
+			return err
+		}
+
+		p.records = append(p.records, r)
+
+		offset += size
+	}
+
+	return nil
+}
+
 
 ///////////////////////////////  CONSTRUCTORS  ///////////////////////////////
 
@@ -355,7 +524,6 @@ func newClientHello() *record {
 					extensionType: SignatureAlgorithms,
 					data: []signatureAlgorithm{
 						signatureAlgorithm{SHA256, ECDSA},
-						signatureAlgorithm{SHA1, RSA},
 					},
 				},
 				extension{
