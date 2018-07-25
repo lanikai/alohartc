@@ -10,6 +10,8 @@ import (
 	"net"
 	"strings"
 	"time"
+
+	"github.com/thinkski/webrtc/dtls"
 )
 
 func StunBindingRequest(candidate string, key string) error {
@@ -82,7 +84,7 @@ func StunBindingRequest(candidate string, key string) error {
 	log.Println("received bytes:", n)
 
 	// Send DTLS client hello
-	DialDTLS(conn)
+	dtls.DialDTLS(conn)
 /*
 	clientHello := []byte{
 	0x16, 0xfe, 0xff, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x68, 0x01, 0x00, 0x00,
