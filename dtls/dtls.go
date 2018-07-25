@@ -1,4 +1,4 @@
-package webrtc
+package dtls
 
 import (
 	"crypto/rand"
@@ -53,7 +53,7 @@ const (
 )
 
 // Cipher suites
-var TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA = cipherSuite{0xC0, 0x09}
+var DTLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA = dtlsCipherSuite{0xC0, 0x09}
 
 // Signature hash algorithms
 const (
@@ -120,14 +120,14 @@ type random struct {
 }
 
 // Handshake client hello
-type cipherSuite [2]uint8
+type dtlsCipherSuite [2]uint8
 type compressionMethod uint8
 type clientHello struct {
 	version uint16
 	random
 	sessionID          []byte
 	cookie             []byte
-	cipherSuites       []cipherSuite
+	cipherSuites       []dtlsCipherSuite
 	compressionMethods []compressionMethod
 }
 
@@ -503,8 +503,8 @@ func newClientHello() *record {
 				version:   0xfefd,
 				random:    newRandom(),
 				sessionID: nil,
-				cipherSuites: []cipherSuite{
-					TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA,
+				cipherSuites: []dtlsCipherSuite{
+					DTLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA,
 				},
 				compressionMethods: []compressionMethod{
 					0,
