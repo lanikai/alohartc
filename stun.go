@@ -5,16 +5,13 @@ import (
 	"crypto/sha1"
 	"encoding/binary"
 	"hash/crc32"
-	"fmt"
 	"log"
 	"net"
 	"strings"
 	"time"
-
-	"github.com/thinkski/webrtc/dtls"
 )
 
-func StunBindingRequest(candidate string, key string) error {
+func (pc *PeerConnection) stunBinding(candidate string, key string) error {
         fields := strings.Fields(candidate)
 
         // Skip non-UDP
@@ -58,36 +55,19 @@ func StunBindingRequest(candidate string, key string) error {
 	crc = crc ^ 0x5354554e
 	binary.BigEndian.PutUint32(b[92:96], crc)
 
-	raddr, err := net.ResolveUDPAddr("udp", fmt.Sprintf("%s:%s", ip, port))
-	if err != nil {
-		return err
-	}
-
-	conn, err := net.DialUDP("udp", nil, raddr)
-	if err != nil {
-		return err
-	}
-	defer conn.Close()
-
 	// Send STUN binding request to caller
-	if n, err := conn.Write(b); err != nil {
+	if n, err := pc.conn.Write(b); err != nil {
 		log.Println(n, err)
 	}
 
 	// Await STUN binding response from caller
 	pkt := make([]byte, 1500)
-	conn.SetReadDeadline(time.Now().Add(3 * time.Second))
-	n, err := conn.Read(pkt)
+	pc.conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	n, err := pc.conn.Read(pkt)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal(n, err)
 	}
-	log.Println("received bytes:", n)
 
-	// Send DTLS client hello
-	if _, err := dtls.DialWithConnection(conn); err != nil {
-		log.Println(err)
-		return nil
-	}
 /*
 	clientHello := []byte{
 	0x16, 0xfe, 0xff, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x68, 0x01, 0x00, 0x00,
@@ -105,8 +85,8 @@ func StunBindingRequest(candidate string, key string) error {
 */
 
 	// Await STUN binding request from caller
-	conn.SetReadDeadline(time.Now().Add(time.Second))
-	n, addr, err := conn.ReadFrom(pkt)
+	pc.conn.SetReadDeadline(time.Now().Add(time.Second))
+	n, addr, err := pc.conn.ReadFrom(pkt)
 	if err != nil {
 		log.Println(err)
 	}
@@ -145,8 +125,6 @@ func StunBindingRequest(candidate string, key string) error {
 	response[3] = originalLength
 
 	copy(response[36:56], mig)
-	log.Println(mig)
-	log.Println(response)
 
 	crc32q = crc32.MakeTable(crc32.IEEE)
 	crc = crc32.Checksum(response[0:56], crc32q)
@@ -154,7 +132,7 @@ func StunBindingRequest(candidate string, key string) error {
 	binary.BigEndian.PutUint32(response[60:64], crc)
 
 	time.Sleep(10 * time.Millisecond)
-	conn.Write(response)
+	pc.conn.Write(response)
 
 	return nil
 }

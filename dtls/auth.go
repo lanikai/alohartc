@@ -78,6 +78,7 @@ func verifyHandshakeSignature(sigType uint8, pubkey crypto.PublicKey, hashFunc c
 		if _, err := asn1.Unmarshal(sig, ecdsaSig); err != nil {
 			return err
 		}
+		// Note: .Sign() here is +/- sign of the integers to ensure ASN.1 parsing valid
 		if ecdsaSig.R.Sign() <= 0 || ecdsaSig.S.Sign() <= 0 {
 			return errors.New("tls: ECDSA signature contained zero or negative values")
 		}

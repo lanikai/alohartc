@@ -146,7 +146,7 @@ func (m *clientHelloMsg) marshal() []byte {
 	w[13] = ^uint8(m.vers)
 
 	copy(w[14:46], m.random)
-	w[36] = uint8(len(m.sessionId))
+	w[46] = uint8(len(m.sessionId))
 	copy(w[47:47+len(m.sessionId)], m.sessionId)
 	x := w[47+len(m.sessionId):]
 	x[0] = uint8(len(m.cookie))
@@ -738,14 +738,14 @@ func (m *serverHelloMsg) unmarshal(data []byte) bool {
 		return false
 	}
 	m.raw = data
-	m.vers = uint16(^data[4])<<8 | uint16(^data[5])
-	m.random = data[6:38]
-	sessionIdLen := int(data[38])
-	if sessionIdLen > 32 || len(data) < 39+sessionIdLen {
+	m.vers = uint16(^data[12])<<8 | uint16(^data[13])
+	m.random = data[14:46]
+	sessionIdLen := int(data[46])
+	if sessionIdLen > 32 || len(data) < 47+sessionIdLen {
 		return false
 	}
-	m.sessionId = data[39 : 39+sessionIdLen]
-	data = data[39+sessionIdLen:]
+	m.sessionId = data[47 : 47+sessionIdLen]
+	data = data[47+sessionIdLen:]
 	if len(data) < 3 {
 		return false
 	}
@@ -899,18 +899,32 @@ func (m *certificateMsg) marshal() (x []byte) {
 	}
 
 	length := 3 + 3*len(m.certificates) + i
-	x = make([]byte, 4+length)
+	x = make([]byte, 12+length)
 	x[0] = typeCertificate
 	x[1] = uint8(length >> 16)
 	x[2] = uint8(length >> 8)
 	x[3] = uint8(length)
 
-	certificateOctets := length - 3
-	x[4] = uint8(certificateOctets >> 16)
-	x[5] = uint8(certificateOctets >> 8)
-	x[6] = uint8(certificateOctets)
+	// Message sequence
+	x[4] = 0
+	x[5] = 0
 
-	y := x[7:]
+	// Fragment offset
+	x[6] = 0
+	x[7] = 0
+	x[8] = 0
+
+	// Fragment length
+	x[9] = uint8(length >> 16)
+	x[10] = uint8(length >> 8)
+	x[11] = uint8(length)
+
+	certificateOctets := length - 3
+	x[12] = uint8(certificateOctets >> 16)
+	x[13] = uint8(certificateOctets >> 8)
+	x[14] = uint8(certificateOctets)
+
+	y := x[15:]
 	for _, slice := range m.certificates {
 		y[0] = uint8(len(slice) >> 16)
 		y[1] = uint8(len(slice) >> 8)
@@ -924,18 +938,18 @@ func (m *certificateMsg) marshal() (x []byte) {
 }
 
 func (m *certificateMsg) unmarshal(data []byte) bool {
-	if len(data) < 7 {
+	if len(data) < 15 {
 		return false
 	}
 
 	m.raw = data
-	certsLen := uint32(data[4])<<16 | uint32(data[5])<<8 | uint32(data[6])
-	if uint32(len(data)) != certsLen+7 {
+	certsLen := uint32(data[12])<<16 | uint32(data[13])<<8 | uint32(data[14])
+	if uint32(len(data)) != certsLen+15 {
 		return false
 	}
 
 	numCerts := 0
-	d := data[7:]
+	d := data[15:]
 	for certsLen > 0 {
 		if len(d) < 4 {
 			return false
@@ -950,7 +964,7 @@ func (m *certificateMsg) unmarshal(data []byte) bool {
 	}
 
 	m.certificates = make([][]byte, numCerts)
-	d = data[7:]
+	d = data[15:]
 	for i := 0; i < numCerts; i++ {
 		certLen := uint32(d[0])<<16 | uint32(d[1])<<8 | uint32(d[2])
 		m.certificates[i] = d[3 : 3+certLen]
@@ -993,10 +1007,10 @@ func (m *serverKeyExchangeMsg) marshal() []byte {
 
 func (m *serverKeyExchangeMsg) unmarshal(data []byte) bool {
 	m.raw = data
-	if len(data) < 4 {
+	if len(data) < 12 {
 		return false
 	}
-	m.key = data[4:]
+	m.key = data[12:]
 	return true
 }
 
@@ -1080,7 +1094,7 @@ func (m *serverHelloDoneMsg) marshal() []byte {
 }
 
 func (m *serverHelloDoneMsg) unmarshal(data []byte) bool {
-	return len(data) == 4
+	return len(data) == 12
 }
 
 type clientKeyExchangeMsg struct {
@@ -1103,12 +1117,30 @@ func (m *clientKeyExchangeMsg) marshal() []byte {
 		return m.raw
 	}
 	length := len(m.ciphertext)
-	x := make([]byte, length+4)
+	x := make([]byte, length+12)
 	x[0] = typeClientKeyExchange
 	x[1] = uint8(length >> 16)
 	x[2] = uint8(length >> 8)
 	x[3] = uint8(length)
-	copy(x[4:], m.ciphertext)
+
+	// Message sequence
+	// TODO (chris) Properly step value
+	x[4] = 0
+	x[5] = 1
+
+	// Fragment offset
+	// TODO (chris) Properly handle fragments
+	x[6] = 0
+	x[7] = 0
+	x[8] = 0
+
+	// Fragment length
+	// TODO (chris) Properly handle fragments
+	x[9] = uint8(length >> 16)
+	x[10] = uint8(length >> 8)
+	x[11] = uint8(length)
+
+	copy(x[12:], m.ciphertext)
 
 	m.raw = x
 	return x
@@ -1147,10 +1179,26 @@ func (m *finishedMsg) marshal() (x []byte) {
 		return m.raw
 	}
 
-	x = make([]byte, 4+len(m.verifyData))
+	x = make([]byte, 12+len(m.verifyData))
 	x[0] = typeFinished
 	x[3] = byte(len(m.verifyData))
-	copy(x[4:], m.verifyData)
+
+	// Message sequence
+	// TODO (chris) Properly step value
+	x[4] = 0
+	x[5] = 1
+
+	// Fragment offset
+	// TODO (chris) Properly handle fragments
+	x[6] = 0
+	x[7] = 0
+	x[8] = 0
+
+	// Fragment length
+	// TODO (chris) Properly handle fragments
+	x[11] = byte(len(m.verifyData))
+
+	copy(x[12:], m.verifyData)
 	m.raw = x
 	return
 }
@@ -1316,17 +1364,17 @@ func (m *certificateRequestMsg) marshal() (x []byte) {
 func (m *certificateRequestMsg) unmarshal(data []byte) bool {
 	m.raw = data
 
-	if len(data) < 5 {
+	if len(data) < 13 {
 		return false
 	}
 
 	length := uint32(data[1])<<16 | uint32(data[2])<<8 | uint32(data[3])
-	if uint32(len(data))-4 != length {
+	if uint32(len(data))-12 != length {
 		return false
 	}
 
-	numCertTypes := int(data[4])
-	data = data[5:]
+	numCertTypes := int(data[12])
+	data = data[13:]
 	if numCertTypes == 0 || len(data) <= numCertTypes {
 		return false
 	}

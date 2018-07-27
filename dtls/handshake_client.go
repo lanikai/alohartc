@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"strconv"
 	"strings"
@@ -189,6 +190,7 @@ func (hs *clientHandshakeState) handshake() error {
 		return err
 	}
 
+	// receive ServerHello
 	msg, err := c.readHandshake()
 	if err != nil {
 		return err
@@ -246,6 +248,7 @@ func (hs *clientHandshakeState) handshake() error {
 		}
 	} else {
 		if err := hs.doFullHandshake(); err != nil {
+			log.Println("doFullHandshake failed")
 			return err
 		}
 		if err := hs.establishKeys(); err != nil {
@@ -300,6 +303,7 @@ func (hs *clientHandshakeState) pickCipherSuite() error {
 func (hs *clientHandshakeState) doFullHandshake() error {
 	c := hs.c
 
+	// read CertificateMessage
 	msg, err := c.readHandshake()
 	if err != nil {
 		return err
@@ -389,6 +393,7 @@ func (hs *clientHandshakeState) doFullHandshake() error {
 			// server MUST have included an extension of type "status_request"
 			// with empty "extension_data" in the extended server hello.
 
+			log.Println("ocsp stapling?")
 			c.sendAlert(alertUnexpectedMessage)
 			return errors.New("tls: received unexpected CertificateStatus message")
 		}
@@ -411,6 +416,7 @@ func (hs *clientHandshakeState) doFullHandshake() error {
 		hs.finishedHash.Write(skx.marshal())
 		err = keyAgreement.processServerKeyExchange(c.config, hs.hello, hs.serverHello, c.peerCertificates[0], skx)
 		if err != nil {
+			log.Println("process server key exchange?")
 			c.sendAlert(alertUnexpectedMessage)
 			return err
 		}
@@ -441,6 +447,7 @@ func (hs *clientHandshakeState) doFullHandshake() error {
 
 	shd, ok := msg.(*serverHelloDoneMsg)
 	if !ok {
+		log.Println("server hello done?")
 		c.sendAlert(alertUnexpectedMessage)
 		return unexpectedMessageError(shd, msg)
 	}
@@ -555,6 +562,7 @@ func (hs *clientHandshakeState) processServerHello() (bool, error) {
 	c := hs.c
 
 	if hs.serverHello.compressionMethod != compressionNone {
+		log.Println("compression method is not none?")
 		c.sendAlert(alertUnexpectedMessage)
 		return false, errors.New("tls: server selected unsupported compression format")
 	}
@@ -638,6 +646,7 @@ func (hs *clientHandshakeState) readFinished(out []byte) error {
 	}
 	serverFinished, ok := msg.(*finishedMsg)
 	if !ok {
+		log.Println("server finished not okay?")
 		c.sendAlert(alertUnexpectedMessage)
 		return unexpectedMessageError(serverFinished, msg)
 	}
@@ -665,6 +674,7 @@ func (hs *clientHandshakeState) readSessionTicket() error {
 	}
 	sessionTicketMsg, ok := msg.(*newSessionTicketMsg)
 	if !ok {
+		log.Println("bad session ticket?")
 		c.sendAlert(alertUnexpectedMessage)
 		return unexpectedMessageError(sessionTicketMsg, msg)
 	}
