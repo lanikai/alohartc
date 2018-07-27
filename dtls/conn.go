@@ -103,6 +103,10 @@ type Conn struct {
 	// in Conn.Write.
 	activeCall int32
 
+	// DTLS sequence number
+	seqNum uint64
+	msgSeq uint16
+
 	tmp [16]byte
 }
 
@@ -555,7 +559,7 @@ type RecordHeaderError struct {
 	RecordHeader []byte
 }
 
-func (e RecordHeaderError) Error() string { return "tls: " + e.Msg }
+func (e RecordHeaderError) Error() string { return "dtls: " + e.Msg }
 
 func (c *Conn) newRecordHeaderError(msg string) (err RecordHeaderError) {
 	err.Msg = msg
@@ -615,9 +619,8 @@ Again:
 		return c.in.setErrorLocked(c.newRecordHeaderError("unsupported SSLv2 handshake received"))
 	}
 
-	vers := ^uint16(b.data[1])<<8 | ^uint16(b.data[2])
+	vers := uint16(^b.data[1])<<8 | uint16(^b.data[2])
 	n := int(b.data[11])<<8 | int(b.data[12])
-	log.Println(b.data[0:20])
 	if c.haveVers && vers != c.vers {
 		c.sendAlert(alertProtocolVersion)
 		msg := fmt.Sprintf("received record with version %x when expecting version %x", vers, c.vers)
@@ -635,7 +638,8 @@ Again:
 		// it's probably not real.
 		if (typ != recordTypeAlert && typ != want) || vers >= 0x1000 {
 			c.sendAlert(alertUnexpectedMessage)
-			return c.in.setErrorLocked(c.newRecordHeaderError("first record does not look like a TLS handshake"))
+			log.Println(vers)
+			return c.in.setErrorLocked(c.newRecordHeaderError("first record does not look like a DTLS handshake"))
 		}
 	}
 	if err := b.readFromUntil(c.conn, recordHeaderLen+n); err != nil {
@@ -964,7 +968,7 @@ func (c *Conn) writeRecord(typ recordType, data []byte) (int, error) {
 // readHandshake reads the next handshake message from
 // the record layer.
 func (c *Conn) readHandshake() (interface{}, error) {
-	for c.hand.Len() < 4 {
+	for c.hand.Len() < 12 {
 		if err := c.in.err; err != nil {
 			return nil, err
 		}
@@ -979,7 +983,7 @@ func (c *Conn) readHandshake() (interface{}, error) {
 		c.sendAlertLocked(alertInternalError)
 		return nil, c.in.setErrorLocked(fmt.Errorf("tls: handshake message of length %d bytes exceeds maximum of %d bytes", n, maxHandshake))
 	}
-	for c.hand.Len() < 4+n {
+	for c.hand.Len() < 12+n {
 		if err := c.in.err; err != nil {
 			return nil, err
 		}
@@ -987,7 +991,7 @@ func (c *Conn) readHandshake() (interface{}, error) {
 			return nil, err
 		}
 	}
-	data = c.hand.Next(4 + n)
+	data = c.hand.Next(12 + n)
 	var m handshakeMessage
 	switch data[0] {
 	case typeHelloRequest:
@@ -1030,6 +1034,7 @@ func (c *Conn) readHandshake() (interface{}, error) {
 	data = append([]byte(nil), data...)
 
 	if !m.unmarshal(data) {
+		log.Println("unmarshaling msg failed?", data[0])
 		return nil, c.in.setErrorLocked(c.sendAlert(alertUnexpectedMessage))
 	}
 	return m, nil
@@ -1106,6 +1111,7 @@ func (c *Conn) handleRenegotiation() error {
 
 	_, ok := msg.(*helloRequestMsg)
 	if !ok {
+		log.Println("hello request msg?")
 		c.sendAlert(alertUnexpectedMessage)
 		return alertUnexpectedMessage
 	}

@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"math/big"
 	"net"
 	"strings"
@@ -691,7 +692,8 @@ func (c *Config) maxVersion() uint16 {
 	return c.MaxVersion
 }
 
-var defaultCurvePreferences = []CurveID{X25519, CurveP256, CurveP384, CurveP521}
+//var defaultCurvePreferences = []CurveID{X25519, CurveP256, CurveP384, CurveP521}
+var defaultCurvePreferences = []CurveID{CurveP256}
 
 func (c *Config) curvePreferences() []CurveID {
 	if c == nil || len(c.CurvePreferences) == 0 {
@@ -763,6 +765,7 @@ func (c *Config) getCertificate(clientHello *ClientHelloInfo) (*Certificate, err
 // from the CommonName and SubjectAlternateName fields of each of the leaf
 // certificates.
 func (c *Config) BuildNameToCertificate() {
+	log.Println("BuildNameToCertificate()")
 	c.NameToCertificate = make(map[string]*Certificate)
 	for i := range c.Certificates {
 		cert := &c.Certificates[i]

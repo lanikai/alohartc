@@ -2,14 +2,17 @@ package webrtc
 
 import (
 	"bufio"
+	"fmt"
 	"log"
 	"net"
 	"strings"
+
+	"github.com/thinkski/webrtc/dtls"
 )
 
 type PeerConnection struct {
 	// Connection to peer. May be over TCP or UDP.
-	conn net.Conn
+	conn *net.UDPConn
 
 	// Local session description
 	localDescription string
@@ -28,16 +31,32 @@ func NewPeerConnection() *PeerConnection {
 
 // Add remote ICE candidate
 func (pc *PeerConnection) AddIceCandidate(candidate string) error {
+        fields := strings.Fields(candidate)
+        if protocol := fields[2]; protocol != "udp" {
+		// Skip non-UDP
+                return nil
+        }
+        ip, port, _ := fields[4], fields[5], fields[11]
+
+	raddr, err := net.ResolveUDPAddr("udp", fmt.Sprintf("%s:%s", ip, port))
+	if err != nil {
+		return err
+	}
+
+	pc.conn, err = net.DialUDP("udp", nil, raddr)
+	if err != nil {
+		return err
+	}
+	defer pc.conn.Close()
+
 	// STUN binding request
-	StunBindingRequest(candidate, pc.password)
+	pc.stunBinding(candidate, pc.password)
 
-	// STUN binding success response
-//	log.Println("send stun binding request")
-
-	// DTLS client hello
-//	log.Println("send stun binding request")
-//	f := strings.Fields(candidate)
-//	DialDTLS(fmt.Sprintf("%s:%s", f[4], f[5]))
+	// Send DTLS client hello
+	if _, err := dtls.DialWithConnection(pc.conn); err != nil {
+		log.Println(err)
+		return nil
+	}
 
 	return nil
 }
