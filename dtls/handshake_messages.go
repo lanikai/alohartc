@@ -6,7 +6,6 @@ package dtls
 
 import (
 	"bytes"
-	"log"
 	"strings"
 )
 
@@ -65,17 +64,16 @@ func (m *clientHelloMsg) marshal() []byte {
 		return m.raw
 	}
 
-	length := 2 + 2 + 3 + 3 + 32 + 1 + len(m.sessionId) + 1 + len(m.cookie) + 2 + len(m.cipherSuites)*2 + 1 + len(m.compressionMethods)
-	log.Println(length)
+	length := 2 + 32 + 1 + len(m.sessionId) + 1 + len(m.cookie) + 2 + len(m.cipherSuites)*2 + 1 + len(m.compressionMethods)
 	numExtensions := 0
 	extensionsLength := 0
 	if m.nextProtoNeg {
 		numExtensions++
 	}
-//	if m.ocspStapling {
-//		extensionsLength += 1 + 2 + 2
-//		numExtensions++
-//	}
+	if m.ocspStapling {
+		extensionsLength += 1 + 2 + 2
+		numExtensions++
+	}
 	if len(m.serverName) > 0 {
 		extensionsLength += 5 + len(m.serverName)
 		numExtensions++
@@ -96,10 +94,10 @@ func (m *clientHelloMsg) marshal() []byte {
 		extensionsLength += 2 + 2*len(m.supportedSignatureAlgorithms)
 		numExtensions++
 	}
-//	if m.secureRenegotiationSupported {
-//		extensionsLength += 1 + len(m.secureRenegotiation)
-//		numExtensions++
-//	}
+	if m.secureRenegotiationSupported {
+		extensionsLength += 1 + len(m.secureRenegotiation)
+		numExtensions++
+	}
 	if len(m.alpnProtocols) > 0 {
 		extensionsLength += 2
 		for _, s := range m.alpnProtocols {
@@ -111,9 +109,9 @@ func (m *clientHelloMsg) marshal() []byte {
 		}
 		numExtensions++
 	}
-//	if m.scts {
-//		numExtensions++
-//	}
+	if m.scts {
+		numExtensions++
+	}
 	if m.srtp {
 		numExtensions++
 		extensionsLength += 5
@@ -123,11 +121,11 @@ func (m *clientHelloMsg) marshal() []byte {
 		length += 2 + extensionsLength
 	}
 
-	w := make([]byte, 4+length)
+	w := make([]byte, 12+length)
 	w[0] = typeClientHello
-	w[1] = uint8((length - 8) >> 16)
-	w[2] = uint8((length - 8) >> 8)
-	w[3] = uint8((length - 8))
+	w[1] = uint8(length >> 16)
+	w[2] = uint8(length >> 8)
+	w[3] = uint8(length)
 
 	// Message seq
 	w[4] = 0
@@ -139,9 +137,9 @@ func (m *clientHelloMsg) marshal() []byte {
 	w[8] = 0
 
 	// Fragment length
-	w[9] = uint8((length - 8) >> 16)
-	w[10] = uint8((length - 8) >> 8)
-	w[11] = uint8((length - 8))
+	w[9] = uint8(length >> 16)
+	w[10] = uint8(length >> 8)
+	w[11] = uint8(length)
 
 	// Version in DTLS is one's complement
 	w[12] = ^uint8(m.vers >> 8)
@@ -210,16 +208,16 @@ func (m *clientHelloMsg) marshal() []byte {
 		copy(z[5:], []byte(m.serverName))
 		z = z[l:]
 	}
-//	if m.ocspStapling {
-//		// RFC 4366, section 3.6
-//		z[0] = byte(extensionStatusRequest >> 8)
-//		z[1] = byte(extensionStatusRequest)
-//		z[2] = 0
-//		z[3] = 5
-//		z[4] = 1 // OCSP type
-//		// Two zero valued uint16s for the two lengths.
-//		z = z[9:]
-//	}
+	if m.ocspStapling {
+		// RFC 4366, section 3.6
+		z[0] = byte(extensionStatusRequest >> 8)
+		z[1] = byte(extensionStatusRequest)
+		z[2] = 0
+		z[3] = 5
+		z[4] = 1 // OCSP type
+		// Two zero valued uint16s for the two lengths.
+		z = z[9:]
+	}
 	if len(m.supportedCurves) > 0 {
 		// https://tools.ietf.org/html/rfc4492#section-5.5.1
 		z[0] = byte(extensionSupportedCurves >> 8)
@@ -282,16 +280,16 @@ func (m *clientHelloMsg) marshal() []byte {
 			z = z[2:]
 		}
 	}
-//	if m.secureRenegotiationSupported {
-//		z[0] = byte(extensionRenegotiationInfo >> 8)
-//		z[1] = byte(extensionRenegotiationInfo & 0xff)
-//		z[2] = 0
-//		z[3] = byte(len(m.secureRenegotiation) + 1)
-//		z[4] = byte(len(m.secureRenegotiation))
-//		z = z[5:]
-//		copy(z, m.secureRenegotiation)
-//		z = z[len(m.secureRenegotiation):]
-//	}
+	if m.secureRenegotiationSupported {
+		z[0] = byte(extensionRenegotiationInfo >> 8)
+		z[1] = byte(extensionRenegotiationInfo & 0xff)
+		z[2] = 0
+		z[3] = byte(len(m.secureRenegotiation) + 1)
+		z[4] = byte(len(m.secureRenegotiation))
+		z = z[5:]
+		copy(z, m.secureRenegotiation)
+		z = z[len(m.secureRenegotiation):]
+	}
 	if len(m.alpnProtocols) > 0 {
 		z[0] = byte(extensionALPN >> 8)
 		z[1] = byte(extensionALPN & 0xff)
@@ -313,13 +311,13 @@ func (m *clientHelloMsg) marshal() []byte {
 		lengths[0] = byte(stringsLength >> 8)
 		lengths[1] = byte(stringsLength)
 	}
-//	if m.scts {
-//		// https://tools.ietf.org/html/rfc6962#section-3.3.1
-//		z[0] = byte(extensionSCT >> 8)
-//		z[1] = byte(extensionSCT)
-//		// zero uint16 for the zero-length extension_data
-//		z = z[4:]
-//	}
+	if m.scts {
+		// https://tools.ietf.org/html/rfc6962#section-3.3.1
+		z[0] = byte(extensionSCT >> 8)
+		z[1] = byte(extensionSCT)
+		// zero uint16 for the zero-length extension_data
+		z = z[4:]
+	}
 	if m.srtp {
 		z[0] = byte(extensionSRTP >> 8)
 		z[1] = byte(extensionSRTP)

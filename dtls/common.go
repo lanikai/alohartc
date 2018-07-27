@@ -21,10 +21,10 @@ import (
 )
 
 const (
-//	VersionSSL30 = 0x0300
-//	VersionTLS10 = 0x0301
-//	VersionTLS11 = 0x0302
-//	VersionTLS12 = 0x0303
+	//	VersionSSL30 = 0x0300
+	//	VersionTLS10 = 0x0301
+	//	VersionTLS11 = 0x0302
+	//	VersionTLS12 = 0x0303
 	VersionDTLS10 = 0x0100
 	VersionDTLS12 = 0x0102
 )
@@ -926,8 +926,6 @@ func initDefaultCipherSuites() {
 	// Without AES-GCM hardware, we put the ChaCha20-Poly1305
 	// cipher suites first.
 	topCipherSuites = []uint16{
-		TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305,
-		TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305,
 		TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
 		TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
 		TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,

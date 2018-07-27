@@ -14,8 +14,6 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"hash"
-
-	"golang.org/x/crypto/chacha20poly1305"
 )
 
 // a keyAgreement implements the client and server side of a TLS key agreement
@@ -78,8 +76,6 @@ type cipherSuite struct {
 var cipherSuites = []*cipherSuite{
 	// Ciphersuite order is chosen so that ECDHE comes before plain RSA and
 	// AEADs are the top preference.
-	{TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305, 32, 0, 12, ecdheRSAKA, suiteECDHE | suiteTLS12, nil, nil, aeadChaCha20Poly1305},
-	{TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305, 32, 0, 12, ecdheECDSAKA, suiteECDHE | suiteECDSA | suiteTLS12, nil, nil, aeadChaCha20Poly1305},
 	{TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256, 16, 0, 4, ecdheRSAKA, suiteECDHE | suiteTLS12, nil, nil, aeadAESGCM},
 	{TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256, 16, 0, 4, ecdheECDSAKA, suiteECDHE | suiteECDSA | suiteTLS12, nil, nil, aeadAESGCM},
 	{TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384, 32, 0, 4, ecdheRSAKA, suiteECDHE | suiteTLS12 | suiteSHA384, nil, nil, aeadAESGCM},
@@ -127,14 +123,6 @@ func cipherAES(key, iv []byte, isRead bool) interface{} {
 
 // macSHA1 returns a macFunction for the given protocol version.
 func macSHA1(version uint16, key []byte) macFunction {
-//	if version == VersionSSL30 {
-//		mac := ssl30MAC{
-//			h:   sha1.New(),
-//			key: make([]byte, len(key)),
-//		}
-//		copy(mac.key, key)
-//		return mac
-//	}
 	return tls10MAC{hmac.New(newConstantTimeHash(sha1.New), key)}
 }
 
@@ -228,56 +216,6 @@ func aeadAESGCM(key, fixedNonce []byte) cipher.AEAD {
 	ret := &fixedNonceAEAD{aead: aead}
 	copy(ret.nonce[:], fixedNonce)
 	return ret
-}
-
-func aeadChaCha20Poly1305(key, fixedNonce []byte) cipher.AEAD {
-	aead, err := chacha20poly1305.New(key)
-	if err != nil {
-		panic(err)
-	}
-
-	ret := &xorNonceAEAD{aead: aead}
-	copy(ret.nonceMask[:], fixedNonce)
-	return ret
-}
-
-// ssl30MAC implements the SSLv3 MAC function, as defined in
-// www.mozilla.org/projects/security/pki/nss/ssl/draft302.txt section 5.2.3.1
-type ssl30MAC struct {
-	h   hash.Hash
-	key []byte
-}
-
-func (s ssl30MAC) Size() int {
-	return s.h.Size()
-}
-
-var ssl30Pad1 = [48]byte{0x36, 0x36, 0x36, 0x36, 0x36, 0x36, 0x36, 0x36, 0x36, 0x36, 0x36, 0x36, 0x36, 0x36, 0x36, 0x36, 0x36, 0x36, 0x36, 0x36, 0x36, 0x36, 0x36, 0x36, 0x36, 0x36, 0x36, 0x36, 0x36, 0x36, 0x36, 0x36, 0x36, 0x36, 0x36, 0x36, 0x36, 0x36, 0x36, 0x36, 0x36, 0x36, 0x36, 0x36, 0x36, 0x36, 0x36, 0x36}
-
-var ssl30Pad2 = [48]byte{0x5c, 0x5c, 0x5c, 0x5c, 0x5c, 0x5c, 0x5c, 0x5c, 0x5c, 0x5c, 0x5c, 0x5c, 0x5c, 0x5c, 0x5c, 0x5c, 0x5c, 0x5c, 0x5c, 0x5c, 0x5c, 0x5c, 0x5c, 0x5c, 0x5c, 0x5c, 0x5c, 0x5c, 0x5c, 0x5c, 0x5c, 0x5c, 0x5c, 0x5c, 0x5c, 0x5c, 0x5c, 0x5c, 0x5c, 0x5c, 0x5c, 0x5c, 0x5c, 0x5c, 0x5c, 0x5c, 0x5c, 0x5c}
-
-// MAC does not offer constant timing guarantees for SSL v3.0, since it's deemed
-// useless considering the similar, protocol-level POODLE vulnerability.
-func (s ssl30MAC) MAC(digestBuf, seq, header, data, extra []byte) []byte {
-	padLength := 48
-	if s.h.Size() == 20 {
-		padLength = 40
-	}
-
-	s.h.Reset()
-	s.h.Write(s.key)
-	s.h.Write(ssl30Pad1[:padLength])
-	s.h.Write(seq)
-	s.h.Write(header[:1])
-	s.h.Write(header[3:5])
-	s.h.Write(data)
-	digestBuf = s.h.Sum(digestBuf[:0])
-
-	s.h.Reset()
-	s.h.Write(s.key)
-	s.h.Write(ssl30Pad2[:padLength])
-	s.h.Write(digestBuf)
-	return s.h.Sum(digestBuf[:0])
 }
 
 type constantTimeHash interface {
@@ -386,8 +324,6 @@ const (
 	TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256 uint16 = 0xc02b
 	TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384   uint16 = 0xc030
 	TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384 uint16 = 0xc02c
-	TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305    uint16 = 0xcca8
-	TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305  uint16 = 0xcca9
 
 	// TLS_FALLBACK_SCSV isn't a standard cipher suite but an indicator
 	// that the client is doing version fallback. See
