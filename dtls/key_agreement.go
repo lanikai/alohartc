@@ -35,7 +35,8 @@ func (ka rsaKeyAgreement) processClientKeyExchange(config *Config, cert *Certifi
 	}
 
 	ciphertext := ckx.ciphertext
-	if version != VersionSSL30 {
+//	if version != VersionSSL30 {
+	{
 		ciphertextLen := int(ckx.ciphertext[0])<<8 | int(ckx.ciphertext[1])
 		if ciphertextLen != len(ckx.ciphertext)-2 {
 			return nil, errClientKeyExchange
@@ -111,7 +112,7 @@ func md5SHA1Hash(slices [][]byte) []byte {
 // using the given hash function (for >= TLS 1.2) or using a default based on
 // the sigType (for earlier TLS versions).
 func hashForServerKeyExchange(sigType uint8, hashFunc crypto.Hash, version uint16, slices ...[]byte) ([]byte, error) {
-	if version >= VersionTLS12 {
+	if version >= VersionDTLS12 {
 		h := hashFunc.New()
 		for _, slice := range slices {
 			h.Write(slice)
@@ -237,13 +238,13 @@ NextCandidate:
 
 	skx := new(serverKeyExchangeMsg)
 	sigAndHashLen := 0
-	if ka.version >= VersionTLS12 {
+	if ka.version >= VersionDTLS12 {
 		sigAndHashLen = 2
 	}
 	skx.key = make([]byte, len(serverECDHParams)+sigAndHashLen+2+len(sig))
 	copy(skx.key, serverECDHParams)
 	k := skx.key[len(serverECDHParams):]
-	if ka.version >= VersionTLS12 {
+	if ka.version >= VersionDTLS12 {
 		k[0] = byte(signatureAlgorithm >> 8)
 		k[1] = byte(signatureAlgorithm)
 		k = k[2:]
@@ -326,7 +327,7 @@ func (ka *ecdheKeyAgreement) processServerKeyExchange(config *Config, clientHell
 	}
 
 	var signatureAlgorithm SignatureScheme
-	if ka.version >= VersionTLS12 {
+	if ka.version >= VersionDTLS12 {
 		// handle SignatureAndHashAlgorithm
 		signatureAlgorithm = SignatureScheme(sig[0])<<8 | SignatureScheme(sig[1])
 		sig = sig[2:]

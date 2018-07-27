@@ -52,8 +52,6 @@ func StunBindingRequest(candidate string, key string) error {
 	b[3] = originalLength
 
 	copy(b[68:88], mig)
-	log.Println(mig)
-	log.Println(b)
 
 	crc32q := crc32.MakeTable(crc32.IEEE)
 	crc := crc32.Checksum(b[0:88], crc32q)
@@ -72,19 +70,24 @@ func StunBindingRequest(candidate string, key string) error {
 	defer conn.Close()
 
 	// Send STUN binding request to caller
-	conn.Write(b)
+	if n, err := conn.Write(b); err != nil {
+		log.Println(n, err)
+	}
 
 	// Await STUN binding response from caller
 	pkt := make([]byte, 1500)
-	conn.SetReadDeadline(time.Now().Add(time.Second))
+	conn.SetReadDeadline(time.Now().Add(3 * time.Second))
 	n, err := conn.Read(pkt)
 	if err != nil {
-		log.Println(err)
+		log.Fatal(err)
 	}
 	log.Println("received bytes:", n)
 
 	// Send DTLS client hello
-	dtls.DialDTLS(conn)
+	if _, err := dtls.DialWithConnection(conn); err != nil {
+		log.Println(err)
+		return nil
+	}
 /*
 	clientHello := []byte{
 	0x16, 0xfe, 0xff, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x68, 0x01, 0x00, 0x00,

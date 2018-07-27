@@ -21,21 +21,23 @@ import (
 )
 
 const (
-	VersionSSL30 = 0x0300
-	VersionTLS10 = 0x0301
-	VersionTLS11 = 0x0302
-	VersionTLS12 = 0x0303
+//	VersionSSL30 = 0x0300
+//	VersionTLS10 = 0x0301
+//	VersionTLS11 = 0x0302
+//	VersionTLS12 = 0x0303
+	VersionDTLS10 = 0x0100
+	VersionDTLS12 = 0x0102
 )
 
 const (
 	maxPlaintext      = 16384        // maximum plaintext payload length
 	maxCiphertext     = 16384 + 2048 // maximum ciphertext payload length
-	recordHeaderLen   = 5            // record header length
+	recordHeaderLen   = 13           // record header length
 	maxHandshake      = 65536        // maximum handshake we support (protocol max is 16 MB)
 	maxWarnAlertCount = 5            // maximum number of consecutive warning alerts
 
-	minVersion = VersionTLS10
-	maxVersion = VersionTLS12
+	minVersion = VersionDTLS10
+	maxVersion = VersionDTLS12
 )
 
 // TLS record types.
@@ -77,6 +79,7 @@ const (
 	extensionSupportedCurves     uint16 = 10
 	extensionSupportedPoints     uint16 = 11
 	extensionSignatureAlgorithms uint16 = 13
+	extensionSRTP                uint16 = 14
 	extensionALPN                uint16 = 16
 	extensionSCT                 uint16 = 18 // https://tools.ietf.org/html/rfc6962#section-6
 	extensionSessionTicket       uint16 = 35

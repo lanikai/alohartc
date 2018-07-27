@@ -127,14 +127,14 @@ func cipherAES(key, iv []byte, isRead bool) interface{} {
 
 // macSHA1 returns a macFunction for the given protocol version.
 func macSHA1(version uint16, key []byte) macFunction {
-	if version == VersionSSL30 {
-		mac := ssl30MAC{
-			h:   sha1.New(),
-			key: make([]byte, len(key)),
-		}
-		copy(mac.key, key)
-		return mac
-	}
+//	if version == VersionSSL30 {
+//		mac := ssl30MAC{
+//			h:   sha1.New(),
+//			key: make([]byte, len(key)),
+//		}
+//		copy(mac.key, key)
+//		return mac
+//	}
 	return tls10MAC{hmac.New(newConstantTimeHash(sha1.New), key)}
 }
 
