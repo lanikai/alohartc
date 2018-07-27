@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -314,7 +315,7 @@ func (hc *halfConn) decrypt(b *block) (ok bool, prefixLen int, alertValue alert)
 			b.resize(recordHeaderLen + explicitIVLen + len(payload))
 		case cbcMode:
 			blockSize := c.BlockSize()
-//			if hc.version >= VersionTLS11 {
+			//			if hc.version >= VersionTLS11 {
 			if hc.version >= VersionDTLS12 {
 				explicitIVLen = blockSize
 			}
@@ -328,18 +329,18 @@ func (hc *halfConn) decrypt(b *block) (ok bool, prefixLen int, alertValue alert)
 				payload = payload[explicitIVLen:]
 			}
 			c.CryptBlocks(payload, payload)
-//			if hc.version == VersionSSL30 {
-//				paddingLen, paddingGood = extractPaddingSSL30(payload)
-//			} else {
-				paddingLen, paddingGood = extractPadding(payload)
+			//			if hc.version == VersionSSL30 {
+			//				paddingLen, paddingGood = extractPaddingSSL30(payload)
+			//			} else {
+			paddingLen, paddingGood = extractPadding(payload)
 
-				// To protect against CBC padding oracles like Lucky13, the data
-				// past paddingLen (which is secret) is passed to the MAC
-				// function as extra data, to be fed into the HMAC after
-				// computing the digest. This makes the MAC constant time as
-				// long as the digest computation is constant time and does not
-				// affect the subsequent write.
-//			}
+			// To protect against CBC padding oracles like Lucky13, the data
+			// past paddingLen (which is secret) is passed to the MAC
+			// function as extra data, to be fed into the HMAC after
+			// computing the digest. This makes the MAC constant time as
+			// long as the digest computation is constant time and does not
+			// affect the subsequent write.
+			//			}
 		default:
 			panic("unknown cipher type")
 		}
@@ -614,8 +615,9 @@ Again:
 		return c.in.setErrorLocked(c.newRecordHeaderError("unsupported SSLv2 handshake received"))
 	}
 
-	vers := uint16(b.data[1])<<8 | uint16(b.data[2])
-	n := int(b.data[3])<<8 | int(b.data[4])
+	vers := ^uint16(b.data[1])<<8 | ^uint16(b.data[2])
+	n := int(b.data[11])<<8 | int(b.data[12])
+	log.Println(b.data[0:20])
 	if c.haveVers && vers != c.vers {
 		c.sendAlert(alertProtocolVersion)
 		msg := fmt.Sprintf("received record with version %x when expecting version %x", vers, c.vers)
@@ -874,7 +876,6 @@ func (c *Conn) writeRecordLocked(typ recordType, data []byte) (int, error) {
 		explicitIVIsSeq := false
 
 		var cbc cbcMode
-//		if c.out.version >= VersionTLS11 {
 		if c.out.version >= VersionDTLS12 {
 			var ok bool
 			if cbc, ok = c.out.cipher.(cbcMode); ok {
