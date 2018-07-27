@@ -79,6 +79,8 @@ func websocketHandler(w http.ResponseWriter, r *http.Request) {
 
 // main function
 func main() {
+	log.SetFlags(log.LstdFlags | log.Lshortfile)
+
 	http.HandleFunc("/", indexHandler)
 	http.HandleFunc("/ws", websocketHandler)
 

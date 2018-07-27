@@ -6,6 +6,7 @@ package dtls
 
 import (
 	"bytes"
+	"log"
 	"strings"
 )
 
@@ -14,6 +15,7 @@ type clientHelloMsg struct {
 	vers                         uint16
 	random                       []byte
 	sessionId                    []byte
+	cookie                       []byte
 	cipherSuites                 []uint16
 	compressionMethods           []uint8
 	nextProtoNeg                 bool
@@ -28,6 +30,7 @@ type clientHelloMsg struct {
 	secureRenegotiation          []byte
 	secureRenegotiationSupported bool
 	alpnProtocols                []string
+	srtp                         bool
 }
 
 func (m *clientHelloMsg) equal(i interface{}) bool {
@@ -40,6 +43,7 @@ func (m *clientHelloMsg) equal(i interface{}) bool {
 		m.vers == m1.vers &&
 		bytes.Equal(m.random, m1.random) &&
 		bytes.Equal(m.sessionId, m1.sessionId) &&
+		bytes.Equal(m.cookie, m1.cookie) &&
 		eqUint16s(m.cipherSuites, m1.cipherSuites) &&
 		bytes.Equal(m.compressionMethods, m1.compressionMethods) &&
 		m.nextProtoNeg == m1.nextProtoNeg &&
@@ -61,16 +65,17 @@ func (m *clientHelloMsg) marshal() []byte {
 		return m.raw
 	}
 
-	length := 2 + 32 + 1 + len(m.sessionId) + 2 + len(m.cipherSuites)*2 + 1 + len(m.compressionMethods)
+	length := 2 + 2 + 3 + 3 + 32 + 1 + len(m.sessionId) + 1 + len(m.cookie) + 2 + len(m.cipherSuites)*2 + 1 + len(m.compressionMethods)
+	log.Println(length)
 	numExtensions := 0
 	extensionsLength := 0
 	if m.nextProtoNeg {
 		numExtensions++
 	}
-	if m.ocspStapling {
-		extensionsLength += 1 + 2 + 2
-		numExtensions++
-	}
+//	if m.ocspStapling {
+//		extensionsLength += 1 + 2 + 2
+//		numExtensions++
+//	}
 	if len(m.serverName) > 0 {
 		extensionsLength += 5 + len(m.serverName)
 		numExtensions++
@@ -91,10 +96,10 @@ func (m *clientHelloMsg) marshal() []byte {
 		extensionsLength += 2 + 2*len(m.supportedSignatureAlgorithms)
 		numExtensions++
 	}
-	if m.secureRenegotiationSupported {
-		extensionsLength += 1 + len(m.secureRenegotiation)
-		numExtensions++
-	}
+//	if m.secureRenegotiationSupported {
+//		extensionsLength += 1 + len(m.secureRenegotiation)
+//		numExtensions++
+//	}
 	if len(m.alpnProtocols) > 0 {
 		extensionsLength += 2
 		for _, s := range m.alpnProtocols {
@@ -106,25 +111,49 @@ func (m *clientHelloMsg) marshal() []byte {
 		}
 		numExtensions++
 	}
-	if m.scts {
+//	if m.scts {
+//		numExtensions++
+//	}
+	if m.srtp {
 		numExtensions++
+		extensionsLength += 5
 	}
 	if numExtensions > 0 {
 		extensionsLength += 4 * numExtensions
 		length += 2 + extensionsLength
 	}
 
-	x := make([]byte, 4+length)
-	x[0] = typeClientHello
-	x[1] = uint8(length >> 16)
-	x[2] = uint8(length >> 8)
-	x[3] = uint8(length)
-	x[4] = uint8(m.vers >> 8)
-	x[5] = uint8(m.vers)
-	copy(x[6:38], m.random)
-	x[38] = uint8(len(m.sessionId))
-	copy(x[39:39+len(m.sessionId)], m.sessionId)
-	y := x[39+len(m.sessionId):]
+	w := make([]byte, 4+length)
+	w[0] = typeClientHello
+	w[1] = uint8((length - 8) >> 16)
+	w[2] = uint8((length - 8) >> 8)
+	w[3] = uint8((length - 8))
+
+	// Message seq
+	w[4] = 0
+	w[5] = 0
+
+	// Fragment offset
+	w[6] = 0
+	w[7] = 0
+	w[8] = 0
+
+	// Fragment length
+	w[9] = uint8((length - 8) >> 16)
+	w[10] = uint8((length - 8) >> 8)
+	w[11] = uint8((length - 8))
+
+	// Version in DTLS is one's complement
+	w[12] = ^uint8(m.vers >> 8)
+	w[13] = ^uint8(m.vers)
+
+	copy(w[14:46], m.random)
+	w[36] = uint8(len(m.sessionId))
+	copy(w[47:47+len(m.sessionId)], m.sessionId)
+	x := w[47+len(m.sessionId):]
+	x[0] = uint8(len(m.cookie))
+	copy(x[1:1+len(m.cookie)], m.cookie)
+	y := x[1+len(m.cookie):]
 	y[0] = uint8(len(m.cipherSuites) >> 7)
 	y[1] = uint8(len(m.cipherSuites) << 1)
 	for i, suite := range m.cipherSuites {
@@ -181,16 +210,16 @@ func (m *clientHelloMsg) marshal() []byte {
 		copy(z[5:], []byte(m.serverName))
 		z = z[l:]
 	}
-	if m.ocspStapling {
-		// RFC 4366, section 3.6
-		z[0] = byte(extensionStatusRequest >> 8)
-		z[1] = byte(extensionStatusRequest)
-		z[2] = 0
-		z[3] = 5
-		z[4] = 1 // OCSP type
-		// Two zero valued uint16s for the two lengths.
-		z = z[9:]
-	}
+//	if m.ocspStapling {
+//		// RFC 4366, section 3.6
+//		z[0] = byte(extensionStatusRequest >> 8)
+//		z[1] = byte(extensionStatusRequest)
+//		z[2] = 0
+//		z[3] = 5
+//		z[4] = 1 // OCSP type
+//		// Two zero valued uint16s for the two lengths.
+//		z = z[9:]
+//	}
 	if len(m.supportedCurves) > 0 {
 		// https://tools.ietf.org/html/rfc4492#section-5.5.1
 		z[0] = byte(extensionSupportedCurves >> 8)
@@ -253,16 +282,16 @@ func (m *clientHelloMsg) marshal() []byte {
 			z = z[2:]
 		}
 	}
-	if m.secureRenegotiationSupported {
-		z[0] = byte(extensionRenegotiationInfo >> 8)
-		z[1] = byte(extensionRenegotiationInfo & 0xff)
-		z[2] = 0
-		z[3] = byte(len(m.secureRenegotiation) + 1)
-		z[4] = byte(len(m.secureRenegotiation))
-		z = z[5:]
-		copy(z, m.secureRenegotiation)
-		z = z[len(m.secureRenegotiation):]
-	}
+//	if m.secureRenegotiationSupported {
+//		z[0] = byte(extensionRenegotiationInfo >> 8)
+//		z[1] = byte(extensionRenegotiationInfo & 0xff)
+//		z[2] = 0
+//		z[3] = byte(len(m.secureRenegotiation) + 1)
+//		z[4] = byte(len(m.secureRenegotiation))
+//		z = z[5:]
+//		copy(z, m.secureRenegotiation)
+//		z = z[len(m.secureRenegotiation):]
+//	}
 	if len(m.alpnProtocols) > 0 {
 		z[0] = byte(extensionALPN >> 8)
 		z[1] = byte(extensionALPN & 0xff)
@@ -284,17 +313,29 @@ func (m *clientHelloMsg) marshal() []byte {
 		lengths[0] = byte(stringsLength >> 8)
 		lengths[1] = byte(stringsLength)
 	}
-	if m.scts {
-		// https://tools.ietf.org/html/rfc6962#section-3.3.1
-		z[0] = byte(extensionSCT >> 8)
-		z[1] = byte(extensionSCT)
-		// zero uint16 for the zero-length extension_data
-		z = z[4:]
+//	if m.scts {
+//		// https://tools.ietf.org/html/rfc6962#section-3.3.1
+//		z[0] = byte(extensionSCT >> 8)
+//		z[1] = byte(extensionSCT)
+//		// zero uint16 for the zero-length extension_data
+//		z = z[4:]
+//	}
+	if m.srtp {
+		z[0] = byte(extensionSRTP >> 8)
+		z[1] = byte(extensionSRTP)
+		z[2] = 0
+		z[3] = 5
+		z[4] = 0
+		z[5] = 2
+		z[6] = 0
+		z[7] = 1
+		z[8] = 0
+		z = z[9:]
 	}
 
-	m.raw = x
+	m.raw = w
 
-	return x
+	return w
 }
 
 func (m *clientHelloMsg) unmarshal(data []byte) bool {
@@ -302,7 +343,7 @@ func (m *clientHelloMsg) unmarshal(data []byte) bool {
 		return false
 	}
 	m.raw = data
-	m.vers = uint16(data[4])<<8 | uint16(data[5])
+	m.vers = uint16(^data[4])<<8 | uint16(^data[5])
 	m.random = data[6:38]
 	sessionIdLen := int(data[38])
 	if sessionIdLen > 32 || len(data) < 39+sessionIdLen {
@@ -604,8 +645,8 @@ func (m *serverHelloMsg) marshal() []byte {
 	x[1] = uint8(length >> 16)
 	x[2] = uint8(length >> 8)
 	x[3] = uint8(length)
-	x[4] = uint8(m.vers >> 8)
-	x[5] = uint8(m.vers)
+	x[4] = ^uint8(m.vers >> 8)
+	x[5] = ^uint8(m.vers)
 	copy(x[6:38], m.random)
 	x[38] = uint8(len(m.sessionId))
 	copy(x[39:39+len(m.sessionId)], m.sessionId)
@@ -699,7 +740,7 @@ func (m *serverHelloMsg) unmarshal(data []byte) bool {
 		return false
 	}
 	m.raw = data
-	m.vers = uint16(data[4])<<8 | uint16(data[5])
+	m.vers = uint16(^data[4])<<8 | uint16(^data[5])
 	m.random = data[6:38]
 	sessionIdLen := int(data[38])
 	if sessionIdLen > 32 || len(data) < 39+sessionIdLen {
