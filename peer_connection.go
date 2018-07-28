@@ -31,12 +31,12 @@ func NewPeerConnection() *PeerConnection {
 
 // Add remote ICE candidate
 func (pc *PeerConnection) AddIceCandidate(candidate string) error {
-        fields := strings.Fields(candidate)
-        if protocol := fields[2]; protocol != "udp" {
-		// Skip non-UDP
-                return nil
-        }
-        ip, port, _ := fields[4], fields[5], fields[11]
+	fields := strings.Fields(candidate)
+	if protocol := fields[2]; strings.ToLower(protocol) != "udp" {
+		log.Println("Skipping non-UDP protocol:", protocol)
+		return nil
+	}
+	ip, port, _ := fields[4], fields[5], fields[11]
 
 	raddr, err := net.ResolveUDPAddr("udp", fmt.Sprintf("%s:%s", ip, port))
 	if err != nil {

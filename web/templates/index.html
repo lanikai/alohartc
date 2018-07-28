@@ -30,16 +30,20 @@
     let pc;
 
     // Create a websocket connection for exchanging SDP data
-    addr = 'ws://' +
-           location.hostname+(location.port ? ':'+location.port: '') +
-           '/ws';
+    addr = 'ws://' + location.host + '/ws';
 
     const ws = new WebSocket(addr);
 
     // Placeholder for now
     ws.addEventListener("message", function (event) {
       console.log("websocket received:", event.data);
-      pc.setRemoteDescription({ "type": "answer", "sdp": event.data });
+      pc.setRemoteDescription({ "type": "answer", "sdp": event.data })
+        .then(function() {
+          console.log("setRemoteDescription success: " + event.data);
+        })
+        .catch(function(error) {
+          console.log("setRemoteDescription error: " + error);
+        });
     });
 
     ws.addEventListener("open", function (event) {

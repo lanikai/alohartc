@@ -12,15 +12,18 @@ import (
 )
 
 func (pc *PeerConnection) stunBinding(candidate string, key string) error {
-        fields := strings.Fields(candidate)
+	log.Println("ICE candidate:", candidate)
+	fields := strings.Fields(candidate)
 
-        // Skip non-UDP
-        if protocol := fields[2]; protocol != "udp" {
-                return nil
-        }
+	// Skip non-UDP
+	if protocol := strings.ToLower(fields[2]); protocol != "udp" {
+		log.Println("Not UDP, skipping")
+		return nil
+	}
 
-        ip, port, ufrag := fields[4], fields[5], fields[11]
-        log.Println(ip, port, ufrag)
+	//ip, port, ufrag := fields[4], fields[5], fields[11]
+	ip, port := fields[4], fields[5]
+	log.Println(ip, port)
 
 	b := []byte{
 		0x00, 0x01, 0x00, 0x4c, 0x21, 0x12, 0xa4, 0x42,
@@ -89,6 +92,7 @@ func (pc *PeerConnection) stunBinding(candidate string, key string) error {
 	n, addr, err := pc.conn.ReadFrom(pkt)
 	if err != nil {
 		log.Println(err)
+		return err
 	}
 
 	// Send STUN binding response to caller
