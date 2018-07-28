@@ -63,10 +63,7 @@ func websocketHandler(w http.ResponseWriter, r *http.Request) {
 
 			// Answer
 			sdp, _ := pc.CreateAnswer()
-			if err := ws.WriteMessage(
-				websocket.TextMessage,
-				[]byte(sdp),
-			); err != nil {
+			if err := ws.WriteJSON(message{"answer", sdp}); err != nil {
 				log.Println("failed to send answer:", err)
 				ws.Close()
 				break
