@@ -67,12 +67,17 @@ func websocketHandler(w http.ResponseWriter, r *http.Request) {
 				websocket.TextMessage,
 				[]byte(sdp),
 			); err != nil {
+				log.Println("failed to send answer:", err)
 				ws.Close()
 				break
 			}
+			log.Println("sent answer")
 		case "iceCandidate":
 			log.Println("ice candidate")
-			pc.AddIceCandidate(msg.Text)
+			err := pc.AddIceCandidate(msg.Text)
+			if err != nil {
+				log.Println(err)
+			}
 		}
 	}
 }
