@@ -2,6 +2,8 @@ package webrtc
 
 import (
 	"fmt"
+	"log"
+	"net"
 	"strings"
 )
 
@@ -11,6 +13,9 @@ import (
 type IceAgent struct {
 	localCandidates []IceCandidate
 	remoteCandidates []IceCandidate
+
+	localAddr *net.UDPAddr
+	conn net.PacketConn
 }
 
 type IceCandidate struct {
@@ -24,18 +29,58 @@ type IceCandidate struct {
 	attrkeys []string  // for iterating in insertion order
 }
 
+func NewIceAgent() *IceAgent {
+	return &IceAgent{}
+}
+
 func (agent *IceAgent) AddRemoteCandidate(desc string) error {
-	candidate, err := parseCandidateDesc(desc)
+	candidate, err := parseCandidate(desc)
 	if err != nil {
 		return err
 	}
 
 	agent.remoteCandidates = append(agent.remoteCandidates, candidate)
-
 	return nil
 }
 
-func parseCandidateDesc(desc string) (IceCandidate, error) {
+func (agent *IceAgent) GatherCandidates() ([]IceCandidate, error) {
+	// Listen on an arbitrary UDP port.
+	conn, err := net.ListenPacket("udp4", ":0")
+	if err != nil {
+		return nil, err
+	}
+	localAddr := conn.LocalAddr().(*net.UDPAddr)
+	log.Println("Listening on UDP", localAddr)
+
+	c := IceCandidate{
+		foundation: "0",
+		component: 1,
+		protocol: "udp",
+		priority: 100,
+		ip: localAddr.IP.String(),
+		port: localAddr.Port,
+	}
+	c.setAttr("typ", "host")
+
+	// TODO: Query public STUN server to get server reflexive candidates.
+	c2 := IceCandidate{
+		foundation: "0",
+		component: 1,
+		protocol: "udp",
+		priority: 99,
+		ip: "127.0.0.1",
+		port: localAddr.Port,
+	}
+	c2.setAttr("typ", "host")
+
+	agent.localAddr = localAddr
+	agent.conn = conn
+	agent.localCandidates = append(agent.localCandidates, c, c2)
+
+	return agent.localCandidates, nil
+}
+
+func parseCandidate(desc string) (IceCandidate, error) {
 	c := IceCandidate{}
 	n, err := fmt.Sscanf(desc, "candidate:%s %d %s %d %s %d",
 		&c.foundation, &c.component, &c.protocol, &c.priority, &c.ip, &c.port)

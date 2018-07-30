@@ -40,6 +40,8 @@ func websocketHandler(w http.ResponseWriter, r *http.Request) {
 	// Create peer connection
 	pc := webrtc.NewPeerConnection()
 
+	ice := webrtc.NewIceAgent()
+
 	// Handle websocket messages
 	for {
 		// Read websocket message
@@ -64,16 +66,31 @@ func websocketHandler(w http.ResponseWriter, r *http.Request) {
 			// Answer
 			sdp, _ := pc.CreateAnswer()
 			if err := ws.WriteJSON(message{"answer", sdp}); err != nil {
-				log.Println("failed to send answer:", err)
-				ws.Close()
-				break
+				log.Fatal(err)
 			}
 			log.Println("sent answer")
-		case "iceCandidate":
-			log.Println("ice candidate")
-			err := pc.AddIceCandidate(msg.Text)
+
+			// Send ICE candidates
+			localCandidates, err := ice.GatherCandidates()
 			if err != nil {
-				log.Println(err)
+				log.Fatal(err)
+			}
+			for _, c := range localCandidates {
+				ws.WriteJSON(message{"iceCandidate", c.String()})
+			}
+
+			// Plus an empty candidate to indicate the end of the list.
+			ws.WriteJSON(message{"iceCandidate", ""})
+
+		case "iceCandidate":
+			//err := pc.AddIceCandidate(msg.Text)
+			if msg.Text != "" {
+				err := ice.AddRemoteCandidate(msg.Text)
+				if err != nil {
+					log.Println(err)
+				}
+			} else {
+				// An empty candidate means the remote side is ready for connectivity checks.
 			}
 		}
 	}

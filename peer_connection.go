@@ -21,10 +21,14 @@ type PeerConnection struct {
 	remoteDescription string
 
 	password string
+
+	// ICE agent responsible for negotiating peer connection.
+	ice *IceAgent
 }
 
 func NewPeerConnection() *PeerConnection {
 	pc := &PeerConnection{}
+	pc.ice = &IceAgent{}
 
 	return pc
 }
