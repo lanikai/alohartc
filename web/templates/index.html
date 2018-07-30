@@ -32,7 +32,6 @@
     // Create a websocket connection for exchanging SDP data
     const ws = new WebSocket('ws://' + location.host + '/ws');
 
-    // Placeholder for now
     ws.addEventListener("message", function (event) {
       var msg = JSON.parse(event.data);
       console.log("websocket message received")
@@ -41,15 +40,26 @@
       switch(msg.type) {
         case "answer":
           pc.setRemoteDescription({ "type": "answer", "sdp": msg.text })
-            .then(function() {
-              console.log("setRemoteDescription success");
-            })
-            .catch(function(error) {
-              console.log("setRemoteDescription error: " + error);
-            });
+          .then(function() {
+            console.log("setRemoteDescription success");
+          }).catch(function(error) {
+            console.log("setRemoteDescription error: " + error);
+          });
           break;
         case "iceCandidate":
-          pc.addIceCandidate(msg.text);
+          if (msg.text) {
+            pc.addIceCandidate({
+              candidate: msg.text,
+              sdpMid: "video"
+            }).catch(function(error) {
+              console.log("Failed to add remote ICE candidate to local ICE agent:", error);
+            });
+          } else {
+            pc.addIceCandidate(null)
+            .catch(function(error) {
+              console.log("Failed to signal end of remate ICE candidates:", error);
+            });
+          }
           break;
       }
     });
@@ -59,18 +69,32 @@
       // Create WebRTC peer-to-peer connection
       pc = new RTCPeerConnection();
 
-      pc.onicecandidate = onIceCandidate;
 
-      // Called on ICE candidate
-      function onIceCandidate(event) {
-        console.log("onIceCandidate:", event.candidate);
+      // Called by the browser's ICE agent when it determines a new local candidate.
+      pc.onicecandidate = function(event) {
         if (event.candidate) {
+          console.log("New local ICE candidate:", event.candidate);
+          // Inform the remote ICE agent of the new local candidate.
           ws.send(JSON.stringify({
             type: "iceCandidate",
             text: event.candidate.candidate
           }));
+        } else {
+          console.log("End of local ICE candidates");
         }
-      }
+      };
+
+      pc.onicegatheringstatechange = function() {
+        console.log("New ICE gathering state:", pc.iceGatheringState);
+      };
+
+      pc.oniceconnectionstatechange = function() {
+        console.log("New ICE connection state:", pc.iceConnectionState);
+      };
+
+      pc.onsignalingstatechange = function() {
+        console.log("New signaling state:", pc.signalingState);
+      };
 
       // Called upon successful offer creation
       function onCreateOfferSuccess(desc) {
