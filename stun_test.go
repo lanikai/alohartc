@@ -1,6 +1,7 @@
 package webrtc
 
 import (
+	"bytes"
 	"log"
 	"testing"
 )
@@ -23,7 +24,7 @@ func TestParseStunMessage(t *testing.T) {
 
 	msg, err := parseStunMessage(b)
 	if err != nil {
-		log.Fatal(err)
+		t.Error(err)
 	}
 	log.Println("type:", msg.header.MessageType)
 	log.Println("length:", msg.header.MessageLength)
@@ -31,5 +32,20 @@ func TestParseStunMessage(t *testing.T) {
 	log.Println("transaction ID:", msg.header.TransactionID)
 	log.Println("class:", msg.class)
 	log.Println("method:", msg.method)
-	log.Println("attribtues:", msg.attributes)
+	log.Println("attributes:", msg.attributes)
+
+	b2 := msg.Bytes()
+	if !bytes.Equal(b, b2) {
+		t.Errorf("Serialized STUN message not equal to original: %v", b2)
+	}
+}
+
+func TestPad4(t *testing.T) {
+	vals := []uint16{ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9 }
+	answers := []int{ 0, 3, 2, 1, 0, 3, 2, 1, 0, 3 }
+	for i, val := range vals {
+		if pad4(val) != answers[i] {
+			t.Errorf("pad4(%d) == %d != %d", val, pad4(val), answers[i])
+		}
+	}
 }
