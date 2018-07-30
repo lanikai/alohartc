@@ -103,9 +103,12 @@ type Conn struct {
 	// in Conn.Write.
 	activeCall int32
 
-	// DTLS sequence number
-	seqNum uint64
-	msgSeq uint16
+	// DTLS sequence numbers
+	serverSequenceNum uint64
+	clientSequenceNum uint64
+
+	// DTLS epoch counter
+	epoch uint16
 
 	tmp [16]byte
 }
@@ -915,16 +918,27 @@ func (c *Conn) writeRecordLocked(typ recordType, data []byte) (int, error) {
 		b.data[2] = ^byte(vers)
 
 		// Epoch
-		b.data[3] = 0
-		b.data[4] = 0
+		b.data[3] = byte(c.epoch >> 8)
+		b.data[4] = byte(c.epoch)
 
 		// Sequence number
-		b.data[5] = 0
-		b.data[6] = 0
-		b.data[7] = 0
-		b.data[8] = 0
-		b.data[9] = 0
-		b.data[10] = 0
+		if c.isClient {
+			b.data[5] = byte(c.clientSequenceNum >> 40)
+			b.data[6] = byte(c.clientSequenceNum >> 32)
+			b.data[7] = byte(c.clientSequenceNum >> 24)
+			b.data[8] = byte(c.clientSequenceNum >> 16)
+			b.data[9] = byte(c.clientSequenceNum >> 8)
+			b.data[10] = byte(c.clientSequenceNum)
+			c.clientSequenceNum++
+		} else {
+			b.data[5] = byte(c.serverSequenceNum >> 40)
+			b.data[6] = byte(c.serverSequenceNum >> 32)
+			b.data[7] = byte(c.serverSequenceNum >> 24)
+			b.data[8] = byte(c.serverSequenceNum >> 16)
+			b.data[9] = byte(c.serverSequenceNum >> 8)
+			b.data[10] = byte(c.serverSequenceNum)
+			c.serverSequenceNum++
+		}
 
 		b.data[11] = byte(m >> 8)
 		b.data[12] = byte(m)

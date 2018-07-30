@@ -876,6 +876,7 @@ func (m *serverHelloMsg) unmarshal(data []byte) bool {
 type certificateMsg struct {
 	raw          []byte
 	certificates [][]byte
+	sequence     uint16
 }
 
 func (m *certificateMsg) equal(i interface{}) bool {
@@ -906,15 +907,17 @@ func (m *certificateMsg) marshal() (x []byte) {
 	x[3] = uint8(length)
 
 	// Message sequence
-	x[4] = 0
-	x[5] = 0
+	x[4] = byte(m.sequence >> 8)
+	x[5] = byte(m.sequence)
 
 	// Fragment offset
+	// TODO (chris) Handle properly
 	x[6] = 0
 	x[7] = 0
 	x[8] = 0
 
 	// Fragment length
+	// TODO (chris) Handle properly
 	x[9] = uint8(length >> 16)
 	x[10] = uint8(length >> 8)
 	x[11] = uint8(length)
@@ -1100,6 +1103,7 @@ func (m *serverHelloDoneMsg) unmarshal(data []byte) bool {
 type clientKeyExchangeMsg struct {
 	raw        []byte
 	ciphertext []byte
+	sequence   uint16
 }
 
 func (m *clientKeyExchangeMsg) equal(i interface{}) bool {
@@ -1124,9 +1128,8 @@ func (m *clientKeyExchangeMsg) marshal() []byte {
 	x[3] = uint8(length)
 
 	// Message sequence
-	// TODO (chris) Properly step value
-	x[4] = 0
-	x[5] = 1
+	x[4] = byte(m.sequence >> 8)
+	x[5] = byte(m.sequence)
 
 	// Fragment offset
 	// TODO (chris) Properly handle fragments
@@ -1162,6 +1165,7 @@ func (m *clientKeyExchangeMsg) unmarshal(data []byte) bool {
 type finishedMsg struct {
 	raw        []byte
 	verifyData []byte
+	sequence   uint16
 }
 
 func (m *finishedMsg) equal(i interface{}) bool {
@@ -1185,8 +1189,8 @@ func (m *finishedMsg) marshal() (x []byte) {
 
 	// Message sequence
 	// TODO (chris) Properly step value
-	x[4] = 0
-	x[5] = 1
+	x[4] = byte(m.sequence >> 8)
+	x[5] = byte(m.sequence)
 
 	// Fragment offset
 	// TODO (chris) Properly handle fragments
@@ -1292,6 +1296,7 @@ type certificateRequestMsg struct {
 	certificateTypes             []byte
 	supportedSignatureAlgorithms []SignatureScheme
 	certificateAuthorities       [][]byte
+	sequence                     uint16
 }
 
 func (m *certificateRequestMsg) equal(i interface{}) bool {
@@ -1323,16 +1328,33 @@ func (m *certificateRequestMsg) marshal() (x []byte) {
 		length += 2 + 2*len(m.supportedSignatureAlgorithms)
 	}
 
-	x = make([]byte, 4+length)
+	x = make([]byte, 12+length)
 	x[0] = typeCertificateRequest
 	x[1] = uint8(length >> 16)
 	x[2] = uint8(length >> 8)
 	x[3] = uint8(length)
 
-	x[4] = uint8(len(m.certificateTypes))
+	// Message sequence
+	x[4] = byte(m.sequence >> 8)
+	x[5] = byte(m.sequence)
 
-	copy(x[5:], m.certificateTypes)
-	y := x[5+len(m.certificateTypes):]
+	// Fragment offset
+	// TODO (chris) Handle properly
+	x[6] = 0
+	x[7] = 0
+	x[8] = 0
+
+	// Fragment length
+	// TODO (chris) Handle properly
+	x[9] = uint8(length >> 16)
+	x[10] = uint8(length >> 8)
+	x[11] = uint8(length)
+
+
+	x[12] = uint8(len(m.certificateTypes))
+
+	copy(x[13:], m.certificateTypes)
+	y := x[13+len(m.certificateTypes):]
 
 	if m.hasSignatureAndHash {
 		n := len(m.supportedSignatureAlgorithms) * 2
@@ -1442,6 +1464,7 @@ type certificateVerifyMsg struct {
 	hasSignatureAndHash bool
 	signatureAlgorithm  SignatureScheme
 	signature           []byte
+	sequence            uint16
 }
 
 func (m *certificateVerifyMsg) equal(i interface{}) bool {
@@ -1467,12 +1490,29 @@ func (m *certificateVerifyMsg) marshal() (x []byte) {
 	if m.hasSignatureAndHash {
 		length += 2
 	}
-	x = make([]byte, 4+length)
+	x = make([]byte, 12+length)
 	x[0] = typeCertificateVerify
 	x[1] = uint8(length >> 16)
 	x[2] = uint8(length >> 8)
 	x[3] = uint8(length)
-	y := x[4:]
+
+	// Message sequence
+	x[4] = byte(m.sequence >> 8)
+	x[5] = byte(m.sequence)
+
+	// Fragment offset
+	// TODO (chris) Handle properly
+	x[6] = 0
+	x[7] = 0
+	x[8] = 0
+
+	// Fragment length
+	// TODO (chris) Handle properly
+	x[9] = uint8(length >> 16)
+	x[10] = uint8(length >> 8)
+	x[11] = uint8(length)
+
+	y := x[12:]
 	if m.hasSignatureAndHash {
 		y[0] = uint8(m.signatureAlgorithm >> 8)
 		y[1] = uint8(m.signatureAlgorithm)
