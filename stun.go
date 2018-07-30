@@ -197,16 +197,33 @@ type stunAttribute struct {
 
 func (msg *stunMessage) Bytes() []byte {
 	buf := make([]byte, 0, stunHeaderLength + msg.header.MessageLength)
-	w := bytes.NewBuffer(buf)
 
-	binary.Write(w, binary.BigEndian, msg.header)
+	buf = append(buf, msg.header.Bytes()...)
 	for _, attr := range msg.attributes {
-		binary.Write(w, binary.BigEndian, attr)
+		buf = append(buf, attr.Bytes()...)
 	}
 
 	if len(buf) != cap(buf) {
-		log.Fatal("Expected len =", cap(buf), " but got ", len(buf))
+		log.Fatal("Serialized message unexpected length: ", len(buf), " != ", cap(buf))
 	}
+	return buf
+}
+
+func (header *stunHeader) Bytes() []byte {
+	buf := make([]byte, stunHeaderLength)
+	binary.BigEndian.PutUint16(buf[0:2], header.MessageType)
+	binary.BigEndian.PutUint16(buf[2:4], header.MessageLength)
+	binary.BigEndian.PutUint32(buf[4:8], header.MagicCookie)
+	copy(buf[8:20], header.TransactionID[:])
+	return buf
+}
+
+func (attr *stunAttribute) Bytes() []byte {
+	paddedLength := 4 + int(attr.Length) + pad4(attr.Length)
+	buf := make([]byte, paddedLength)
+	binary.BigEndian.PutUint16(buf[0:2], attr.Type)
+	binary.BigEndian.PutUint16(buf[2:4], attr.Length)
+	copy(buf[4:], attr.Value)
 	return buf
 }
 
@@ -239,7 +256,7 @@ func parseStunMessage(data []byte) (*stunMessage, error) {
 		length := binary.BigEndian.Uint16(b.Next(2))
 		value := make([]byte, length)
 		copy(value, b.Next(int(length)))
-		b.Next(int(pad4(length)))  // discard bytes until next 4-byte boundary
+		b.Next(pad4(length))  // discard bytes until next 4-byte boundary
 		attributes = append(attributes, stunAttribute{typ, length, value})
 	}
 
@@ -282,8 +299,8 @@ func decomposeMessageType(t uint16) (byte, uint16) {
 
 // Return the number of extra bytes needed to pad the given length to a 4-byte boundary.
 // The result will be either 0, 1, 2, or 3.
-func pad4(n uint16) uint16 {
-	return ((n + 1) >> 2) << 2 - n;
+func pad4(n uint16) int {
+	return -int(n) & 3
 }
 
 func StunBindingRequest() ([]byte, error) {
