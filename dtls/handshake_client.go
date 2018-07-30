@@ -14,7 +14,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"strconv"
 	"strings"
@@ -29,6 +28,7 @@ type clientHandshakeState struct {
 	finishedHash finishedHash
 	masterSecret []byte
 	session      *ClientSessionState
+	msgSequence  uint16
 }
 
 func makeClientHello(config *Config) (*clientHelloMsg, error) {
@@ -186,9 +186,11 @@ func (hs *clientHandshakeState) handshake() error {
 	c := hs.c
 
 	// send ClientHello
+//	hs.hello.sequence = hs.msgSequence
 	if _, err := c.writeRecord(recordTypeHandshake, hs.hello.marshal()); err != nil {
 		return err
 	}
+	hs.msgSequence++
 
 	// receive ServerHello
 	msg, err := c.readHandshake()
@@ -248,7 +250,6 @@ func (hs *clientHandshakeState) handshake() error {
 		}
 	} else {
 		if err := hs.doFullHandshake(); err != nil {
-			log.Println("doFullHandshake failed")
 			return err
 		}
 		if err := hs.establishKeys(); err != nil {
@@ -393,7 +394,6 @@ func (hs *clientHandshakeState) doFullHandshake() error {
 			// server MUST have included an extension of type "status_request"
 			// with empty "extension_data" in the extended server hello.
 
-			log.Println("ocsp stapling?")
 			c.sendAlert(alertUnexpectedMessage)
 			return errors.New("tls: received unexpected CertificateStatus message")
 		}
@@ -416,7 +416,6 @@ func (hs *clientHandshakeState) doFullHandshake() error {
 		hs.finishedHash.Write(skx.marshal())
 		err = keyAgreement.processServerKeyExchange(c.config, hs.hello, hs.serverHello, c.peerCertificates[0], skx)
 		if err != nil {
-			log.Println("process server key exchange?")
 			c.sendAlert(alertUnexpectedMessage)
 			return err
 		}
@@ -447,7 +446,6 @@ func (hs *clientHandshakeState) doFullHandshake() error {
 
 	shd, ok := msg.(*serverHelloDoneMsg)
 	if !ok {
-		log.Println("server hello done?")
 		c.sendAlert(alertUnexpectedMessage)
 		return unexpectedMessageError(shd, msg)
 	}
@@ -459,10 +457,12 @@ func (hs *clientHandshakeState) doFullHandshake() error {
 	if certRequested {
 		certMsg = new(certificateMsg)
 		certMsg.certificates = chainToSend.Certificate
+		certMsg.sequence = hs.msgSequence
 		hs.finishedHash.Write(certMsg.marshal())
 		if _, err := c.writeRecord(recordTypeHandshake, certMsg.marshal()); err != nil {
 			return err
 		}
+		hs.msgSequence++
 	}
 
 	preMasterSecret, ckx, err := keyAgreement.generateClientKeyExchange(c.config, hs.hello, c.peerCertificates[0])
@@ -471,15 +471,18 @@ func (hs *clientHandshakeState) doFullHandshake() error {
 		return err
 	}
 	if ckx != nil {
+		ckx.sequence = hs.msgSequence
 		hs.finishedHash.Write(ckx.marshal())
 		if _, err := c.writeRecord(recordTypeHandshake, ckx.marshal()); err != nil {
 			return err
 		}
+		hs.msgSequence++
 	}
 
 	if chainToSend != nil && len(chainToSend.Certificate) > 0 {
 		certVerify := &certificateVerifyMsg{
 			hasSignatureAndHash: c.vers >= VersionDTLS12,
+			sequence: hs.msgSequence,
 		}
 
 		key, ok := chainToSend.PrivateKey.(crypto.Signer)
@@ -516,6 +519,7 @@ func (hs *clientHandshakeState) doFullHandshake() error {
 		if _, err := c.writeRecord(recordTypeHandshake, certVerify.marshal()); err != nil {
 			return err
 		}
+		hs.msgSequence++
 	}
 
 	hs.masterSecret = masterFromPreMasterSecret(c.vers, hs.suite, preMasterSecret, hs.hello.random, hs.serverHello.random)
@@ -562,7 +566,6 @@ func (hs *clientHandshakeState) processServerHello() (bool, error) {
 	c := hs.c
 
 	if hs.serverHello.compressionMethod != compressionNone {
-		log.Println("compression method is not none?")
 		c.sendAlert(alertUnexpectedMessage)
 		return false, errors.New("tls: server selected unsupported compression format")
 	}
@@ -646,7 +649,6 @@ func (hs *clientHandshakeState) readFinished(out []byte) error {
 	}
 	serverFinished, ok := msg.(*finishedMsg)
 	if !ok {
-		log.Println("server finished not okay?")
 		c.sendAlert(alertUnexpectedMessage)
 		return unexpectedMessageError(serverFinished, msg)
 	}
@@ -674,7 +676,6 @@ func (hs *clientHandshakeState) readSessionTicket() error {
 	}
 	sessionTicketMsg, ok := msg.(*newSessionTicketMsg)
 	if !ok {
-		log.Println("bad session ticket?")
 		c.sendAlert(alertUnexpectedMessage)
 		return unexpectedMessageError(sessionTicketMsg, msg)
 	}
@@ -710,6 +711,11 @@ func (hs *clientHandshakeState) sendFinished(out []byte) error {
 			return err
 		}
 	}
+
+	// Step epoch and reset sequence numbers
+	c.epoch++
+	c.clientSequenceNum = 0
+	c.serverSequenceNum = 0
 
 	finished := new(finishedMsg)
 	finished.verifyData = hs.finishedHash.clientSum(hs.masterSecret)
