@@ -103,13 +103,6 @@ type Conn struct {
 	// in Conn.Write.
 	activeCall int32
 
-	// DTLS sequence numbers
-	serverSequenceNum uint64
-	clientSequenceNum uint64
-
-	// DTLS epoch counter
-	epoch uint16
-
 	tmp [16]byte
 }
 
@@ -193,14 +186,20 @@ func (hc *halfConn) changeCipherSpec() error {
 	hc.mac = hc.nextMac
 	hc.nextCipher = nil
 	hc.nextMac = nil
+	hc.sequence = 0
 	for i := range hc.seq {
 		hc.seq[i] = 0
 	}
+	hc.epoch++
 	return nil
 }
 
 // incSeq increments the sequence number.
 func (hc *halfConn) incSeq() {
+	// Increment sequence
+	hc.sequence++
+
+	// Big endian up-counter
 	for i := 7; i >= 0; i-- {
 		hc.seq[i]++
 		if hc.seq[i] != 0 {
@@ -326,7 +325,8 @@ func (hc *halfConn) decrypt(b *block) (ok bool, prefixLen int, alertValue alert)
 		case cbcMode:
 			blockSize := c.BlockSize()
 			//			if hc.version >= VersionTLS11 {
-			if hc.version >= VersionDTLS12 {
+			// DTLS 1.0 == TLS 1.1
+			if hc.version >= VersionDTLS10 {
 				explicitIVLen = blockSize
 			}
 
@@ -401,7 +401,7 @@ func padToBlockSize(payload []byte, blockSize int) (prefix, finalBlock []byte) {
 
 // encrypt encrypts and macs the data in b.
 func (hc *halfConn) encrypt(b *block, explicitIVLen int) (bool, alert) {
-	log.Println("encrypt")
+	log.Println("encrypt", b, explicitIVLen)
 	// mac
 	if hc.mac != nil {
 		log.Println("encrypt (with hmac)")
@@ -419,24 +419,32 @@ func (hc *halfConn) encrypt(b *block, explicitIVLen int) (bool, alert) {
 	if hc.cipher != nil {
 		switch c := hc.cipher.(type) {
 		case cipher.Stream:
+			log.Println("encrypt cipher stream")
 			c.XORKeyStream(payload, payload)
 		case aead:
+			log.Println("encrypt aead")
 			payloadLen := len(b.data) - recordHeaderLen - explicitIVLen
+			log.Println("recordHeaderLen:", recordHeaderLen)
 			b.resize(len(b.data) + c.Overhead())
+			log.Println("c.Overhead:", c.Overhead())
 			nonce := b.data[recordHeaderLen : recordHeaderLen+explicitIVLen]
+			log.Println("nonce:", nonce)
 			if len(nonce) == 0 {
 				nonce = hc.seq[:]
 			}
 			payload := b.data[recordHeaderLen+explicitIVLen:]
 			payload = payload[:payloadLen]
+			log.Println("payload:", payload)
 
 			copy(hc.additionalData[:], hc.seq[:])
 			copy(hc.additionalData[8:], b.data[:3])
 			hc.additionalData[11] = byte(payloadLen >> 8)
 			hc.additionalData[12] = byte(payloadLen)
+			log.Println("hc.additionalData:", hc.additionalData)
 
 			c.Seal(payload[:0], nonce, payload, hc.additionalData[:])
 		case cbcMode:
+			log.Println("encrypt cbc")
 			blockSize := c.BlockSize()
 			if explicitIVLen > 0 {
 				c.SetIV(payload[:explicitIVLen])
@@ -888,7 +896,8 @@ func (c *Conn) writeRecordLocked(typ recordType, data []byte) (int, error) {
 		explicitIVIsSeq := false
 
 		var cbc cbcMode
-		if c.out.version >= VersionDTLS12 {
+		// if c.out.version >= VersionTLS11 {  // DTLS 1.0 == TLS 1.1
+		if c.out.version >= VersionDTLS10 {
 			var ok bool
 			if cbc, ok = c.out.cipher.(cbcMode); ok {
 				explicitIVLen = cbc.BlockSize()
@@ -923,27 +932,16 @@ func (c *Conn) writeRecordLocked(typ recordType, data []byte) (int, error) {
 		b.data[2] = ^byte(vers)
 
 		// Epoch
-		b.data[3] = byte(c.epoch >> 8)
-		b.data[4] = byte(c.epoch)
+		b.data[3] = byte(c.out.epoch >> 8)
+		b.data[4] = byte(c.out.epoch)
 
 		// Sequence number
-		if c.isClient {
-			b.data[5] = byte(c.clientSequenceNum >> 40)
-			b.data[6] = byte(c.clientSequenceNum >> 32)
-			b.data[7] = byte(c.clientSequenceNum >> 24)
-			b.data[8] = byte(c.clientSequenceNum >> 16)
-			b.data[9] = byte(c.clientSequenceNum >> 8)
-			b.data[10] = byte(c.clientSequenceNum)
-			c.clientSequenceNum++
-		} else {
-			b.data[5] = byte(c.serverSequenceNum >> 40)
-			b.data[6] = byte(c.serverSequenceNum >> 32)
-			b.data[7] = byte(c.serverSequenceNum >> 24)
-			b.data[8] = byte(c.serverSequenceNum >> 16)
-			b.data[9] = byte(c.serverSequenceNum >> 8)
-			b.data[10] = byte(c.serverSequenceNum)
-			c.serverSequenceNum++
-		}
+		b.data[5] = byte(c.out.sequence >> 40)
+		b.data[6] = byte(c.out.sequence >> 32)
+		b.data[7] = byte(c.out.sequence >> 24)
+		b.data[8] = byte(c.out.sequence >> 16)
+		b.data[9] = byte(c.out.sequence >> 8)
+		b.data[10] = byte(c.out.sequence)
 
 		b.data[11] = byte(m >> 8)
 		b.data[12] = byte(m)
