@@ -11,6 +11,7 @@ import (
 	"io/ioutil"
 	"log"
 	"net"
+	"os"
 	"strings"
 	"time"
 )
@@ -92,6 +93,8 @@ func DialWithConnection(rawConn net.Conn) (*Conn, error) {
 	config.InsecureSkipVerify = true
 	config.MinVersion = VersionDTLS12
 	config.Certificates = append(config.Certificates, cert)
+	config.KeyLogWriter = os.Stdout
+	config.ClientSessionCache = NewLRUClientSessionCache(4)
 	conn := Client(rawConn, config)
 
 	if timeout == 0 {
