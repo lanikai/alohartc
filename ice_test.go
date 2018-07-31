@@ -1,7 +1,6 @@
 package webrtc
 
 import (
-	"log"
 	"testing"
 )
 
@@ -10,5 +9,5 @@ func TestParseIceCandidate(t *testing.T) {
 	if err != nil {
 		t.Error(err)
 	}
-	log.Println(c)
+	t.Log(c)
 }
