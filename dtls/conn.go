@@ -165,6 +165,9 @@ type halfConn struct {
 
 	// used to save allocating a new buffer for each MAC.
 	inDigestBuf, outDigestBuf []byte
+
+	epoch          uint16
+	sequence       uint64
 }
 
 func (hc *halfConn) setErrorLocked(err error) error {
@@ -398,8 +401,10 @@ func padToBlockSize(payload []byte, blockSize int) (prefix, finalBlock []byte) {
 
 // encrypt encrypts and macs the data in b.
 func (hc *halfConn) encrypt(b *block, explicitIVLen int) (bool, alert) {
+	log.Println("encrypt")
 	// mac
 	if hc.mac != nil {
+		log.Println("encrypt (with hmac)")
 		mac := hc.mac.MAC(hc.outDigestBuf, hc.seq[0:], b.data[:recordHeaderLen], b.data[recordHeaderLen+explicitIVLen:], nil)
 
 		n := len(b.data)
@@ -1048,7 +1053,6 @@ func (c *Conn) readHandshake() (interface{}, error) {
 	data = append([]byte(nil), data...)
 
 	if !m.unmarshal(data) {
-		log.Println("unmarshaling msg failed?", data[0])
 		return nil, c.in.setErrorLocked(c.sendAlert(alertUnexpectedMessage))
 	}
 	return m, nil

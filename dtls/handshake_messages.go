@@ -544,6 +544,7 @@ func (m *clientHelloMsg) unmarshal(data []byte) bool {
 
 type serverHelloMsg struct {
 	raw                          []byte
+	sequence                     uint16
 	vers                         uint16
 	random                       []byte
 	sessionId                    []byte
@@ -638,17 +639,31 @@ func (m *serverHelloMsg) marshal() []byte {
 		length += 2 + extensionsLength
 	}
 
-	x := make([]byte, 4+length)
+	x := make([]byte, 12+length)
 	x[0] = typeServerHello
 	x[1] = uint8(length >> 16)
 	x[2] = uint8(length >> 8)
 	x[3] = uint8(length)
-	x[4] = ^uint8(m.vers >> 8)
-	x[5] = ^uint8(m.vers)
-	copy(x[6:38], m.random)
-	x[38] = uint8(len(m.sessionId))
-	copy(x[39:39+len(m.sessionId)], m.sessionId)
-	z := x[39+len(m.sessionId):]
+
+	// Message sequence
+	x[4] = uint8(m.sequence >> 8)
+	x[5] = uint8(m.sequence)
+
+	// Fragment offset
+	x[6] = 0
+	x[7] = 0
+	x[8] = 0
+
+	x[9] = uint8(length >> 16)
+	x[10] = uint8(length >> 8)
+	x[11] = uint8(length)
+
+	x[12] = ^uint8(m.vers >> 8)
+	x[13] = ^uint8(m.vers)
+	copy(x[14:46], m.random)
+	x[46] = uint8(len(m.sessionId))
+	copy(x[47:47+len(m.sessionId)], m.sessionId)
+	z := x[47+len(m.sessionId):]
 	z[0] = uint8(m.cipherSuite >> 8)
 	z[1] = uint8(m.cipherSuite)
 	z[2] = m.compressionMethod
@@ -738,6 +753,7 @@ func (m *serverHelloMsg) unmarshal(data []byte) bool {
 		return false
 	}
 	m.raw = data
+	m.sequence = uint16(data[4])<<8 | uint16(data[5])
 	m.vers = uint16(^data[12])<<8 | uint16(^data[13])
 	m.random = data[14:46]
 	sessionIdLen := int(data[46])
@@ -946,6 +962,7 @@ func (m *certificateMsg) unmarshal(data []byte) bool {
 	}
 
 	m.raw = data
+	m.sequence = uint16(data[4])<<8 | uint16(data[5])
 	certsLen := uint32(data[12])<<16 | uint32(data[13])<<8 | uint32(data[14])
 	if uint32(len(data)) != certsLen+15 {
 		return false
@@ -978,8 +995,9 @@ func (m *certificateMsg) unmarshal(data []byte) bool {
 }
 
 type serverKeyExchangeMsg struct {
-	raw []byte
-	key []byte
+	raw      []byte
+	key      []byte
+	sequence uint16
 }
 
 func (m *serverKeyExchangeMsg) equal(i interface{}) bool {
@@ -997,12 +1015,29 @@ func (m *serverKeyExchangeMsg) marshal() []byte {
 		return m.raw
 	}
 	length := len(m.key)
-	x := make([]byte, length+4)
+	x := make([]byte, length+12)
 	x[0] = typeServerKeyExchange
 	x[1] = uint8(length >> 16)
 	x[2] = uint8(length >> 8)
 	x[3] = uint8(length)
-	copy(x[4:], m.key)
+
+	// Message sequence
+	x[4] = byte(m.sequence >> 8)
+	x[5] = byte(m.sequence)
+
+	// Fragment offset
+	// TODO (chris) Handle properly
+	x[6] = 0
+	x[7] = 0
+	x[8] = 0
+
+	// Fragment length
+	// TODO (chris) Handle properly
+	x[9] = uint8(length >> 16)
+	x[10] = uint8(length >> 8)
+	x[11] = uint8(length)
+
+	copy(x[12:], m.key)
 
 	m.raw = x
 	return x
@@ -1013,6 +1048,10 @@ func (m *serverKeyExchangeMsg) unmarshal(data []byte) bool {
 	if len(data) < 12 {
 		return false
 	}
+
+	// Message sequence number
+	m.sequence = uint16(data[4])<<8 | uint16(data[5])
+
 	m.key = data[12:]
 	return true
 }
@@ -1083,7 +1122,9 @@ func (m *certificateStatusMsg) unmarshal(data []byte) bool {
 	return true
 }
 
-type serverHelloDoneMsg struct{}
+type serverHelloDoneMsg struct{
+	sequence uint16
+}
 
 func (m *serverHelloDoneMsg) equal(i interface{}) bool {
 	_, ok := i.(*serverHelloDoneMsg)
@@ -1091,12 +1132,19 @@ func (m *serverHelloDoneMsg) equal(i interface{}) bool {
 }
 
 func (m *serverHelloDoneMsg) marshal() []byte {
-	x := make([]byte, 4)
+	x := make([]byte, 12)
 	x[0] = typeServerHelloDone
+
+	// Message sequence number
+	x[4] = uint8(m.sequence >> 8)
+	x[5] = uint8(m.sequence)
+
 	return x
 }
 
 func (m *serverHelloDoneMsg) unmarshal(data []byte) bool {
+	// Message sequence number
+	m.sequence = uint16(data[4])<<8 | uint16(data[5])
 	return len(data) == 12
 }
 
@@ -1190,7 +1238,7 @@ func (m *finishedMsg) marshal() (x []byte) {
 	// Message sequence
 	// TODO (chris) Properly step value
 	x[4] = byte(m.sequence >> 8)
-	x[5] = byte(m.sequence)
+	x[5] = 1
 
 	// Fragment offset
 	// TODO (chris) Properly handle fragments
@@ -1209,10 +1257,14 @@ func (m *finishedMsg) marshal() (x []byte) {
 
 func (m *finishedMsg) unmarshal(data []byte) bool {
 	m.raw = data
-	if len(data) < 4 {
+	if len(data) < 12 {
 		return false
 	}
-	m.verifyData = data[4:]
+
+	// Message sequence number
+	m.sequence = uint16(data[4])<<8 | uint16(data[5])
+
+	m.verifyData = data[12:]
 	return true
 }
 
@@ -1395,6 +1447,9 @@ func (m *certificateRequestMsg) unmarshal(data []byte) bool {
 		return false
 	}
 
+	// Message sequence number
+	m.sequence = uint16(data[4])<< 8 | uint16(data[5])
+
 	numCertTypes := int(data[12])
 	data = data[13:]
 	if numCertTypes == 0 || len(data) <= numCertTypes {
@@ -1530,7 +1585,7 @@ func (m *certificateVerifyMsg) marshal() (x []byte) {
 func (m *certificateVerifyMsg) unmarshal(data []byte) bool {
 	m.raw = data
 
-	if len(data) < 6 {
+	if len(data) < 14 {
 		return false
 	}
 
@@ -1539,7 +1594,10 @@ func (m *certificateVerifyMsg) unmarshal(data []byte) bool {
 		return false
 	}
 
-	data = data[4:]
+	// Message sequence number
+	m.sequence = uint16(data[4])<<8 | uint16(data[5])
+
+	data = data[12:]
 	if m.hasSignatureAndHash {
 		m.signatureAlgorithm = SignatureScheme(data[0])<<8 | SignatureScheme(data[1])
 		data = data[2:]
