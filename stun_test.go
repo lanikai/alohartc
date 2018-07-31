@@ -2,7 +2,6 @@ package webrtc
 
 import (
 	"bytes"
-	"log"
 	"testing"
 )
 
@@ -26,17 +25,46 @@ func TestParseStunMessage(t *testing.T) {
 	if err != nil {
 		t.Error(err)
 	}
-	log.Println("type:", msg.header.MessageType)
-	log.Println("length:", msg.header.MessageLength)
-	log.Printf("magic cookie: %#x", msg.header.MagicCookie)
-	log.Println("transaction ID:", msg.header.TransactionID)
-	log.Println("class:", msg.class)
-	log.Println("method:", msg.method)
-	log.Println("attributes:", msg.attributes)
+	t.Log("type:", msg.header.MessageType)
+	t.Log("length:", msg.header.MessageLength)
+	t.Logf("magic cookie: %#x", msg.header.MagicCookie)
+	t.Log("transaction ID:", msg.header.TransactionID)
+	t.Log("class:", msg.class)
+	t.Log("method:", msg.method)
+	t.Log("attributes:", msg.attributes)
 
 	b2 := msg.Bytes()
 	if !bytes.Equal(b, b2) {
-		t.Errorf("Serialized STUN message not equal to original: %v", b2)
+		t.Errorf("Serialized STUN message not equal to original: %s", b2)
+	}
+
+	msg2, err := newStunMessage(msg.class, msg.method, msg.header.TransactionID[:])
+	if err != nil {
+		t.Error(err)
+	}
+	for _, attr := range msg.attributes {
+		msg2.AddAttribute(attr.Type, attr.Value)
+	}
+
+	b3 := msg2.Bytes()
+	if !bytes.Equal(b, b3) {
+		t.Errorf("Reconstructed STUN message not equal to original: %s", b3)
+	}
+}
+
+func TestNewStunMessage(t *testing.T) {
+	tid := []byte("0123456789ab")
+	msg, err := newStunMessage(stunRequestClass, 0, tid)
+	if err != nil {
+		t.Errorf("Failed to create STUN message: %s", err)
+	}
+
+	msg2, err := parseStunMessage(msg.Bytes())
+	if err != nil {
+		t.Error(err)
+	}
+	if msg.header != msg2.header {
+		t.Errorf("Parsed STUN header not equal to original")
 	}
 }
 

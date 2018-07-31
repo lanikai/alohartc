@@ -3,8 +3,10 @@ package webrtc
 import (
 	"bytes"
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha1"
 	"encoding/binary"
+	"fmt"
 	"hash/crc32"
 	"log"
 	"net"
@@ -145,12 +147,9 @@ func (pc *PeerConnection) stunBinding(candidate string, key string) error {
 // Implementation of STUN (Sessian Traversal Utilities for NAT) following RFC5389
 // (https://tools.ietf.org/html/rfc5389).
 
-
-// Section 6. STUN Message Structure
-
 type stunMessage struct {
 	header stunHeader
-	class byte
+	class uint16
 	method uint16
 	attributes []stunAttribute
 }
@@ -181,6 +180,31 @@ type stunHeader struct {
 
 const stunHeaderLength = 20
 
+// Figure 3: Format of STUN Message Type Field
+//     0                 1
+//     2  3  4 5 6 7 8 9 0 1 2 3 4 5
+//    +--+--+-+-+-+-+-+-+-+-+-+-+-+-+
+//    |M |M |M|M|M|C|M|M|M|C|M|M|M|M|
+//    |11|10|9|8|7|1|6|5|4|0|3|2|1|0|
+//    +--+--+-+-+-+-+-+-+-+-+-+-+-+-+
+const classMask1  = 0x0100  // 0b0000000100000000
+const classMask2  = 0x0010  // 0b0000000000010000
+const methodMask1 = 0x3e00  // 0b0011111000000000
+const methodMask2 = 0x00e0  // 0b0000000011100000
+const methodMask3 = 0x000f  // 0b0000000000001111
+
+func decomposeMessageType(t uint16) (uint16, uint16) {
+	class := (t & classMask1) >> 7 | (t & classMask2) >> 4
+	method := (t & methodMask1) >> 2 | (t & methodMask2) >> 1 | (t & methodMask3)
+	return class, method
+}
+
+func computeMessageType(class uint16, method uint16) uint16 {
+	t := (class << 7) & classMask1 | (class << 4) & classMask2
+	t |= (method << 2) & methodMask1 | (method << 1) & methodMask2 | (method & methodMask3)
+	return t
+}
+
 // Figure 4: Format of STUN Attributes
 //     0                   1                   2                   3
 //     0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
@@ -195,24 +219,52 @@ type stunAttribute struct {
 	Value []byte
 }
 
+// If transactionID is nil, a random transaction ID will be generated.
+func newStunMessage(class uint16, method uint16, transactionID []byte) (*stunMessage, error) {
+	if class >> 2 != 0 {
+		return nil, fmt.Errorf("Invalid STUN message class: %#x", class)
+	}
+	if method >> 12 != 0 {
+		return nil, fmt.Errorf("Invalid STUN method: %#x", method)
+	}
+	if ! (transactionID == nil || len(transactionID) == 12) {
+		return nil, fmt.Errorf("Invalid transaction ID: %s", transactionID)
+	}
+
+	header := stunHeader{
+		MessageType: computeMessageType(class, method),
+		MessageLength: 0,
+		MagicCookie: 0x2112A442,
+	}
+	if transactionID == nil {
+		rand.Read(header.TransactionID[:])
+	} else {
+		copy(header.TransactionID[:], transactionID)
+	}
+
+	return &stunMessage{ header: header }, nil
+}
+
+func (msg *stunMessage) AddAttribute(t uint16, v []byte) {
+	l := uint16(len(v))
+	msg.attributes = append(msg.attributes, stunAttribute{t, l, v})
+	msg.header.MessageLength += 4 + l + uint16(pad4(l))
+}
+
 func (msg *stunMessage) Bytes() []byte {
-	buf := make([]byte, msg.totalLength())
-	msg.write(bytes.NewBuffer(buf))
+	buf := make([]byte, stunHeaderLength + int(msg.header.MessageLength))
+	msg.writeTo(bytes.NewBuffer(buf))
 	return buf
 }
 
-func (msg *stunMessage) totalLength() int {
-	return int(stunHeaderLength + msg.header.MessageLength)
-}
-
-func (msg *stunMessage) write(b *bytes.Buffer) {
-	msg.header.write(b)
+func (msg *stunMessage) writeTo(b *bytes.Buffer) {
+	msg.header.writeTo(b)
 	for _, attr := range msg.attributes {
-		attr.write(b)
+		attr.writeTo(b)
 	}
 }
 
-func (header *stunHeader) write(b *bytes.Buffer) {
+func (header *stunHeader) writeTo(b *bytes.Buffer) {
 	binary.BigEndian.PutUint16(b.Next(2), header.MessageType)
 	binary.BigEndian.PutUint16(b.Next(2), header.MessageLength)
 	binary.BigEndian.PutUint32(b.Next(4), header.MagicCookie)
@@ -221,7 +273,7 @@ func (header *stunHeader) write(b *bytes.Buffer) {
 
 var zeros = []byte{ 0, 0, 0, 0 }
 
-func (attr *stunAttribute) write(b *bytes.Buffer) {
+func (attr *stunAttribute) writeTo(b *bytes.Buffer) {
 	binary.BigEndian.PutUint16(b.Next(2), attr.Type)
 	binary.BigEndian.PutUint16(b.Next(2), attr.Length)
 	copy(b.Next(int(attr.Length)), attr.Value)
@@ -280,30 +332,8 @@ func (header *stunHeader) isValid() bool {
 	return true
 }
 
-func decomposeMessageType(t uint16) (byte, uint16) {
-	// Figure 3: Format of STUN Message Type Field
-	//     0                 1
-	//     2  3  4 5 6 7 8 9 0 1 2 3 4 5
-	//    +--+--+-+-+-+-+-+-+-+-+-+-+-+-+
-	//    |M |M |M|M|M|C|M|M|M|C|M|M|M|M|
-	//    |11|10|9|8|7|1|6|5|4|0|3|2|1|0|
-	//    +--+--+-+-+-+-+-+-+-+-+-+-+-+-+
-	const classMask1  = 0x0100  // 0b00000100000000
-	const classMask2  = 0x0010  // 0b00000000010000
-	const methodMask1 = 0x3e00  // 0b11111000000000
-	const methodMask2 = 0x00e0  // 0b00000011100000
-	const methodMask3 = 0x000f  // 0b00000000001111
-	class := (t & classMask1) >> 7 + (t & classMask2) >> 4
-	method := (t & methodMask1) >> 2 + (t & methodMask2) >> 1 + (t & methodMask3)
-	return byte(class), method
-}
-
 // Return the number of extra bytes needed to pad the given length to a 4-byte boundary.
 // The result will be either 0, 1, 2, or 3.
 func pad4(n uint16) int {
 	return -int(n) & 3
-}
-
-func StunBindingRequest() ([]byte, error) {
-	return nil, nil
 }
