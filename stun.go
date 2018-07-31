@@ -196,35 +196,36 @@ type stunAttribute struct {
 }
 
 func (msg *stunMessage) Bytes() []byte {
-	buf := make([]byte, 0, stunHeaderLength + msg.header.MessageLength)
+	buf := make([]byte, msg.totalLength())
+	msg.write(bytes.NewBuffer(buf))
+	return buf
+}
 
-	buf = append(buf, msg.header.Bytes()...)
+func (msg *stunMessage) totalLength() int {
+	return int(stunHeaderLength + msg.header.MessageLength)
+}
+
+func (msg *stunMessage) write(b *bytes.Buffer) {
+	msg.header.write(b)
 	for _, attr := range msg.attributes {
-		buf = append(buf, attr.Bytes()...)
+		attr.write(b)
 	}
-
-	if len(buf) != cap(buf) {
-		log.Fatal("Serialized message unexpected length: ", len(buf), " != ", cap(buf))
-	}
-	return buf
 }
 
-func (header *stunHeader) Bytes() []byte {
-	buf := make([]byte, stunHeaderLength)
-	binary.BigEndian.PutUint16(buf[0:2], header.MessageType)
-	binary.BigEndian.PutUint16(buf[2:4], header.MessageLength)
-	binary.BigEndian.PutUint32(buf[4:8], header.MagicCookie)
-	copy(buf[8:20], header.TransactionID[:])
-	return buf
+func (header *stunHeader) write(b *bytes.Buffer) {
+	binary.BigEndian.PutUint16(b.Next(2), header.MessageType)
+	binary.BigEndian.PutUint16(b.Next(2), header.MessageLength)
+	binary.BigEndian.PutUint32(b.Next(4), header.MagicCookie)
+	copy(b.Next(12), header.TransactionID[:])
 }
 
-func (attr *stunAttribute) Bytes() []byte {
-	paddedLength := 4 + int(attr.Length) + pad4(attr.Length)
-	buf := make([]byte, paddedLength)
-	binary.BigEndian.PutUint16(buf[0:2], attr.Type)
-	binary.BigEndian.PutUint16(buf[2:4], attr.Length)
-	copy(buf[4:], attr.Value)
-	return buf
+var zeros = []byte{ 0, 0, 0, 0 }
+
+func (attr *stunAttribute) write(b *bytes.Buffer) {
+	binary.BigEndian.PutUint16(b.Next(2), attr.Type)
+	binary.BigEndian.PutUint16(b.Next(2), attr.Length)
+	copy(b.Next(int(attr.Length)), attr.Value)
+	copy(b.Next(pad4(attr.Length)), zeros)
 }
 
 // Returns (nil, nil) if the data is not a STUN message.
