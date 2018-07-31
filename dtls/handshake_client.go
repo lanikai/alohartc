@@ -718,11 +718,6 @@ func (hs *clientHandshakeState) sendFinished(out []byte) error {
 		}
 	}
 
-	// Step epoch and reset sequence numbers
-	c.epoch++
-	c.clientSequenceNum = 0
-	c.serverSequenceNum = 0
-
 	finished := new(finishedMsg)
 	finished.verifyData = hs.finishedHash.clientSum(hs.masterSecret)
 	hs.finishedHash.Write(finished.marshal())
