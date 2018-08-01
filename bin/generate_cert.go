@@ -32,7 +32,7 @@ func main() {
 		)
 
 		if err = ioutil.WriteFile(
-			"private.pem",
+			"server-private.pem",
 			pemEncoded,
 			0644,
 		); err != nil {
@@ -68,12 +68,14 @@ func main() {
 		log.Fatal(err)
 	}
 
-	certOut, err := os.Create("client.pem")
+	certOut, err := os.Create("server.pem")
 	if err != nil {
 		log.Fatal(err)
 	}
 	pem.Encode(certOut, &pem.Block{Type: "CERTIFICATE", Bytes: derBytes})
 	certOut.Close()
+
+	ioutil.WriteFile("server.key", derBytes, 0600)
 
 	// Compute fingerprint
 	log.Printf("SHA-256 fingerprint: %x\n", sha256.Sum256(derBytes))

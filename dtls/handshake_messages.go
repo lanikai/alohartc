@@ -6,6 +6,7 @@ package dtls
 
 import (
 	"bytes"
+	"log"
 	"strings"
 )
 
@@ -30,6 +31,7 @@ type clientHelloMsg struct {
 	secureRenegotiationSupported bool
 	alpnProtocols                []string
 	srtp                         bool
+	sequence                     uint16
 }
 
 func (m *clientHelloMsg) equal(i interface{}) bool {
@@ -128,8 +130,9 @@ func (m *clientHelloMsg) marshal() []byte {
 	w[3] = uint8(length)
 
 	// Message seq
-	w[4] = 0
-	w[5] = 0
+	log.Println(m.sequence)
+	w[4] = uint8(m.sequence >> 8)
+	w[5] = uint8(m.sequence)
 
 	// Fragment offset
 	w[6] = 0
@@ -885,6 +888,78 @@ func (m *serverHelloMsg) unmarshal(data []byte) bool {
 		}
 		data = data[length:]
 	}
+
+	return true
+}
+
+type helloVerifyRequestMsg struct {
+	raw      []byte
+	vers     uint16
+	sequence uint16
+	cookie   []byte
+}
+
+func (m *helloVerifyRequestMsg) equal(i interface{}) bool {
+	m1, ok := i.(*helloVerifyRequestMsg)
+	if !ok {
+		return false
+	}
+
+	return bytes.Equal(m.raw, m1.raw) &&
+		bytes.Equal(m.cookie, m1.cookie)
+}
+
+func (m *helloVerifyRequestMsg) marshal() []byte {
+	if m.raw != nil {
+		return m.raw
+	}
+	length := len(m.cookie)
+	x := make([]byte, length+12)
+	x[0] = typeHelloVerifyRequest
+	x[1] = uint8(length >> 16)
+	x[2] = uint8(length >> 8)
+	x[3] = uint8(length)
+
+	// Message sequence
+	x[4] = byte(m.sequence >> 8)
+	x[5] = byte(m.sequence)
+
+	// Fragment offset
+	// TODO (chris) Handle properly
+	x[6] = 0
+	x[7] = 0
+	x[8] = 0
+
+	// Fragment length
+	// TODO (chris) Handle properly
+	x[9] = uint8(length >> 16)
+	x[10] = uint8(length >> 8)
+	x[11] = uint8(length)
+
+	x[12] = ^uint8(m.vers >> 8)
+	x[13] = ^uint8(m.vers)
+	x[14] = uint8(len(m.cookie))
+	copy(x[15:], m.cookie)
+
+	m.raw = x
+	return x
+}
+
+func (m *helloVerifyRequestMsg) unmarshal(data []byte) bool {
+	m.raw = data
+	if len(data) < 15 {
+		return false
+	}
+
+	m.sequence = uint16(data[4])<<8 | uint16(data[5])
+	m.vers = uint16(^data[12])<<8 | uint16(^data[13])
+
+	cookieLen := int(data[14])
+	if len(data[15:]) != cookieLen {
+		return false
+	}
+
+	m.cookie = data[15:]
 
 	return true
 }

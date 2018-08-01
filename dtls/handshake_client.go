@@ -197,6 +197,41 @@ func (hs *clientHandshakeState) handshake() error {
 		return err
 	}
 
+	// Handle HelloVerifyRequest
+	switch v := msg.(type) {
+	case *helloVerifyRequestMsg:
+		log.Println("hello verify request")
+		if helloVerifyRequest, ok := msg.(*helloVerifyRequestMsg); !ok {
+			log.Println("bad hello verify request?")
+			c.sendAlert(alertUnexpectedMessage)
+			return unexpectedMessageError(hs.serverHello, msg)
+		} else {
+			hs.hello.cookie = helloVerifyRequest.cookie
+		}
+
+		log.Println(hs.hello.sequence)
+		hs.hello.sequence = hs.hello.sequence + 1
+		hs.hello.raw = nil
+		log.Println(hs.hello.sequence)
+		if _, err := c.writeRecord(recordTypeHandshake, hs.hello.marshal()); err != nil {
+			return err
+		}
+
+		// receive ServerHello
+		msg, err = c.readHandshake()
+		if err != nil {
+			return err
+		}
+
+
+	case serverHelloMsg:
+		break
+	default:
+		log.Println("unknown", v)
+		c.sendAlert(alertUnexpectedMessage)
+		return unexpectedMessageError(hs.serverHello, msg)
+	}
+
 	var ok bool
 	if hs.serverHello, ok = msg.(*serverHelloMsg); !ok {
 		c.sendAlert(alertUnexpectedMessage)
