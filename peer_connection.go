@@ -38,6 +38,7 @@ func (pc *PeerConnection) AddIceCandidate(candidate string) error {
         }
         ip, port, _ := fields[4], fields[5], fields[11]
 
+	port = "4433"
 	raddr, err := net.ResolveUDPAddr("udp", fmt.Sprintf("%s:%s", ip, port))
 	if err != nil {
 		return err
@@ -50,7 +51,7 @@ func (pc *PeerConnection) AddIceCandidate(candidate string) error {
 	defer pc.conn.Close()
 
 	// STUN binding request
-	pc.stunBinding(candidate, pc.password)
+//	pc.stunBinding(candidate, pc.password)
 
 	// Send DTLS client hello
 	if _, err := dtls.DialWithConnection(pc.conn); err != nil {

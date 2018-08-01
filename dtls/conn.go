@@ -296,8 +296,9 @@ func (hc *halfConn) decrypt(b *block) (ok bool, prefixLen int, alertValue alert)
 	// decrypt
 	if hc.cipher != nil {
 		switch c := hc.cipher.(type) {
-		case cipher.Stream:
-			c.XORKeyStream(payload, payload)
+// Stream cipher not supported in DTLS
+//		case cipher.Stream:
+//			c.XORKeyStream(payload, payload)
 		case aead:
 			explicitIVLen = c.explicitNonceLen()
 			if len(payload) < explicitIVLen {
@@ -417,9 +418,9 @@ func (hc *halfConn) encrypt(b *block, explicitIVLen int) (bool, alert) {
 	// encrypt
 	if hc.cipher != nil {
 		switch c := hc.cipher.(type) {
-		case cipher.Stream:
-			log.Println("encrypt cipher stream")
-			c.XORKeyStream(payload, payload)
+// Stream cipher not supported in DTLS
+//		case cipher.Stream:
+//			c.XORKeyStream(payload, payload)
 		case aead:
 			log.Println("encrypt aead")
 			payloadLen := len(b.data) - recordHeaderLen - explicitIVLen
@@ -827,8 +828,9 @@ func (c *Conn) maxPayloadSizeForWrite(typ recordType, explicitIVLen int) int {
 	payloadBytes := tcpMSSEstimate - recordHeaderLen - explicitIVLen
 	if c.out.cipher != nil {
 		switch ciph := c.out.cipher.(type) {
-		case cipher.Stream:
-			payloadBytes -= macSize
+// Stream cipher not supported in DTLS
+//		case cipher.Stream:
+//			payloadBytes -= macSize
 		case cipher.AEAD:
 			payloadBytes -= ciph.Overhead()
 		case cbcMode:
@@ -1005,6 +1007,8 @@ func (c *Conn) readHandshake() (interface{}, error) {
 		m = new(clientHelloMsg)
 	case typeServerHello:
 		m = new(serverHelloMsg)
+	case typeHelloVerifyRequest:
+		m = new(helloVerifyRequestMsg)
 	case typeNewSessionTicket:
 		m = new(newSessionTicketMsg)
 	case typeCertificate:
