@@ -11,6 +11,7 @@ import (
 	"crypto/cipher"
 	"crypto/subtle"
 	"crypto/x509"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -149,7 +150,7 @@ type halfConn struct {
 	version        uint16      // protocol version
 	cipher         interface{} // cipher algorithm
 	mac            macFunction
-	seq            [8]byte  // 64-bit sequence number
+	seq            [8]byte  // 64-bit epoch + sequence number
 	bfree          *block   // list of free blocks
 	additionalData [13]byte // to avoid allocs; interface method args escape
 
@@ -158,9 +159,6 @@ type halfConn struct {
 
 	// used to save allocating a new buffer for each MAC.
 	inDigestBuf, outDigestBuf []byte
-
-	epoch          uint16
-	sequence       uint64
 }
 
 func (hc *halfConn) setErrorLocked(err error) error {
@@ -186,21 +184,22 @@ func (hc *halfConn) changeCipherSpec() error {
 	hc.mac = hc.nextMac
 	hc.nextCipher = nil
 	hc.nextMac = nil
-	hc.sequence = 0
-	for i := range hc.seq {
+
+	// Zero sequence
+	for i := 2; i < 8; i++ {
 		hc.seq[i] = 0
 	}
-	hc.epoch++
+
+	// Increment epoch
+	binary.BigEndian.PutUint16(hc.seq[0:2], binary.BigEndian.Uint16(hc.seq[0:2]) + 1)
+
 	return nil
 }
 
 // incSeq increments the sequence number.
 func (hc *halfConn) incSeq() {
 	// Increment sequence
-	hc.sequence++
-
-	// Big endian up-counter
-	for i := 7; i >= 0; i-- {
+	for i := 7; i >= 2; i-- {
 		hc.seq[i]++
 		if hc.seq[i] != 0 {
 			return
@@ -324,7 +323,7 @@ func (hc *halfConn) decrypt(b *block) (ok bool, prefixLen int, alertValue alert)
 			b.resize(recordHeaderLen + explicitIVLen + len(payload))
 		case cbcMode:
 			blockSize := c.BlockSize()
-			//			if hc.version >= VersionTLS11 {
+			// if hc.version >= VersionTLS11 {
 			// DTLS 1.0 == TLS 1.1
 			if hc.version >= VersionDTLS10 {
 				explicitIVLen = blockSize
@@ -424,9 +423,7 @@ func (hc *halfConn) encrypt(b *block, explicitIVLen int) (bool, alert) {
 		case aead:
 			log.Println("encrypt aead")
 			payloadLen := len(b.data) - recordHeaderLen - explicitIVLen
-			log.Println("recordHeaderLen:", recordHeaderLen)
 			b.resize(len(b.data) + c.Overhead())
-			log.Println("c.Overhead:", c.Overhead())
 			nonce := b.data[recordHeaderLen : recordHeaderLen+explicitIVLen]
 			log.Println("nonce:", nonce)
 			if len(nonce) == 0 {
@@ -931,17 +928,8 @@ func (c *Conn) writeRecordLocked(typ recordType, data []byte) (int, error) {
 		b.data[1] = ^byte(vers >> 8)
 		b.data[2] = ^byte(vers)
 
-		// Epoch
-		b.data[3] = byte(c.out.epoch >> 8)
-		b.data[4] = byte(c.out.epoch)
-
-		// Sequence number
-		b.data[5] = byte(c.out.sequence >> 40)
-		b.data[6] = byte(c.out.sequence >> 32)
-		b.data[7] = byte(c.out.sequence >> 24)
-		b.data[8] = byte(c.out.sequence >> 16)
-		b.data[9] = byte(c.out.sequence >> 8)
-		b.data[10] = byte(c.out.sequence)
+		// Epoch followed by sequence number
+		copy(b.data[3:11], c.out.seq[:])
 
 		b.data[11] = byte(m >> 8)
 		b.data[12] = byte(m)
