@@ -3,11 +3,14 @@ package main
 import (
 	"crypto/elliptic"
 	"crypto/ecdsa"
+	"crypto/sha256"
 	"crypto/rand"
 	"crypto/x509"
+	"encoding/pem"
 	"io/ioutil"
 	"log"
 	"math/big"
+	"os"
 )
 
 func main() {
@@ -24,9 +27,13 @@ func main() {
 	if keyBytes, err := x509.MarshalECPrivateKey(key); err != nil {
 		log.Fatal(err)
 	} else {
+		pemEncoded := pem.EncodeToMemory(
+			&pem.Block{Type: "PRIVATE KEY", Bytes: keyBytes},
+		)
+
 		if err = ioutil.WriteFile(
-			"private.der",
-			keyBytes,
+			"private.pem",
+			pemEncoded,
 			0644,
 		); err != nil {
 			log.Fatal(err)
@@ -49,6 +56,7 @@ func main() {
 	cert.SerialNumber.Exp(big.NewInt(2), big.NewInt(64), nil).Sub(cert.SerialNumber, big.NewInt(1))
 	cert.SerialNumber, err = rand.Int(rand.Reader, cert.SerialNumber)
 
+	// Create certificate
 	derBytes, err := x509.CreateCertificate(
 		rand.Reader,
 		cert,
@@ -60,7 +68,13 @@ func main() {
 		log.Fatal(err)
 	}
 
-	if err := ioutil.WriteFile("client_out.crt", derBytes, 0644); err != nil {
+	certOut, err := os.Create("client.pem")
+	if err != nil {
 		log.Fatal(err)
 	}
+	pem.Encode(certOut, &pem.Block{Type: "CERTIFICATE", Bytes: derBytes})
+	certOut.Close()
+
+	// Compute fingerprint
+	log.Printf("SHA-256 fingerprint: %x\n", sha256.Sum256(derBytes))
 }
