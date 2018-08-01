@@ -1238,7 +1238,7 @@ func (m *finishedMsg) marshal() (x []byte) {
 	// Message sequence
 	// TODO (chris) Properly step value
 	x[4] = byte(m.sequence >> 8)
-	x[5] = 1
+	x[5] = byte(m.sequence)
 
 	// Fragment offset
 	// TODO (chris) Properly handle fragments
