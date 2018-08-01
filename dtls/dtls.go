@@ -84,7 +84,7 @@ func DialWithConnection(rawConn net.Conn) (*Conn, error) {
 	}
 
 	// Load client certificate from file
-	cert, err := LoadX509KeyPair("ecdsacert.pem", "ecdsakey.pem")
+	cert, err := LoadX509KeyPair("client.pem", "private.pem")
 	if err != nil {
 		log.Fatal(err)
 	}
