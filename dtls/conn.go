@@ -12,6 +12,7 @@ import (
 	"crypto/subtle"
 	"crypto/x509"
 	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -191,7 +192,7 @@ func (hc *halfConn) changeCipherSpec() error {
 	}
 
 	// Increment epoch
-	binary.BigEndian.PutUint16(hc.seq[0:2], binary.BigEndian.Uint16(hc.seq[0:2]) + 1)
+	binary.BigEndian.PutUint16(hc.seq[0:2], binary.BigEndian.Uint16(hc.seq[0:2])+1)
 
 	return nil
 }
@@ -251,22 +252,6 @@ func extractPadding(payload []byte) (toRemove int, good byte) {
 	return
 }
 
-// extractPaddingSSL30 is a replacement for extractPadding in the case that the
-// protocol version is SSLv3. In this version, the contents of the padding
-// are random and cannot be checked.
-func extractPaddingSSL30(payload []byte) (toRemove int, good byte) {
-	if len(payload) < 1 {
-		return 0, 0
-	}
-
-	paddingLen := int(payload[len(payload)-1]) + 1
-	if paddingLen > len(payload) {
-		return 0, 0
-	}
-
-	return paddingLen, 255
-}
-
 func roundUp(a, b int) int {
 	return a + (b-a%b)%b
 }
@@ -296,9 +281,6 @@ func (hc *halfConn) decrypt(b *block) (ok bool, prefixLen int, alertValue alert)
 	// decrypt
 	if hc.cipher != nil {
 		switch c := hc.cipher.(type) {
-// Stream cipher not supported in DTLS
-//		case cipher.Stream:
-//			c.XORKeyStream(payload, payload)
 		case aead:
 			explicitIVLen = c.explicitNonceLen()
 			if len(payload) < explicitIVLen {
@@ -324,8 +306,6 @@ func (hc *halfConn) decrypt(b *block) (ok bool, prefixLen int, alertValue alert)
 			b.resize(recordHeaderLen + explicitIVLen + len(payload))
 		case cbcMode:
 			blockSize := c.BlockSize()
-			// if hc.version >= VersionTLS11 {
-			// DTLS 1.0 == TLS 1.1
 			if hc.version >= VersionDTLS10 {
 				explicitIVLen = blockSize
 			}
@@ -339,9 +319,6 @@ func (hc *halfConn) decrypt(b *block) (ok bool, prefixLen int, alertValue alert)
 				payload = payload[explicitIVLen:]
 			}
 			c.CryptBlocks(payload, payload)
-			//			if hc.version == VersionSSL30 {
-			//				paddingLen, paddingGood = extractPaddingSSL30(payload)
-			//			} else {
 			paddingLen, paddingGood = extractPadding(payload)
 
 			// To protect against CBC padding oracles like Lucky13, the data
@@ -350,7 +327,6 @@ func (hc *halfConn) decrypt(b *block) (ok bool, prefixLen int, alertValue alert)
 			// computing the digest. This makes the MAC constant time as
 			// long as the digest computation is constant time and does not
 			// affect the subsequent write.
-			//			}
 		default:
 			panic("unknown cipher type")
 		}
@@ -365,8 +341,8 @@ func (hc *halfConn) decrypt(b *block) (ok bool, prefixLen int, alertValue alert)
 		// strip mac off payload, b.data
 		n := len(payload) - macSize - paddingLen
 		n = subtle.ConstantTimeSelect(int(uint32(n)>>31), 0, n) // if n < 0 { n = 0 }
-		b.data[3] = byte(n >> 8)
-		b.data[4] = byte(n)
+		b.data[11] = byte(n >> 8)
+		b.data[12] = byte(n)
 		remoteMAC := payload[n : n+macSize]
 		localMAC := hc.mac.MAC(hc.inDigestBuf, hc.seq[0:], b.data[:recordHeaderLen], payload[:n], payload[n+macSize:])
 
@@ -401,10 +377,8 @@ func padToBlockSize(payload []byte, blockSize int) (prefix, finalBlock []byte) {
 
 // encrypt encrypts and macs the data in b.
 func (hc *halfConn) encrypt(b *block, explicitIVLen int) (bool, alert) {
-	log.Println("encrypt", b, explicitIVLen)
 	// mac
 	if hc.mac != nil {
-		log.Println("encrypt (with hmac)")
 		mac := hc.mac.MAC(hc.outDigestBuf, hc.seq[0:], b.data[:recordHeaderLen], b.data[recordHeaderLen+explicitIVLen:], nil)
 
 		n := len(b.data)
@@ -418,31 +392,23 @@ func (hc *halfConn) encrypt(b *block, explicitIVLen int) (bool, alert) {
 	// encrypt
 	if hc.cipher != nil {
 		switch c := hc.cipher.(type) {
-// Stream cipher not supported in DTLS
-//		case cipher.Stream:
-//			c.XORKeyStream(payload, payload)
 		case aead:
-			log.Println("encrypt aead")
 			payloadLen := len(b.data) - recordHeaderLen - explicitIVLen
 			b.resize(len(b.data) + c.Overhead())
 			nonce := b.data[recordHeaderLen : recordHeaderLen+explicitIVLen]
-			log.Println("nonce:", nonce)
 			if len(nonce) == 0 {
 				nonce = hc.seq[:]
 			}
 			payload := b.data[recordHeaderLen+explicitIVLen:]
 			payload = payload[:payloadLen]
-			log.Println("payload:", payload)
 
 			copy(hc.additionalData[:], hc.seq[:])
 			copy(hc.additionalData[8:], b.data[:3])
 			hc.additionalData[11] = byte(payloadLen >> 8)
 			hc.additionalData[12] = byte(payloadLen)
-			log.Println("hc.additionalData:", hc.additionalData)
 
 			c.Seal(payload[:0], nonce, payload, hc.additionalData[:])
 		case cbcMode:
-			log.Println("encrypt cbc")
 			blockSize := c.BlockSize()
 			if explicitIVLen > 0 {
 				c.SetIV(payload[:explicitIVLen])
@@ -509,8 +475,13 @@ func (b *block) readFromUntil(r io.Reader, n int) error {
 	// read until have enough.
 	b.reserve(n)
 	for {
+		l := len(b.data)
 		m, err := r.Read(b.data[len(b.data):cap(b.data)])
 		b.data = b.data[0 : len(b.data)+m]
+		if m > 0 && b.data[0] == 0 {
+			log.Println("stun packet received?")
+			b.data = b.data[0:l]
+		}
 		if len(b.data) >= n {
 			// TODO(bradfitz,agl): slightly suspicious
 			// that we're throwing away r.Read's err here.
@@ -652,7 +623,6 @@ Again:
 		// it's probably not real.
 		if (typ != recordTypeAlert && typ != want) || vers >= 0x1000 {
 			c.sendAlert(alertUnexpectedMessage)
-			log.Println(vers)
 			return c.in.setErrorLocked(c.newRecordHeaderError("first record does not look like a DTLS handshake"))
 		}
 	}
@@ -828,9 +798,9 @@ func (c *Conn) maxPayloadSizeForWrite(typ recordType, explicitIVLen int) int {
 	payloadBytes := tcpMSSEstimate - recordHeaderLen - explicitIVLen
 	if c.out.cipher != nil {
 		switch ciph := c.out.cipher.(type) {
-// Stream cipher not supported in DTLS
-//		case cipher.Stream:
-//			payloadBytes -= macSize
+		// Stream cipher not supported in DTLS
+		//		case cipher.Stream:
+		//			payloadBytes -= macSize
 		case cipher.AEAD:
 			payloadBytes -= ciph.Overhead()
 		case cbcMode:
@@ -933,6 +903,7 @@ func (c *Conn) writeRecordLocked(typ recordType, data []byte) (int, error) {
 		// Epoch followed by sequence number
 		copy(b.data[3:11], c.out.seq[:])
 
+		// Length
 		b.data[11] = byte(m >> 8)
 		b.data[12] = byte(m)
 		if explicitIVLen > 0 {
@@ -946,7 +917,9 @@ func (c *Conn) writeRecordLocked(typ recordType, data []byte) (int, error) {
 			}
 		}
 		copy(b.data[recordHeaderLen+explicitIVLen:], data)
+		log.Println("before:\n", hex.Dump(b.data[recordHeaderLen+explicitIVLen:]))
 		c.out.encrypt(b, explicitIVLen)
+		log.Println("after:\n", hex.Dump(b.data[recordHeaderLen+explicitIVLen:]))
 		if _, err := c.write(b.data); err != nil {
 			return n, err
 		}
@@ -1119,7 +1092,6 @@ func (c *Conn) handleRenegotiation() error {
 
 	_, ok := msg.(*helloRequestMsg)
 	if !ok {
-		log.Println("hello request msg?")
 		c.sendAlert(alertUnexpectedMessage)
 		return alertUnexpectedMessage
 	}
