@@ -5,22 +5,20 @@ import (
 	"crypto/sha1"
 	"encoding/binary"
 	"hash/crc32"
-	"log"
 	"net"
 	"strings"
 	"time"
 )
 
 func (pc *PeerConnection) stunBinding(candidate string, key string) error {
-        fields := strings.Fields(candidate)
+	fields := strings.Fields(candidate)
 
-        // Skip non-UDP
-        if protocol := fields[2]; protocol != "udp" {
-                return nil
-        }
+	// Skip non-UDP
+	if protocol := fields[2]; protocol != "udp" {
+		return nil
+	}
 
-        ip, port, ufrag := fields[4], fields[5], fields[11]
-        log.Println(ip, port, ufrag)
+	_, _, ufrag := fields[4], fields[5], fields[11]
 
 	b := []byte{
 		0x00, 0x01, 0x00, 0x4c, 0x21, 0x12, 0xa4, 0x42,
@@ -56,39 +54,23 @@ func (pc *PeerConnection) stunBinding(candidate string, key string) error {
 	binary.BigEndian.PutUint32(b[92:96], crc)
 
 	// Send STUN binding request to caller
-	if n, err := pc.conn.Write(b); err != nil {
-		log.Println(n, err)
+	if _, err := pc.conn.Write(b); err != nil {
+		return err
 	}
 
 	// Await STUN binding response from caller
 	pkt := make([]byte, 1500)
 	pc.conn.SetReadDeadline(time.Now().Add(3 * time.Second))
-	n, err := pc.conn.Read(pkt)
+	_, err := pc.conn.Read(pkt)
 	if err != nil {
-		log.Fatal(n, err)
+		return err
 	}
-
-/*
-	clientHello := []byte{
-	0x16, 0xfe, 0xff, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x68, 0x01, 0x00, 0x00,
-	0x5c, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x5c, 0xfe, 0xfd, 0x26, 0x44, 0x54, 0x35, 0x89,
-	0xab, 0x2c, 0x3e, 0x44, 0xa7, 0x41, 0x27, 0x9a, 0x19, 0x23, 0x7f, 0xf2, 0xe2, 0xcc, 0xfd, 0x34,
-	0x9e, 0x14, 0x15, 0x00, 0x8b, 0x27, 0x62, 0xc4, 0x6a, 0xe1, 0x61, 0x00, 0x00, 0x00, 0x02,
-	                                          0xc0, 0x09,
-	                                          0x01, 0x00, 0x00, 0x30, 0xff, 0x01, 0x00, 0x01, 0x00,
-	0x00, 0x17, 0x00, 0x00, 0x00, 0x23, 0x00, 0x00, 0x00, 0x0d, 0x00, 0x06, 0x00, 0x04, 0x04, 0x03,
-	                                                                                    0x02, 0x01,
-	0x00, 0x0e, 0x00, 0x05, 0x00, 0x02, 0x00, 0x01, 0x00, 0x00, 0x0b, 0x00, 0x02, 0x01, 0x00, 0x00,
-	0x0a, 0x00, 0x06, 0x00, 0x04, 0x00, 0x1d, 0x00, 0x17,
-	}
-	conn.Write(clientHello)
-*/
 
 	// Await STUN binding request from caller
 	pc.conn.SetReadDeadline(time.Now().Add(time.Second))
-	n, addr, err := pc.conn.ReadFrom(pkt)
+	_, addr, err := pc.conn.ReadFrom(pkt)
 	if err != nil {
-		log.Println(err)
+		return err
 	}
 
 	// Send STUN binding response to caller
@@ -105,7 +87,7 @@ func (pc *PeerConnection) stunBinding(candidate string, key string) error {
 	// Must use same message transaction ID
 	copy(response[8:20], pkt[8:20])
 	// Set IP and port
-	binary.BigEndian.PutUint16(response[26:28], uint16(addr.(*net.UDPAddr).Port) ^ 0x2112)
+	binary.BigEndian.PutUint16(response[26:28], uint16(addr.(*net.UDPAddr).Port)^0x2112)
 	rip := addr.(*net.UDPAddr).IP
 	rip[0] ^= 0x21
 	rip[1] ^= 0x12

@@ -31,14 +31,13 @@ func NewPeerConnection() *PeerConnection {
 
 // Add remote ICE candidate
 func (pc *PeerConnection) AddIceCandidate(candidate string) error {
-        fields := strings.Fields(candidate)
-        if protocol := fields[2]; protocol != "udp" {
+	fields := strings.Fields(candidate)
+	if protocol := fields[2]; protocol != "udp" {
 		// Skip non-UDP
-                return nil
-        }
-        ip, port, _ := fields[4], fields[5], fields[11]
+		return nil
+	}
+	ip, port, _ := fields[4], fields[5], fields[11]
 
-	port = "4433"
 	raddr, err := net.ResolveUDPAddr("udp", fmt.Sprintf("%s:%s", ip, port))
 	if err != nil {
 		return err
@@ -51,7 +50,7 @@ func (pc *PeerConnection) AddIceCandidate(candidate string) error {
 	defer pc.conn.Close()
 
 	// STUN binding request
-//	pc.stunBinding(candidate, pc.password)
+	pc.stunBinding(candidate, pc.password)
 
 	// Send DTLS client hello
 	if _, err := dtls.DialWithConnection(pc.conn); err != nil {
@@ -76,7 +75,7 @@ a=rtcp:9 IN IP4 0.0.0.0
 a=ice-ufrag:n3E3
 a=ice-pwd:auh7I7RsuhlZQgS2XYLStR05
 a=ice-options:trickle
-a=fingerprint:sha-256 7E:23:0B:0F:CB:FE:D4:C2:A3:E5:34:B8:21:7B:84:92:71:9F:74:F7:D5:12:F4:F0:FF:8C:54:98:E1:8D:69:75
+a=fingerprint:sha-256 B8:D4:15:07:0A:E4:6B:6D:67:B9:A1:4F:7D:B8:29:A9:93:25:74:97:91:A4:41:58:68:F3:94:E6:57:A9:5F:BC
 a=setup:active
 a=mid:video
 a=sendonly

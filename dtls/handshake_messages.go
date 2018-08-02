@@ -6,7 +6,6 @@ package dtls
 
 import (
 	"bytes"
-	"log"
 	"strings"
 )
 
@@ -130,7 +129,6 @@ func (m *clientHelloMsg) marshal() []byte {
 	w[3] = uint8(length)
 
 	// Message seq
-	log.Println(m.sequence)
 	w[4] = uint8(m.sequence >> 8)
 	w[5] = uint8(m.sequence)
 
@@ -1197,7 +1195,7 @@ func (m *certificateStatusMsg) unmarshal(data []byte) bool {
 	return true
 }
 
-type serverHelloDoneMsg struct{
+type serverHelloDoneMsg struct {
 	sequence uint16
 }
 
@@ -1477,7 +1475,6 @@ func (m *certificateRequestMsg) marshal() (x []byte) {
 	x[10] = uint8(length >> 8)
 	x[11] = uint8(length)
 
-
 	x[12] = uint8(len(m.certificateTypes))
 
 	copy(x[13:], m.certificateTypes)
@@ -1523,7 +1520,7 @@ func (m *certificateRequestMsg) unmarshal(data []byte) bool {
 	}
 
 	// Message sequence number
-	m.sequence = uint16(data[4])<< 8 | uint16(data[5])
+	m.sequence = uint16(data[4])<<8 | uint16(data[5])
 
 	numCertTypes := int(data[12])
 	data = data[13:]
