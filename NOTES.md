@@ -12,6 +12,15 @@
 * DTLS Client Hello must be sent from and to same port tuple as STUN binding
   request and response.
 
+* OpenSSL 1.1.0h development DTLS 1.2 server:
+
+    DYLD_LIBRARY_PATH=/usr/local/stow/openssl-1.1.0h/lib /usr/local/stow/openssl-1.1.0h/bin/openssl s_server -dtls1_2 -msg -mtu 1500 -named_curve prime256v1 -key certs/ecdsakey.key -cert certs/ecdsacert.pem -use_srtp SRTP_AES128_CM_SHA1_80
+
+  Then run pure DTLS 1.2 client:
+
+    go run examples/simple_client.go
+
+
 ## Domain ideas
 
 RTC Logic (rtclogic.com)
