@@ -13,7 +13,6 @@ import (
 	"crypto/sha512"
 	"fmt"
 	"hash"
-	"log"
 )
 
 // Split a premaster secret in two as specified in RFC 4346, section 5.
@@ -65,7 +64,6 @@ func prf10(result, secret, label, seed []byte) {
 
 // prf12 implements the TLS 1.2 pseudo-random function, as defined in RFC 5246, section 5.
 func prf12(hashFunc func() hash.Hash) func(result, secret, label, seed []byte) {
-	log.Println("prf12")
 	return func(result, secret, label, seed []byte) {
 		labelAndSeed := make([]byte, len(label)+len(seed))
 		copy(labelAndSeed, label)
@@ -101,7 +99,6 @@ func prfAndHashForVersion(version uint16, suite *cipherSuite) (func(result, secr
 }
 
 func prfForVersion(version uint16, suite *cipherSuite) func(result, secret, label, seed []byte) {
-	log.Println("prf version:", version)
 	prf, _ := prfAndHashForVersion(version, suite)
 	return prf
 }
@@ -162,7 +159,7 @@ func lookupTLSHash(signatureAlgorithm SignatureScheme) (crypto.Hash, error) {
 
 func newFinishedHash(version uint16, cipherSuite *cipherSuite) finishedHash {
 	var buffer []byte
-//	if version == VersionSSL30 || version >= VersionTLS12 {
+	//	if version == VersionSSL30 || version >= VersionTLS12 {
 	if version >= VersionDTLS12 {
 		buffer = []byte{}
 	}

@@ -9,13 +9,10 @@ import (
 	"errors"
 	"fmt"
 	"io/ioutil"
-	"log"
 	"net"
-	"os"
 	"strings"
 	"time"
 )
-
 
 // Client returns a new TLS client side connection
 // using conn as the underlying transport.
@@ -31,8 +28,8 @@ func (timeoutError) Error() string   { return "tls: DialWithDialer timed out" }
 func (timeoutError) Timeout() bool   { return true }
 func (timeoutError) Temporary() bool { return true }
 
-func DialWithConnection(rawConn net.Conn) (*Conn, error) {
-//	sendClientHello(conn)
+func DialWithConnection(rawConn net.Conn, config *Config) (*Conn, error) {
+	//	sendClientHello(conn)
 
 	var err error
 
@@ -41,12 +38,12 @@ func DialWithConnection(rawConn net.Conn) (*Conn, error) {
 	// also need to start our own timers now.
 	timeout := 60 * time.Second
 
-//	if !dialer.Deadline.IsZero() {
-//		deadlineTimeout := time.Until(dialer.Deadline)
-//		if timeout == 0 || deadlineTimeout < timeout {
-//			timeout = deadlineTimeout
-//		}
-//	}
+	//	if !dialer.Deadline.IsZero() {
+	//		deadlineTimeout := time.Until(dialer.Deadline)
+	//		if timeout == 0 || deadlineTimeout < timeout {
+	//			timeout = deadlineTimeout
+	//		}
+	//	}
 
 	var errChannel chan error
 
@@ -57,13 +54,12 @@ func DialWithConnection(rawConn net.Conn) (*Conn, error) {
 		})
 	}
 
-//	rawConn, err := dialer.Dial(network, addr)
-//	if err != nil {
-//		return nil, err
-//	}
+	//	rawConn, err := dialer.Dial(network, addr)
+	//	if err != nil {
+	//		return nil, err
+	//	}
 
 	addr := rawConn.LocalAddr().String()
-	var config *Config
 
 	colonPos := strings.LastIndex(addr, ":")
 	if colonPos == -1 {
@@ -83,18 +79,6 @@ func DialWithConnection(rawConn net.Conn) (*Conn, error) {
 		config = c
 	}
 
-	// Load client certificate from file
-	cert, err := LoadX509KeyPair("client.pem", "private.pem")
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	// WebRTC certificate chain and host name are not set by browser(s)
-	config.InsecureSkipVerify = true
-	config.MinVersion = VersionDTLS12
-	config.Certificates = append(config.Certificates, cert)
-	config.KeyLogWriter = os.Stdout
-	config.ClientSessionCache = NewLRUClientSessionCache(4)
 	conn := Client(rawConn, config)
 
 	if timeout == 0 {
