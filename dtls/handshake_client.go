@@ -14,7 +14,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"strconv"
 	"strings"
@@ -186,33 +185,31 @@ func (c *Conn) clientHandshake() error {
 func (hs *clientHandshakeState) handshake() error {
 	c := hs.c
 
-	// send ClientHello
+	// Send ClientHello
 	if _, err := c.writeRecord(recordTypeHandshake, hs.hello.marshal()); err != nil {
 		return err
 	}
 
-	// receive ServerHello
+	// Receive ServerHello or HelloVerifyRequest
 	msg, err := c.readHandshake()
 	if err != nil {
 		return err
 	}
 
 	// Handle HelloVerifyRequest
-	switch v := msg.(type) {
+	switch msg.(type) {
 	case *helloVerifyRequestMsg:
-		log.Println("hello verify request")
 		if helloVerifyRequest, ok := msg.(*helloVerifyRequestMsg); !ok {
-			log.Println("bad hello verify request?")
 			c.sendAlert(alertUnexpectedMessage)
 			return unexpectedMessageError(hs.serverHello, msg)
 		} else {
 			hs.hello.cookie = helloVerifyRequest.cookie
 		}
 
-		log.Println(hs.hello.sequence)
-		hs.hello.sequence = hs.hello.sequence + 1
+		// Re-send ClientHello (with cookie)
+		hs.msgSequence++
+		hs.hello.sequence++
 		hs.hello.raw = nil
-		log.Println(hs.hello.sequence)
 		if _, err := c.writeRecord(recordTypeHandshake, hs.hello.marshal()); err != nil {
 			return err
 		}
@@ -223,12 +220,10 @@ func (hs *clientHandshakeState) handshake() error {
 			return err
 		}
 
-
-	case serverHelloMsg:
+	case *serverHelloMsg:
 		break
 	default:
-		log.Println("unknown", v)
-		c.sendAlert(alertUnexpectedMessage)
+		// Silently discard unexpected message
 		return unexpectedMessageError(hs.serverHello, msg)
 	}
 
@@ -518,7 +513,7 @@ func (hs *clientHandshakeState) doFullHandshake() error {
 	if chainToSend != nil && len(chainToSend.Certificate) > 0 {
 		certVerify := &certificateVerifyMsg{
 			hasSignatureAndHash: c.vers >= VersionDTLS12,
-			sequence: hs.msgSequence,
+			sequence:            hs.msgSequence,
 		}
 
 		key, ok := chainToSend.PrivateKey.(crypto.Signer)
@@ -574,10 +569,6 @@ func (hs *clientHandshakeState) establishKeys() error {
 
 	clientMAC, serverMAC, clientKey, serverKey, clientIV, serverIV :=
 		keysFromMasterSecret(c.vers, hs.suite, hs.masterSecret, hs.hello.random, hs.serverHello.random, hs.suite.macLen, hs.suite.keyLen, hs.suite.ivLen)
-	log.Println("suite:", hs.suite.id)
-	log.Println("masterSecret:", hs.masterSecret)
-	log.Println("clientMAC:", clientMAC)
-	log.Println("serverMAC:", serverMAC)
 	var clientCipher, serverCipher interface{}
 	var clientHash, serverHash macFunction
 	if hs.suite.cipher != nil {
@@ -592,7 +583,6 @@ func (hs *clientHandshakeState) establishKeys() error {
 
 	c.in.prepareCipherSpec(c.vers, serverCipher, serverHash)
 	c.out.prepareCipherSpec(c.vers, clientCipher, clientHash)
-	log.Println("establishKeys:", clientHash)
 	return nil
 }
 
@@ -759,7 +749,6 @@ func (hs *clientHandshakeState) sendFinished(out []byte) error {
 	if _, err := c.writeRecord(recordTypeHandshake, finished.marshal()); err != nil {
 		return err
 	}
-	log.Println("finished msg:", finished.marshal())
 	copy(out, finished.verifyData)
 	return nil
 }
