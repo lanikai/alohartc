@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"html/template"
 	"log"
 	"net/http"
@@ -27,6 +26,46 @@ type message struct {
 	Text string `json:"text"`
 }
 
+func doPeerConnection(ws *websocket.Conn, remoteDesc string, remoteCandidates <-chan string) {
+	ice := webrtc.NewIceAgent()
+
+	pc := webrtc.NewPeerConnection()
+	pc.SetRemoteDescription(remoteDesc)
+
+	// Answer
+	sdp, _ := pc.CreateAnswer()
+	if err := ws.WriteJSON(message{"answer", sdp}); err != nil {
+		log.Fatal(err)
+	}
+	log.Println("sent answer")
+
+	// Send ICE candidates
+	localCandidates, err := ice.GatherCandidates()
+	if err != nil {
+		log.Fatal(err)
+	}
+	for _, c := range localCandidates {
+		ws.WriteJSON(message{"iceCandidate", c.String()})
+	}
+
+	// Plus an empty candidate to indicate the end of the list.
+	ws.WriteJSON(message{"iceCandidate", ""})
+
+	// Wait for remote ICE candidates.
+	for {
+		// TODO: use a reasonable timeout
+		rc := <-remoteCandidates
+		if rc == "" {
+			log.Println("End of remote ICE candidates")
+			break  // Empty string means there are no more candidates.
+		}
+		log.Println("Adding remote ICE candidate:", rc)
+		ice.AddRemoteCandidate(rc)
+	}
+
+	ice.CheckConnectivity()
+}
+
 // websocketHandler handles websocket connections
 func websocketHandler(w http.ResponseWriter, r *http.Request) {
 	// Upgrade websocket connection
@@ -37,61 +76,23 @@ func websocketHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	defer ws.Close()
 
-	// Create peer connection
-	pc := webrtc.NewPeerConnection()
-
-	ice := webrtc.NewIceAgent()
+	remoteCandidates := make(chan string, 16)
 
 	// Handle websocket messages
 	for {
-		// Read websocket message
-		_, p, err := ws.ReadMessage()
-		if err != nil {
+		// Read JSON message
+		msg := message{}
+		if err := ws.ReadJSON(&msg); err != nil {
 			log.Println(err)
 			return
 		}
 
-		// Unmarshal websocket message
-		msg := message{}
-		if err := json.Unmarshal(p, &msg); err != nil {
-			log.Println(err)
-		}
-
-		// Parse message type
+		log.Printf("websocket message received: type = %s", msg.Type)
 		switch msg.Type {
 		case "offer":
-			log.Println("offer")
-			pc.SetRemoteDescription(msg.Text)
-
-			// Answer
-			sdp, _ := pc.CreateAnswer()
-			if err := ws.WriteJSON(message{"answer", sdp}); err != nil {
-				log.Fatal(err)
-			}
-			log.Println("sent answer")
-
-			// Send ICE candidates
-			localCandidates, err := ice.GatherCandidates()
-			if err != nil {
-				log.Fatal(err)
-			}
-			for _, c := range localCandidates {
-				ws.WriteJSON(message{"iceCandidate", c.String()})
-			}
-
-			// Plus an empty candidate to indicate the end of the list.
-			ws.WriteJSON(message{"iceCandidate", ""})
-
+			go doPeerConnection(ws, msg.Text, remoteCandidates)
 		case "iceCandidate":
-			//err := pc.AddIceCandidate(msg.Text)
-			if msg.Text != "" {
-				err := ice.AddRemoteCandidate(msg.Text)
-				if err != nil {
-					log.Println(err)
-				}
-			} else {
-				// An empty candidate means the remote side is ready for connectivity checks.
-			}
+			remoteCandidates <- msg.Text
 		}
 	}
 }

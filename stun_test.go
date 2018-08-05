@@ -21,9 +21,9 @@ func TestParseStunMessage(t *testing.T) {
         0x80, 0x28, 0x00, 0x04, 0x31, 0xfd, 0x4e, 0x69,
     }
 
-	msg, err := parseStunMessage(b)
-	if err != nil {
-		t.Error(err)
+	msg := parseStunMessage(b)
+	if msg == nil {
+		t.Error("Failed to parse STUN message")
 	}
 	t.Log("type:", msg.header.MessageType)
 	t.Log("length:", msg.header.MessageLength)
@@ -59,9 +59,9 @@ func TestNewStunMessage(t *testing.T) {
 		t.Errorf("Failed to create STUN message: %s", err)
 	}
 
-	msg2, err := parseStunMessage(msg.Bytes())
-	if err != nil {
-		t.Error(err)
+	msg2 := parseStunMessage(msg.Bytes())
+	if msg2 == nil {
+		t.Error("Failed to parse STUN message")
 	}
 	if msg.header != msg2.header {
 		t.Errorf("Parsed STUN header not equal to original")

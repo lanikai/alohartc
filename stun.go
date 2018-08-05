@@ -159,6 +159,8 @@ const stunIndicationClass = 1
 const stunSuccessResponseClass = 2
 const stunErrorResponseClass = 3
 
+const stunBindingMethod = 0x1
+
 // Figure 2: Format of STUN Message Header
 //     0                   1                   2                   3
 //     0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
@@ -219,6 +221,15 @@ type stunAttribute struct {
 	Value []byte
 }
 
+const stunAttrMappedAddress = 0x0001
+const stunAttrUsername = 0x0006
+const stunAttrMessageIntegrity = 0x0008
+const stunAttrErrorCode = 0x0009
+const stunAttrUnknownAttributes = 0x000A
+const stunAttrXorMappedAddress = 0x0020
+const stunAttrSoftware = 0x8022
+const stunAttrFingerprint = 0x8028
+
 // If transactionID is nil, a random transaction ID will be generated.
 func newStunMessage(class uint16, method uint16, transactionID []byte) (*stunMessage, error) {
 	if class >> 2 != 0 {
@@ -243,6 +254,11 @@ func newStunMessage(class uint16, method uint16, transactionID []byte) (*stunMes
 	}
 
 	return &stunMessage{ header: header }, nil
+}
+
+func newStunBindingRequest() *stunMessage {
+	msg, _ := newStunMessage(stunRequestClass, stunBindingMethod, nil)
+	return msg
 }
 
 func (msg *stunMessage) AddAttribute(t uint16, v []byte) {
@@ -280,23 +296,23 @@ func (attr *stunAttribute) writeTo(b *bytes.Buffer) {
 	copy(b.Next(pad4(attr.Length)), zeros)
 }
 
-// Returns (nil, nil) if the data is not a STUN message.
-func parseStunMessage(data []byte) (*stunMessage, error) {
+// Returns nil if the data is not a STUN message.
+func parseStunMessage(data []byte) *stunMessage {
 	if len(data) < stunHeaderLength {
 		// Not enough data even for a full header, so definitely not a STUN message.
-		return nil, nil
+		return nil
 	}
 
 	b := bytes.NewBuffer(data)
 
 	header := stunHeader{}
 	if err := binary.Read(b, binary.BigEndian, &header); err != nil {
-		return nil, err
+		return nil
 	}
 
 	// Check that this is actually a STUN message.
 	if !header.isValid() {
-		return nil, nil
+		return nil
 	}
 
 	// Parse the method and class from the message type.
@@ -307,13 +323,17 @@ func parseStunMessage(data []byte) (*stunMessage, error) {
 	for b.Len() >= 4 {
 		typ := binary.BigEndian.Uint16(b.Next(2))
 		length := binary.BigEndian.Uint16(b.Next(2))
+		if int(length) > b.Len() {
+			log.Printf("Illegal STUN attribute: type=%d, length=%d", typ, length)
+			return nil
+		}
 		value := make([]byte, length)
 		copy(value, b.Next(int(length)))
 		b.Next(pad4(length))  // discard bytes until next 4-byte boundary
 		attributes = append(attributes, stunAttribute{typ, length, value})
 	}
 
-	return &stunMessage{header, class, method, attributes}, nil
+	return &stunMessage{header, class, method, attributes}
 }
 
 func (header *stunHeader) isValid() bool {
