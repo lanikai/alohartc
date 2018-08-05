@@ -63,7 +63,9 @@ func doPeerConnection(ws *websocket.Conn, remoteDesc string, remoteCandidates <-
 		ice.AddRemoteCandidate(rc)
 	}
 
-	ice.CheckConnectivity()
+	if err := ice.CheckConnectivity(); err != nil {
+		log.Fatal("ICE connectivity checking failed:", err)
+	}
 }
 
 // websocketHandler handles websocket connections

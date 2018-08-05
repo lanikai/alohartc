@@ -1,10 +1,13 @@
 package webrtc
 
 import (
+	"bytes"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"net"
 	"strings"
+	"time"
 )
 
 // Implementation of the Internet Connectivity Exchange (ICE) protocol, following RFC 5245bis
@@ -83,51 +86,65 @@ func (c *IceCandidate) setAttr(key string, val string) {
 }
 
 func (agent *IceAgent) GatherCandidates() ([]IceCandidate, error) {
+	localAddr, err := getLocalAddr()
+	if err != nil {
+		log.Println("Failed to get local address")
+		return nil, err
+	}
+
 	// Listen on an arbitrary UDP port.
-	conn, err := net.ListenPacket("udp4", ":0")
+	conn, err := net.ListenPacket("udp4", localAddr.IP.String() + ":0")
 	if err != nil {
 		return nil, err
 	}
-	localAddr := conn.LocalAddr().(*net.UDPAddr)
+	localAddr = conn.LocalAddr().(*net.UDPAddr)
 	log.Println("Listening on UDP", localAddr)
 
+	agent.conn = conn
+	agent.localAddr = localAddr
+
+	// Local host candidate
 	lc := IceCandidate{
 		foundation: "0",
 		component: 1,
 		protocol: "udp",
-		priority: 100,
+		priority: 126,
 		ip: localAddr.IP.String(),
 		port: localAddr.Port,
 	}
 	lc.setAttr("typ", "host")
+	agent.localCandidates = append(agent.localCandidates, lc)
 
-	// TODO: Query public STUN server to get server reflexive candidates.
-	sc := IceCandidate{
-		foundation: "1",
-		component: 1,
-		protocol: "udp",
-		priority: 50,
-		ip: "35.206.106.139",
-		port: localAddr.Port,
-	}
-	sc.setAttr("typ", "host")
-
-	agent.conn = conn
-	agent.localAddr = localAddr
-	agent.localCandidates = []IceCandidate{ lc, sc }
-
-	return agent.localCandidates, nil
-}
-
-// Send a STUN binding request to the given address, and await a binding response.
-func stunBindingExchange(conn net.PacketConn, hostPort string) (*IceCandidate, error) {
-	addr, err := net.ResolveUDPAddr("udp", hostPort)
+	stunServerAddr, err := net.ResolveUDPAddr("udp", "stun2.l.google.com:19302")
 	if err != nil {
 		return nil, err
 	}
 
+	rc, err := stunBindingExchange(conn, stunServerAddr)
+	if err != nil {
+		log.Println("Failed to query STUN server:", err)
+	} else {
+		agent.localCandidates = append(agent.localCandidates, *rc)
+	}
+
+	return agent.localCandidates, nil
+}
+
+func getLocalAddr() (*net.UDPAddr, error) {
+	conn, err := net.Dial("udp", "8.8.8.8:80")
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+
+	return conn.LocalAddr().(*net.UDPAddr), nil
+}
+
+// Send a STUN binding request to the given address, and await a binding response.
+func stunBindingExchange(conn net.PacketConn, addr net.Addr) (*IceCandidate, error) {
 	req := newStunBindingRequest()
-	_, err = conn.WriteTo(req.Bytes(), addr)
+	log.Printf("STUN binding request: %x", req.Bytes())
+	_, err := conn.WriteTo(req.Bytes(), addr)
 	if err != nil {
 		log.Println("Failed to send STUN binding request:", err)
 		return nil, err
@@ -135,6 +152,7 @@ func stunBindingExchange(conn net.PacketConn, hostPort string) (*IceCandidate, e
 	log.Println("Sent STUN binding request")
 
 	buf := make([]byte, 1500)
+	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
 	n, _, err := conn.ReadFrom(buf)
 	if err != nil {
 		log.Println("Did not receive STUN binding response:", err)
@@ -142,24 +160,63 @@ func stunBindingExchange(conn net.PacketConn, hostPort string) (*IceCandidate, e
 	}
 	log.Println("Received STUN binding response")
 
-	resp := parseStunMessage(buf[:n])
-	if resp == nil {
-		return nil, fmt.Errorf("STUN binding response is invalid")
+	resp, err := parseStunMessage(buf[:n])
+	if err != nil {
+		return nil, err
 	}
+	log.Println(resp)
 
-	if resp.header.TransactionID != req.header.TransactionID {
-		return nil, fmt.Errorf("Unknown transaction ID in STUN binding response: %s", resp.header.TransactionID)
+	if ! bytes.Equal(resp.transactionID, req.transactionID) {
+		return nil, fmt.Errorf("Unknown transaction ID in STUN binding response: %s", resp.transactionID)
 	}
-	if resp.class != stunSuccessResponseClass {
+	if resp.class != stunSuccessResponse {
 		return nil, fmt.Errorf("STUN binding response is not successful: %d", resp.class)
 	}
 
 	// Find XOR-MAPPED-ADDRESS attribute in the response.
+	for _, attr := range resp.attributes {
+		log.Printf("STUN attribute: %#x %d %s", attr.Type, attr.Length, hex.EncodeToString(attr.Value))
+	}
+	mappedAddr, err := resp.getMappedAddress()
+	if err != nil {
+		return nil, err
+	}
+	log.Printf("mappedAddr = %s", mappedAddr)
 
-
-	return nil, nil
+	c := &IceCandidate{
+		foundation: "1",
+		component: 1,
+		protocol: "udp",
+		priority: 110,
+		ip: mappedAddr.IP.String(),
+		port: mappedAddr.Port,
+	}
+	c.setAttr("typ", "host")
+	return c, nil
 }
 
 func (agent *IceAgent) CheckConnectivity() error {
-	return nil
+	buf := make([]byte, 1500)
+	for {
+		log.Println("CheckConnectivity:")
+		n, raddr, err := agent.conn.ReadFrom(buf)
+		if err != nil {
+			return err
+		}
+		log.Println(buf[:n])
+
+		msg, err := parseStunMessage(buf[:n])
+		if err != nil {
+			return err
+		}
+		if msg == nil {
+			continue
+		}
+
+		log.Println("Received STUN message from", raddr)
+		log.Println(msg)
+
+		_, err = stunBindingExchange(agent.conn, raddr)
+		return err
+	}
 }

@@ -21,16 +21,14 @@ func TestParseStunMessage(t *testing.T) {
         0x80, 0x28, 0x00, 0x04, 0x31, 0xfd, 0x4e, 0x69,
     }
 
-	msg := parseStunMessage(b)
-	if msg == nil {
-		t.Error("Failed to parse STUN message")
+	msg, err := parseStunMessage(b)
+	if err != nil {
+		t.Error(err)
 	}
-	t.Log("type:", msg.header.MessageType)
-	t.Log("length:", msg.header.MessageLength)
-	t.Logf("magic cookie: %#x", msg.header.MagicCookie)
-	t.Log("transaction ID:", msg.header.TransactionID)
+	t.Log("length:", msg.length)
 	t.Log("class:", msg.class)
 	t.Log("method:", msg.method)
+	t.Log("transaction ID:", msg.transactionID)
 	t.Log("attributes:", msg.attributes)
 
 	b2 := msg.Bytes()
@@ -38,7 +36,7 @@ func TestParseStunMessage(t *testing.T) {
 		t.Errorf("Serialized STUN message not equal to original: %s", b2)
 	}
 
-	msg2, err := newStunMessage(msg.class, msg.method, msg.header.TransactionID[:])
+	msg2, err := newStunMessage(msg.class, msg.method, msg.transactionID[:])
 	if err != nil {
 		t.Error(err)
 	}
@@ -54,16 +52,16 @@ func TestParseStunMessage(t *testing.T) {
 
 func TestNewStunMessage(t *testing.T) {
 	tid := []byte("0123456789ab")
-	msg, err := newStunMessage(stunRequestClass, 0, tid)
+	msg, err := newStunMessage(stunRequest, 0, tid)
 	if err != nil {
 		t.Errorf("Failed to create STUN message: %s", err)
 	}
 
-	msg2 := parseStunMessage(msg.Bytes())
-	if msg2 == nil {
-		t.Error("Failed to parse STUN message")
+	msg2, err := parseStunMessage(msg.Bytes())
+	if err != nil {
+		t.Error(err)
 	}
-	if msg.header != msg2.header {
+	if ! (msg.length == msg2.length && msg.class == msg2.class && msg.method == msg2.method && bytes.Equal(msg.transactionID, msg2.transactionID)) {
 		t.Errorf("Parsed STUN header not equal to original")
 	}
 }
