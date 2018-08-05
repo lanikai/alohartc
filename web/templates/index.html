@@ -74,14 +74,15 @@
       pc.onicecandidate = function(event) {
         if (event.candidate) {
           console.log("New local ICE candidate:", event.candidate);
-          // Inform the remote ICE agent of the new local candidate.
-          ws.send(JSON.stringify({
-            type: "iceCandidate",
-            text: event.candidate.candidate
-          }));
         } else {
           console.log("End of local ICE candidates");
         }
+
+        // Inform the remote ICE agent.
+        ws.send(JSON.stringify({
+          type: "iceCandidate",
+          text: event.candidate ? event.candidate.candidate : ""
+        }));
       };
 
       pc.onicegatheringstatechange = function() {
