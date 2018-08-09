@@ -2,7 +2,6 @@ package webrtc
 
 import (
 	"fmt"
-	"log"
 	"strconv"
 	"strings"
 	"time"
@@ -71,60 +70,81 @@ type MediaDesc struct {
 
 
 type Desc interface {
-	fmt.Stringer
+	String() string
 }
 
-type sdpBuilder struct {
-	s strings.Builder
+type SdpWriter strings.Builder
+
+func (w *SdpWriter) Write(fragments ...string) {
+	for _, s := range fragments {
+		(*strings.Builder)(w).WriteString(s)
+	}
 }
 
-func (b *sdpBuilder) add(desc Desc) {
-	b.s.WriteString(desc.String())
-	b.s.WriteString("\r\n")
+func (w *SdpWriter) Writef(format string, args ...interface{}) {
+	fmt.Fprintf((*strings.Builder)(w), format, args...)
 }
 
-func (b *sdpBuilder) addLine(format string, args ...interface{}) {
-	fmt.Fprintf(&b.s, format, args...)
-	b.s.WriteString("\r\n")
-}
-
-func (b *sdpBuilder) String() string {
-	return b.s.String()
+func (w *SdpWriter) String() string {
+	return (*strings.Builder)(w).String()
 }
 
 
-func (o OriginDesc) String() string {
-	return fmt.Sprintf("o=%s %s %d %s %s %s",
-		o.username, o.sessionId, o.sessionVersion, o.networkType, o.addressType, o.address)
+type sdpParseError struct {
+	which string
+	value string
+	cause error
 }
 
-func parseOrigin(line string) (o OriginDesc, err error) {
-	_, err = fmt.Sscanf(line, "o=%s %s %d %s %s %s",
-		&o.username, &o.sessionId, &o.sessionVersion, &o.networkType, &o.addressType, &o.address)
+func (e *sdpParseError) Error() (msg string) {
+	msg = fmt.Sprintf("SDP parser: Invalid %s description: %q", e.which, e.value)
+	if e.cause != nil {
+		msg += "\nCaused by: " + e.cause.Error()
+	}
 	return
 }
 
 
-func (c ConnectionDesc) String() string {
-	return fmt.Sprintf("c=%s %s %s", c.networkType, c.addressType, c.address)
+func (o *OriginDesc) String() string {
+	return fmt.Sprintf("%s %s %d %s %s %s",
+		o.username, o.sessionId, o.sessionVersion, o.networkType, o.addressType, o.address)
 }
 
-func parseConnection(line string) (c *ConnectionDesc, err error) {
-	c = new(ConnectionDesc)
-	_, err = fmt.Sscanf(line, "c=%s %s %s", &c.networkType, &c.addressType, &c.address)
+func parseOrigin(s string) (o OriginDesc, err error) {
+	_, err = fmt.Sscanf(s, "%s %s %d %s %s %s",
+		&o.username, &o.sessionId, &o.sessionVersion, &o.networkType, &o.addressType, &o.address)
+	if err != nil {
+		err = &sdpParseError{ "origin", s, err }
+	}
+	return
+}
+
+
+func (c *ConnectionDesc) String() string {
+	return fmt.Sprintf("%s %s %s", c.networkType, c.addressType, c.address)
+}
+
+func parseConnection(s string) (c ConnectionDesc, err error) {
+	_, err = fmt.Sscanf(s, "%s %s %s", &c.networkType, &c.addressType, &c.address)
+	if err != nil {
+		err = &sdpParseError{ "connection", s, err }
+	}
 	return
 }
 
 
 func (t TimeDesc) String() string {
-	return fmt.Sprintf("t=%d %d", toNtp(t.start), toNtp(t.stop))
+	return fmt.Sprintf("%d %d", toNtp(t.start), toNtp(t.stop))
 }
 
-func parseTime(line string) (t TimeDesc, err error) {
+func parseTime(s string) (t TimeDesc, err error) {
 	var start, stop int64
-	_, err = fmt.Sscanf(line, "t=%d %d", &start, &stop)
+	_, err = fmt.Sscanf(s, "%d %d", &start, &stop)
 	t.start = fromNtp(start)
 	t.stop = fromNtp(stop)
+	if err != nil {
+		err = &sdpParseError{ "time", s, err }
+	}
 	return
 }
 
@@ -148,119 +168,148 @@ func fromNtp(ntp int64) *time.Time {
 
 
 func (a AttributeDesc) String() string {
-	return fmt.Sprintf("a=%s:%s", a.key, a.value)
+	return fmt.Sprintf("%s:%s", a.key, a.value)
 }
 
-func parseAttribute(line string) (a AttributeDesc, err error) {
-	_, err = fmt.Sscanf(line, "a=%s:%s", &a.key, &a.value)
+func parseAttribute(s string) (a AttributeDesc, err error) {
+	f := strings.SplitN(s, ":", 2)
+	a.key = f[0]
+	if len(f) == 2 {
+		a.value = f[1]
+	} else {
+		a.value = ""
+	}
 	return
 }
 
-func (m MediaDesc) String() string {
-	var b sdpBuilder
-	b.addLine("m=%s %d %s %s", m.typ, m.port, m.proto, strings.Join(m.format, " "))
-	if m.info != "" {
-		b.addLine("i=%s", m.info)
-	}
-	if m.connection != nil {
-		b.add(m.connection)
+
+func (m *MediaDesc) GetAttributes(s *SessionDesc) map[string]string {
+	var am map[string]string
+	if s != nil {
+		am = s.GetAttributes()
+	} else {
+		am = make(map[string]string)
 	}
 	for _, a := range m.attributes {
-		b.add(a)
+		am[a.key] = a.value
 	}
-	return b.String()
+	return am
 }
 
-// Returns the remaining unparsed SDP string as 'remainder'.
-func parseMedia(sdp string) (m MediaDesc, remainder string, err error) {
-	line, remainder := nextLine(sdp)
+func (m *MediaDesc) writeTo(w SdpWriter) {
+	w.Writef("m=%s %d %s %s\r\n", m.typ, m.port, m.proto, strings.Join(m.format, " "))
+	if m.info != "" {
+		w.Write("i=", m.info, "\r\n")
+	}
+	if m.connection != nil {
+		w.Write("c=", m.connection.String(), "\r\n")
+	}
+	for _, a := range m.attributes {
+		w.Write("a=", a.String(), "\r\n")
+	}
+}
+
+// Returns the remaining unparsed SDP text as 'more'.
+func parseMedia(text string) (m MediaDesc, more string, err error) {
+	line, more := nextLine(text)
 	if line[0:2] != "m=" {
 		err = fmt.Errorf("Invalid media line: %s", line)
 		return
 	}
+
 	fields := strings.Fields(line[2:])
 	if len(fields) < 3 {
 		err = fmt.Errorf("Invalid media line: %s", line)
 		return
 	}
-
 	m.typ = fields[0]
 	m.port, err = strconv.Atoi(fields[1])
 	m.proto = fields[2]
 	m.format = fields[3:]
 
-	for ; sdp != ""; sdp = remainder {
-		line, remainder = nextLine(sdp)
-		var typecode byte
-		var value string
+	var typecode byte
+	var value string
+	for text = more; text != ""; text = more {
+		line, more = nextLine(text)
 		typecode, value, err = splitTypeValue(line)
 		switch typecode {
 		case 'm':
+			// Back up to the start of the current line.
+			more = text
 			break
 		case 'i':
 			m.info = value
 		case 'c':
-			m.connection, err = parseConnection(line)
+			var c ConnectionDesc
+			c, err = parseConnection(value)
+			m.connection = &c
 		case 'a':
 			var a AttributeDesc
-			a, err = parseAttribute(line)
+			a, err = parseAttribute(value)
 			m.attributes = append(m.attributes, a)
 		}
 
 		if err != nil {
-			log.Printf("Failed to parse media description: %s", line)
+			err = &sdpParseError{ "media", line, err }
 			break
 		}
 	}
-	remainder = sdp
 	return
 }
 
 
-func (s *SessionDesc) String() string {
-	var b sdpBuilder
-	b.addLine("v=%d", s.version)
-	b.add(s.origin)
-	b.addLine("s=%s", s.name)
-	if s.info != "" {
-		b.addLine("i=%s", s.info)
-	}
-	if s.uri != "" {
-		b.addLine("u=%s", s.uri)
-	}
-	if s.email != "" {
-		b.addLine("e=%s", s.email)
-	}
-	if s.phone != "" {
-		b.addLine("p=%s", s.phone)
-	}
-	if s.connection != nil {
-		b.add(s.connection)
-	}
-	for _, t := range s.time {
-		b.add(t)
-	}
+func (s *SessionDesc) GetAttributes() map[string]string {
+	am := make(map[string]string)
 	for _, a := range s.attributes {
-		b.add(a)
+		am[a.key] = a.value
 	}
-	for _, m := range s.media {
-		b.add(m)
-	}
-	return b.String()
+	return am
 }
 
-func parseSession(sdp string) (s SessionDesc, remainder string, err error) {
-	var line string
-	for ; sdp != ""; sdp = remainder {
-		line, remainder = nextLine(sdp)
-		var typecode byte
-		var value string
+func (s *SessionDesc) String() string {
+	var w SdpWriter
+	w.Writef("v=%d\r\n", s.version)
+	w.Write("o=", s.origin.String(), "\r\n")
+	w.Write("s=", s.name, "\r\n")
+	if s.info != "" {
+		w.Write("i=", s.info, "\r\n")
+	}
+	if s.uri != "" {
+		w.Write("u=", s.uri, "\r\n")
+	}
+	if s.email != "" {
+		w.Write("e=", s.email, "\r\n")
+	}
+	if s.phone != "" {
+		w.Write("p=", s.phone, "\r\n")
+	}
+	if s.connection != nil {
+		w.Write("c=", s.connection.String(), "\r\n")
+	}
+	for _, t := range s.time {
+		w.Write("t=", t.String(), "\r\n")
+	}
+	for _, a := range s.attributes {
+		w.Write("a=", a.String(), "\r\n")
+	}
+	for _, m := range s.media {
+		m.writeTo(w)
+	}
+	return w.String()
+}
+
+// 'more' is the portion of the input text that is unparsed.
+func parseSession(text string) (s SessionDesc, more string, err error) {
+	var typecode byte
+	var line, value string
+	for ; text != ""; text = more {
+		line, more = nextLine(text)
 		typecode, value, err = splitTypeValue(line)
 		switch typecode {
 		case 'v':
 			s.version, err = strconv.Atoi(value)
 		case 'o':
-			s.origin, err = parseOrigin(line)
+			s.origin, err = parseOrigin(value)
 		case 's':
 			s.name = value
 		case 'i':
@@ -272,27 +321,27 @@ func parseSession(sdp string) (s SessionDesc, remainder string, err error) {
 		case 'p':
 			s.phone = value
 		case 'c':
-			s.connection, err = parseConnection(line)
+			var c ConnectionDesc
+			c, err = parseConnection(value)
+			s.connection = &c
 		case 't':
 			var t TimeDesc
-			t, err = parseTime(line)
+			t, err = parseTime(value)
 			s.time = append(s.time, t)
 		case 'a':
 			var a AttributeDesc
-			a, err = parseAttribute(line)
+			a, err = parseAttribute(value)
 			s.attributes = append(s.attributes, a)
 		case 'm':
 			var m MediaDesc
-			m, remainder, err = parseMedia(sdp)
+			m, more, err = parseMedia(text)
 			s.media = append(s.media, m)
 		}
 
 		if err != nil {
-			log.Printf("Failed to parse session description: %s", line)
 			break
 		}
 	}
-	remainder = sdp
 	return
 }
 
