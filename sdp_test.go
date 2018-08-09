@@ -8,7 +8,9 @@ import (
 
 func TestParseOrigin(t *testing.T) {
 	o, err := parseOrigin("o=username id 123 IN IP4 0.0.0.0")
-	assert.Nil(t, err)
+	if err != nil {
+		t.Fatal(err)
+	}
 	assert.Equal(t, o.username, "username")
 	assert.Equal(t, o.sessionId, "id")
 	assert.EqualValues(t, o.sessionVersion, 123)
@@ -92,7 +94,9 @@ a=ssrc:3215547008 mslabel:SdWLKyaNRoUSWQ7BzkKGcbCWcuV7rScYxCAv
 a=ssrc:3215547008 label:e9b60276-a415-4a66-8395-28a893918d4c
 `
 	s, _, err := parseSession(sdp)
-	assert.Nil(t, err)
+	if err != nil {
+		t.Fatal(err)
+	}
 	assert.EqualValues(t, s.version, 0)
 	assert.Equal(t, s.name, "-")
 
@@ -103,4 +107,30 @@ a=ssrc:3215547008 label:e9b60276-a415-4a66-8395-28a893918d4c
 	assert.EqualValues(t, o.networkType, "IN")
 	assert.EqualValues(t, o.addressType, "IP4")
 	assert.EqualValues(t, o.address, "127.0.0.1")
+
+	assert.Len(t, s.media, 1)
+	m := s.media[0]
+
+	c := m.connection
+	assert.NotNil(t, c)
+	assert.Equal(t, c.networkType, "IN")
+	assert.Equal(t, c.addressType, "IP4")
+	assert.Equal(t, c.address, "0.0.0.0")
+}
+
+func TestWriteSession(t *testing.T) {
+	s := SessionDesc{
+		version: 0,
+		origin: OriginDesc{
+			username: "fred",
+			sessionId: "123",
+			sessionVersion: 9,
+			networkType: "IN",
+			addressType: "IP4",
+			address: "127.0.0.1",
+		},
+		name: "mysession",
+	}
+
+	assert.Equal(t, s.String(), "v=0\r\no=fred 123 9 IN IP4 127.0.0.1\r\ns=mysession\r\n")
 }
