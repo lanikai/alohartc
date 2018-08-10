@@ -209,18 +209,16 @@ func (m *MediaDesc) writeTo(w SdpWriter) {
 	}
 }
 
-// Returns the remaining unparsed SDP text as 'more'.
-func parseMedia(text string) (m MediaDesc, more string, err error) {
+// Returns the remaining unparsed SDP text as 'rtext'.
+func parseMedia(text string) (m MediaDesc, rtext string, err error) {
 	line, more := nextLine(text)
 	if line[0:2] != "m=" {
-		err = fmt.Errorf("Invalid media line: %s", line)
-		return
+		return m, text, fmt.Errorf("Invalid media line: %s", line)
 	}
 
 	fields := strings.Fields(line[2:])
 	if len(fields) < 3 {
-		err = fmt.Errorf("Invalid media line: %s", line)
-		return
+		return m, text, fmt.Errorf("Invalid media line: %s", line)
 	}
 	m.typ = fields[0]
 	m.port, err = strconv.Atoi(fields[1])
@@ -234,8 +232,6 @@ func parseMedia(text string) (m MediaDesc, more string, err error) {
 		typecode, value, err = splitTypeValue(line)
 		switch typecode {
 		case 'm':
-			// Back up to the start of the current line.
-			more = text
 			break
 		case 'i':
 			m.info = value
@@ -254,7 +250,7 @@ func parseMedia(text string) (m MediaDesc, more string, err error) {
 			break
 		}
 	}
-	return
+	return m, text, err
 }
 
 
@@ -298,10 +294,9 @@ func (s *SessionDesc) String() string {
 	return w.String()
 }
 
-// 'more' is the portion of the input text that is unparsed.
-func parseSession(text string) (s SessionDesc, more string, err error) {
+func parseSession(text string) (s SessionDesc, err error) {
 	var typecode byte
-	var line, value string
+	var line, more, value string
 	for ; text != ""; text = more {
 		line, more = nextLine(text)
 		typecode, value, err = splitTypeValue(line)
@@ -339,6 +334,7 @@ func parseSession(text string) (s SessionDesc, more string, err error) {
 		}
 
 		if err != nil {
+			return s, &sdpParseError{ "session", line, err }
 			break
 		}
 	}

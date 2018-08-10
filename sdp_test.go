@@ -93,7 +93,7 @@ a=ssrc:3215547008 msid:SdWLKyaNRoUSWQ7BzkKGcbCWcuV7rScYxCAv e9b60276-a415-4a66-8
 a=ssrc:3215547008 mslabel:SdWLKyaNRoUSWQ7BzkKGcbCWcuV7rScYxCAv
 a=ssrc:3215547008 label:e9b60276-a415-4a66-8395-28a893918d4c
 `
-	s, _, err := parseSession(sdp)
+	s, err := parseSession(sdp)
 	if err != nil {
 		t.Fatal(err)
 	}
