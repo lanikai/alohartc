@@ -1,7 +1,6 @@
 package webrtc
 
 import (
-	"bufio"
 	"fmt"
 	"log"
 	"net"
@@ -18,7 +17,7 @@ type PeerConnection struct {
 	localDescription string
 
 	// Remote peer session description
-	remoteDescription string
+	remoteDescription SessionDesc
 
 	password string
 
@@ -66,8 +65,53 @@ func (pc *PeerConnection) AddIceCandidate(candidate string) error {
 }
 
 // Create SDP answer. Only needs SDP offer, no ICE candidates.
-func (pc *PeerConnection) CreateAnswer() (string, error) {
-	tmpl := `v=0
+func (pc *PeerConnection) CreateAnswer() (SessionDesc, error) {
+	s := SessionDesc{
+		version: 0,
+		origin: OriginDesc{
+			username: "golang",
+			sessionId: "123456",
+			sessionVersion: 2,
+			networkType: "IN",
+			addressType: "IP4",
+			address: "127.0.0.1",
+		},
+		name: "-",
+		time: []TimeDesc{
+			{ nil, nil },
+		},
+		attributes: []AttributeDesc{
+			{ "group", pc.remoteDescription.GetAttr("group") },
+		},
+	}
+
+	for _, remoteMedia := range pc.remoteDescription.media {
+		m := MediaDesc{
+			typ: "video",
+			port: 9,
+			proto: "UDP/TLS/RTP/SAVPF",
+			format: []string{"96"},
+			connection: &ConnectionDesc{
+				networkType: "IN",
+				addressType: "IP4",
+				address: "0.0.0.0",
+			},
+			attributes: []AttributeDesc{
+				{"mid", remoteMedia.GetAttr("mid")},
+				{"rtcp", "9 IN IP4 0.0.0.0"},
+				{"ice-ufrag", "n3E3"},
+				{"ice-pwd", "auh7I7RsuhlZQgS2XYLStR05"},
+//				{"ice-options", "trickle"},
+				{"fingerprint", "sha-256 05:67:ED:76:91:C6:58:F3:01:CE:F2:01:6A:04:10:53:C3:B3:9A:74:49:68:18:D5:60:D0:BC:25:1B:95:9C:50"},
+				{"setup", "active"},
+				{"sendonly", ""},
+			},
+		}
+		s.media = append(s.media, m)
+	}
+
+/* Sample:
+v=0
 o=- 6830938501909068252 2 IN IP4 127.0.0.1
 s=-
 t=0 0
@@ -96,21 +140,19 @@ a=ssrc:3215547008 cname:cYhx/N8U7h7+3GW3
 a=ssrc:3215547008 msid:SdWLKyaNRoUSWQ7BzkKGcbCWcuV7rScYxCAv e9b60276-a415-4a66-8395-28a893918d4c
 a=ssrc:3215547008 mslabel:SdWLKyaNRoUSWQ7BzkKGcbCWcuV7rScYxCAv
 a=ssrc:3215547008 label:e9b60276-a415-4a66-8395-28a893918d4c
-`
-	return tmpl, nil
+*/
+
+	return s, nil
 }
 
 // Set remote SDP offer
 func (pc *PeerConnection) SetRemoteDescription(sdp string) error {
-	pc.remoteDescription = sdp
-
-	scanner := bufio.NewScanner(strings.NewReader(sdp))
-	for scanner.Scan() {
-		line := scanner.Text()
-		if strings.HasPrefix(line, "a=ice-pwd") {
-			pc.password = strings.Split(line, ":")[1]
-			log.Println(pc.password)
-		}
+	session, err := parseSession(sdp)
+	if err != nil {
+		return err
 	}
+
+	pc.remoteDescription = session
+	pc.password = session.GetMedia().GetAttr("ice-pwd")
 	return nil
 }

@@ -100,6 +100,7 @@ func (agent *IceAgent) GatherCandidates() ([]IceCandidate, error) {
 	localAddr = conn.LocalAddr().(*net.UDPAddr)
 	log.Println("Listening on UDP", localAddr)
 
+	conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 	agent.conn = conn
 	agent.localAddr = localAddr
 
@@ -152,7 +153,6 @@ func stunBindingExchange(conn net.PacketConn, addr net.Addr) (*IceCandidate, err
 	log.Println("Sent STUN binding request")
 
 	buf := make([]byte, 1500)
-	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
 	n, _, err := conn.ReadFrom(buf)
 	if err != nil {
 		log.Println("Did not receive STUN binding response:", err)

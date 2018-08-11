@@ -24,6 +24,7 @@ func indexHandler(w http.ResponseWriter, r *http.Request) {
 type message struct {
 	Type string `json:"type"`
 	Text string `json:"text"`
+	Params map[string]string `json:"params,omitempty"`
 }
 
 func doPeerConnection(ws *websocket.Conn, remoteDesc string, remoteCandidates <-chan string) {
@@ -33,8 +34,8 @@ func doPeerConnection(ws *websocket.Conn, remoteDesc string, remoteCandidates <-
 	pc.SetRemoteDescription(remoteDesc)
 
 	// Answer
-	sdp, _ := pc.CreateAnswer()
-	if err := ws.WriteJSON(message{"answer", sdp}); err != nil {
+	localDesc, _ := pc.CreateAnswer()
+	if err := ws.WriteJSON(message{"answer", localDesc.String(), nil}); err != nil {
 		log.Fatal(err)
 	}
 	log.Println("sent answer")
@@ -44,12 +45,13 @@ func doPeerConnection(ws *websocket.Conn, remoteDesc string, remoteCandidates <-
 	if err != nil {
 		log.Fatal(err)
 	}
+	iceParams := map[string]string {"sdpMid": localDesc.GetMedia().GetAttr("mid")}
 	for _, c := range localCandidates {
-		ws.WriteJSON(message{"iceCandidate", c.String()})
+		ws.WriteJSON(message{"iceCandidate", c.String(), iceParams})
 	}
 
 	// Plus an empty candidate to indicate the end of the list.
-	ws.WriteJSON(message{"iceCandidate", ""})
+	ws.WriteJSON(message{"iceCandidate", "", nil})
 
 	// Wait for remote ICE candidates.
 	for {

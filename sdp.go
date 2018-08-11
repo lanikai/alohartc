@@ -27,6 +27,9 @@ type SessionDesc struct {
 //	encryptionKey string  // Optional
 	attributes []AttributeDesc
 	media []MediaDesc
+
+	// Initialized on first call to GetAttr()
+	attributeCache map[string]string
 }
 
 type OriginDesc struct {
@@ -66,6 +69,9 @@ type MediaDesc struct {
 //	bandwidth []string
 //	encryptionKey string  // Optional
 	attributes []AttributeDesc
+
+	// Initialized on first call to GetAttr()
+	attributeCache map[string]string
 }
 
 
@@ -168,6 +174,9 @@ func fromNtp(ntp int64) *time.Time {
 
 
 func (a AttributeDesc) String() string {
+	if a.value == "" {
+		return a.key
+	}
 	return fmt.Sprintf("%s:%s", a.key, a.value)
 }
 
@@ -183,20 +192,18 @@ func parseAttribute(s string) (a AttributeDesc, err error) {
 }
 
 
-func (m *MediaDesc) GetAttributes(s *SessionDesc) map[string]string {
-	var am map[string]string
-	if s != nil {
-		am = s.GetAttributes()
-	} else {
-		am = make(map[string]string)
+func (m *MediaDesc) GetAttr(key string) string {
+	if m.attributeCache == nil {
+		m.attributeCache = make(map[string]string)
+		for _, a := range m.attributes {
+			m.attributeCache[a.key] = a.value
+		}
 	}
-	for _, a := range m.attributes {
-		am[a.key] = a.value
-	}
-	return am
+	return m.attributeCache[key]
 }
 
-func (m *MediaDesc) writeTo(w SdpWriter) {
+func (m *MediaDesc) String() string {
+	var w SdpWriter
 	w.Writef("m=%s %d %s %s\r\n", m.typ, m.port, m.proto, strings.Join(m.format, " "))
 	if m.info != "" {
 		w.Write("i=", m.info, "\r\n")
@@ -207,6 +214,7 @@ func (m *MediaDesc) writeTo(w SdpWriter) {
 	for _, a := range m.attributes {
 		w.Write("a=", a.String(), "\r\n")
 	}
+	return w.String()
 }
 
 // Returns the remaining unparsed SDP text as 'rtext'.
@@ -254,12 +262,21 @@ func parseMedia(text string) (m MediaDesc, rtext string, err error) {
 }
 
 
-func (s *SessionDesc) GetAttributes() map[string]string {
-	am := make(map[string]string)
-	for _, a := range s.attributes {
-		am[a.key] = a.value
+func (s *SessionDesc) GetAttr(key string) string {
+	if s.attributeCache == nil {
+		s.attributeCache = make(map[string]string)
+		for _, a := range s.attributes {
+			s.attributeCache[a.key] = a.value
+		}
 	}
-	return am
+	return s.attributeCache[key]
+}
+
+func (s *SessionDesc) GetMedia() *MediaDesc {
+	if len(s.media) != 1 {
+		return nil  // TODO: should be an error
+	}
+	return &s.media[0]
 }
 
 func (s *SessionDesc) String() string {
@@ -289,7 +306,7 @@ func (s *SessionDesc) String() string {
 		w.Write("a=", a.String(), "\r\n")
 	}
 	for _, m := range s.media {
-		m.writeTo(w)
+		w.Write(m.String())
 	}
 	return w.String()
 }

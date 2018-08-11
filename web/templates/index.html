@@ -50,7 +50,7 @@
           if (msg.text) {
             pc.addIceCandidate({
               candidate: msg.text,
-              sdpMid: "video"
+              sdpMid: msg.params.sdpMid,
             }).catch(function(error) {
               console.log("Failed to add remote ICE candidate to local ICE agent:", error);
             });
