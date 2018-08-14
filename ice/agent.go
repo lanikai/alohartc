@@ -125,7 +125,7 @@ func (a *Agent) computePriority(c *Candidate) {
 	c.priority = uint((typePref << 24) + (localPref << 8) + (256 - c.component))
 }
 
-func (a *Agent) EstablishConnection(username, password string) (net.Conn, error) {
+func (a *Agent) EstablishConnection(username, localPassword, remotePassword string) (net.Conn, error) {
 //	a.conn.SetReadDeadline(time.Now().Add(time.Second))
 
 	buf := make([]byte, 1500)
@@ -146,18 +146,17 @@ func (a *Agent) EstablishConnection(username, password string) (net.Conn, error)
 	// Send response.
 	resp := newStunBindingResponse(req.transactionID)
 	resp.setXorMappedAddress(raddr.(*net.UDPAddr))
-	resp.addMessageIntegrity(password)
+	resp.addMessageIntegrity(localPassword)
 	resp.addFingerprint()
 	log.Println("Outgoing ICE response:", resp.String())
 	a.conn.WriteTo(resp.Bytes(), raddr)
 
 
-/*
 	// Now act as STUN client.
 	req2 := newStunBindingRequest()
 	req2.addAttribute(stunAttrUsername, []byte(username))
 	req2.addAttribute(stunAttrIceControlled, []byte{1, 2, 3, 4, 5, 6, 7, 8})
-	req2.addMessageIntegrity(password)
+	req2.addMessageIntegrity(remotePassword)
 	req2.addFingerprint()
 	log.Println("Outgoing ICE request:", req2.String())
 	a.conn.WriteTo(req2.Bytes(), raddr)
@@ -173,7 +172,29 @@ func (a *Agent) EstablishConnection(username, password string) (net.Conn, error)
 		return nil, err
 	}
 	log.Println("Incoming ICE response:", resp2.String())
-*/
+
+	for {
+		// Act as STUN server, awaiting binding request from remote ICE agent.
+		n, raddr, err := a.conn.ReadFrom(buf)
+		if err != nil {
+			log.Println(err)
+			return nil, err
+		}
+		req, err := parseStunMessage(buf[0:n])
+		if err != nil {
+			log.Println(err)
+			return nil, err
+		}
+		log.Println("Incoming ICE request:", req.String())
+
+		// Send response.
+		resp := newStunBindingResponse(req.transactionID)
+		resp.setXorMappedAddress(raddr.(*net.UDPAddr))
+		resp.addMessageIntegrity(localPassword)
+		resp.addFingerprint()
+		log.Println("Outgoing ICE response:", resp.String())
+		a.conn.WriteTo(resp.Bytes(), raddr)
+	}
 
 	return a.conn, nil
 }

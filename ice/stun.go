@@ -284,7 +284,7 @@ const (
 	stunAttrSoftware          = 0x8022
 	stunAttrFingerprint       = 0x8028
 	stunAttrIceControlled     = 0x8029
-	stunAttrIceControlling    = 0x8030
+	stunAttrIceControlling    = 0x802A
 )
 
 var stunMagicCookieBytes = []byte{0x21, 0x12, 0xA4, 0x42}
@@ -376,8 +376,6 @@ func (msg *stunMessage) addFingerprint() {
 	var crc uint32 = crc32.ChecksumIEEE(b[0:beforeFingerprint])
 
 	binary.BigEndian.PutUint32(attr.Value, crc ^ 0x5354554e)
-
-	log.Printf("fingerprint: %x", attr.Value)
 }
 
 // Send a STUN binding request to the given address, and await a binding response.
@@ -422,6 +420,7 @@ func getStunCandidate(conn net.PacketConn, addr net.Addr) (*Candidate, error) {
 	}
 	log.Printf("mappedAddr = %s", mappedAddr)
 
+	// TODO: browser doesn't seem interested in "srflx" candidates
 	c := Candidate{typ: "host", component: 1}
 	c.setAddress(mappedAddr)
 	return &c, nil
