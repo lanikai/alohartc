@@ -7,7 +7,7 @@ import (
 	"net"
 	"strings"
 
-	"github.com/thinkski/webrtc/dtls"
+	"github.com/thinkski/dtls"
 )
 
 type PeerConnection struct {
@@ -52,11 +52,29 @@ func (pc *PeerConnection) AddIceCandidate(candidate string) error {
 	// STUN binding request
 	pc.stunBinding(candidate, pc.password)
 
-	// Send DTLS client hello
-	if _, err := dtls.DialWithConnection(pc.conn); err != nil {
-		log.Println(err)
-		return nil
+	// Load client certificate from file
+	cert, err := dtls.LoadX509KeyPair("server.pem", "server-private.pem")
+	if err != nil {
+		log.Fatal(err)
 	}
+
+	// Send DTLS client hello
+	_, err = dtls.NewSession(
+		pc.conn,
+		&dtls.Config{
+			Certificates:           []dtls.Certificate{cert},
+			InsecureSkipVerify:     true,
+			Renegotiation:          dtls.RenegotiateFreelyAsClient,
+			SessionTicketsDisabled: false,
+			ClientSessionCache:     dtls.NewLRUClientSessionCache(-1),
+			ProtectionProfiles:     []uint16{dtls.SRTP_AES128_CM_HMAC_SHA1_80},
+		},
+	)
+	if err != nil {
+		log.Println(err)
+	}
+
+	//srtp.Send(pc.conn, file)
 
 	return nil
 }
