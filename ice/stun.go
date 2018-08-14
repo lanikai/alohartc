@@ -1,0 +1,428 @@
+package ice
+
+import (
+	"bytes"
+	"crypto/hmac"
+	"crypto/rand"
+	"crypto/sha1"
+	"encoding/binary"
+	"encoding/hex"
+	"fmt"
+	"hash/crc32"
+	"log"
+	"net"
+	"strings"
+)
+
+// STUN (Sessian Traversal Utilities for NAT)
+// RFC 5389 (https://tools.ietf.org/html/rfc5389).
+
+type stunMessage struct {
+	// Message length in bytes, NOT including the 20-byte header.
+	length uint16
+
+	// Message class, 2 bits.
+	class uint16
+
+	// Message method, 12 bits.
+	method uint16
+
+	// Globally unique transaction ID, 12 bytes.
+	transactionID []byte
+
+	// Attributes with meaning determined by the class and method.
+	attributes []*stunAttribute
+}
+
+// Returns (nil, nil) if the data is not a STUN message.
+func parseStunMessage(data []byte) (*stunMessage, error) {
+	msg := parseStunHeader(data[0:stunHeaderLength])
+	if msg == nil {
+		return nil, nil
+	}
+
+	// Parse attributes.
+	b := bytes.NewBuffer(data[stunHeaderLength:])
+	for b.Len() > 0 {
+		attr, err := parseStunAttribute(b)
+		if err != nil {
+			return msg, err
+		}
+
+		// TODO: check message integrity and fingerprint
+		msg.attributes = append(msg.attributes, attr)
+	}
+	return msg, nil
+}
+
+func writeStunMessage(msg *stunMessage, b *bytes.Buffer) {
+	writeStunHeader(msg, b)
+	for _, attr := range msg.attributes {
+		writeStunAttribute(attr, b)
+	}
+}
+
+func (msg *stunMessage) String() string {
+	b := new(strings.Builder)
+	b.WriteString(fmt.Sprintf("length: %d\n", msg.length))
+	b.WriteString(fmt.Sprintf("class: %d\n", msg.class))
+	b.WriteString(fmt.Sprintf("method: %d\n", msg.method))
+	b.WriteString(fmt.Sprintf("transactionID: %v\n", msg.transactionID))
+	for _, attr := range msg.attributes {
+		b.WriteString(fmt.Sprintf("attribute: %+v\n", *attr))
+	}
+	return b.String()
+}
+
+// Allowed STUN message classes.
+const (
+	stunRequest         = 0
+	stunIndication      = 1
+	stunSuccessResponse = 2
+	stunErrorResponse   = 3
+)
+
+const stunBindingMethod = 0x1
+
+const stunHeaderLength = 20
+const stunMagicCookie = 0x2112A442
+
+// Figure 2: Format of STUN Message Header
+//     0                   1                   2                   3
+//     0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+//    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+//    |0 0|     STUN Message Type     |         Message Length        |
+//    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+//    |                         Magic Cookie                          |
+//    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+//    |                                                               |
+//    |                     Transaction ID (96 bits)                  |
+//    |                                                               |
+//    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+
+// Returns nil if the data does not look like a STUN message.
+func parseStunHeader(data []byte) *stunMessage {
+	if len(data) < stunHeaderLength {
+		return nil
+	}
+
+	// The top two bits of the message type must be 0.
+	messageType := binary.BigEndian.Uint16(data[0:2])
+	if messageType>>14 != 0 {
+		return nil
+	}
+
+	// The length must be a multiple of 4 bytes.
+	length := binary.BigEndian.Uint16(data[2:4])
+	if length%4 != 0 {
+		return nil
+	}
+
+	// The magic cookie must be present.
+	magicCookie := binary.BigEndian.Uint32(data[4:8])
+	if magicCookie != stunMagicCookie {
+		return nil
+	}
+
+	class, method := decomposeMessageType(messageType)
+	msg := &stunMessage{
+		length:        length,
+		class:         class,
+		method:        method,
+		transactionID: make([]byte, 12),
+	}
+	copy(msg.transactionID, data[8:20])
+	return msg
+}
+
+func writeStunHeader(msg *stunMessage, b *bytes.Buffer) {
+	messageType := composeMessageType(msg.class, msg.method)
+	binary.BigEndian.PutUint16(b.Next(2), messageType)
+	binary.BigEndian.PutUint16(b.Next(2), msg.length)
+	binary.BigEndian.PutUint32(b.Next(4), stunMagicCookie)
+	copy(b.Next(12), msg.transactionID)
+}
+
+// Figure 3: Format of STUN Message Type Field
+//     0                 1
+//     2  3  4 5 6 7 8 9 0 1 2 3 4 5
+//    +--+--+-+-+-+-+-+-+-+-+-+-+-+-+
+//    |M |M |M|M|M|C|M|M|M|C|M|M|M|M|
+//    |11|10|9|8|7|1|6|5|4|0|3|2|1|0|
+//    +--+--+-+-+-+-+-+-+-+-+-+-+-+-+
+const classMask1 = 0x0100  // 0b0000000100000000
+const classMask2 = 0x0010  // 0b0000000000010000
+const methodMask1 = 0x3e00 // 0b0011111000000000
+const methodMask2 = 0x00e0 // 0b0000000011100000
+const methodMask3 = 0x000f // 0b0000000000001111
+
+func composeMessageType(class uint16, method uint16) uint16 {
+	t := (class<<7)&classMask1 | (class<<4)&classMask2
+	t |= (method<<2)&methodMask1 | (method<<1)&methodMask2 | (method & methodMask3)
+	return t
+}
+
+func decomposeMessageType(t uint16) (uint16, uint16) {
+	class := (t&classMask1)>>7 | (t&classMask2)>>4
+	method := (t&methodMask1)>>2 | (t&methodMask2)>>1 | (t & methodMask3)
+	return class, method
+}
+
+// Figure 4: Format of STUN Attributes
+//     0                   1                   2                   3
+//     0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+//    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+//    |         Type                  |            Length             |
+//    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+//    |                         Value (variable)                ....
+//    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+type stunAttribute struct {
+	Type   uint16
+	Length uint16
+	Value  []byte
+}
+
+func parseStunAttribute(b *bytes.Buffer) (*stunAttribute, error) {
+	if b.Len() < 4 {
+		// TODO: error handling
+		return nil, fmt.Errorf("Invalid STUN attribute: %s", b.Bytes())
+	}
+
+	typ := binary.BigEndian.Uint16(b.Next(2))
+	length := binary.BigEndian.Uint16(b.Next(2))
+	if int(length) > b.Len() {
+		return nil, fmt.Errorf("Illegal STUN attribute: type=%d, length=%d", typ, length)
+	}
+	value := make([]byte, length)
+	copy(value, b.Next(int(length)))
+	b.Next(pad4(length)) // discard bytes until next 4-byte boundary
+	return &stunAttribute{typ, length, value}, nil
+}
+
+func writeStunAttribute(attr *stunAttribute, b *bytes.Buffer) {
+	binary.BigEndian.PutUint16(b.Next(2), attr.Type)
+	binary.BigEndian.PutUint16(b.Next(2), attr.Length)
+	copy(b.Next(int(attr.Length)), attr.Value)
+	copy(b.Next(pad4(attr.Length)), zeros)
+}
+
+// Return the total size of the attribute in bytes, including the header and padding.
+func (attr *stunAttribute) numBytes() int {
+	return 4 + int(attr.Length) + pad4(attr.Length)
+}
+
+// Return the number of extra bytes needed to pad the given length to a 4-byte boundary.
+// The result will be either 0, 1, 2, or 3.
+func pad4(n uint16) int {
+	return -int(n) & 3
+}
+
+var zeros []byte = make([]byte, 32)
+
+// If transactionID is nil, a random transaction ID will be generated.
+func newStunMessage(class uint16, method uint16, transactionID []byte) (*stunMessage, error) {
+	if class>>2 != 0 {
+		return nil, fmt.Errorf("Invalid STUN message class: %#x", class)
+	}
+	if method>>12 != 0 {
+		return nil, fmt.Errorf("Invalid STUN method: %#x", method)
+	}
+
+	msg := &stunMessage{
+		length:        0,
+		class:         class,
+		method:        method,
+		transactionID: make([]byte, 12),
+	}
+	if transactionID == nil {
+		// Generate a random transaction ID.
+		rand.Read(msg.transactionID)
+	} else if len(transactionID) != 12 {
+		return nil, fmt.Errorf("Invalid transaction ID: %s", transactionID)
+	} else {
+		copy(msg.transactionID, transactionID)
+	}
+	return msg, nil
+}
+
+func newStunBindingRequest() stunMessage {
+	msg, _ := newStunMessage(stunRequest, stunBindingMethod, nil)
+	return *msg
+}
+
+func newStunBindingResponse(transactionID []byte) stunMessage {
+	msg, _ := newStunMessage(stunSuccessResponse, stunBindingMethod, transactionID)
+	return *msg
+}
+
+func (msg *stunMessage) addAttribute(t uint16, v []byte) *stunAttribute {
+	l := uint16(len(v))
+	// TODO: fix this mess
+	vcopy := make([]byte, l)
+	copy(vcopy, v)
+	attr := &stunAttribute{t, l, vcopy}
+	msg.attributes = append(msg.attributes, attr)
+	msg.length += uint16(attr.numBytes())
+	return attr
+}
+
+func (msg *stunMessage) Bytes() []byte {
+	buf := make([]byte, stunHeaderLength+msg.length)
+	writeStunMessage(msg, bytes.NewBuffer(buf))
+	return buf
+}
+
+const (
+	stunAttrMappedAddress     = 0x0001
+	stunAttrUsername          = 0x0006
+	stunAttrMessageIntegrity  = 0x0008
+	stunAttrErrorCode         = 0x0009
+	stunAttrUnknownAttributes = 0x000A
+	stunAttrXorMappedAddress  = 0x0020
+	stunAttrPriority          = 0x0024
+	stunAttrUseCandidate      = 0x0025
+	stunAttrSoftware          = 0x8022
+	stunAttrFingerprint       = 0x8028
+	stunAttrIceControlled     = 0x8029
+	stunAttrIceControlling    = 0x8030
+)
+
+var stunMagicCookieBytes = []byte{0x21, 0x12, 0xA4, 0x42}
+var stunFingerprintXorBytes = []byte{0x53, 0x54, 0x55, 0x4e}
+
+func (msg *stunMessage) getXorMappedAddress() (*net.UDPAddr, error) {
+	if msg.class != stunSuccessResponse {
+		return nil, fmt.Errorf("STUN message is not a success response")
+	}
+
+	addr := new(net.UDPAddr)
+	for _, attr := range msg.attributes {
+		if attr.Type == stunAttrXorMappedAddress {
+			family := attr.Value[1]
+			addr.Port = int(binary.BigEndian.Uint16(attr.Value[2:4]) ^ (stunMagicCookie >> 16))
+			switch family {
+			case 0x01:
+				// IPv4
+				addr.IP = attr.Value[4:8]
+				xorBytes(addr.IP, stunMagicCookieBytes)
+			case 0x02:
+				// IPv6
+				addr.IP = attr.Value[4:20]
+				xorBytes(addr.IP[0:4], stunMagicCookieBytes)
+				xorBytes(addr.IP[4:16], msg.transactionID)
+			default:
+				return nil, fmt.Errorf("Invalid mapped address family: %#x", family)
+			}
+			return addr, nil
+		}
+	}
+
+	return nil, fmt.Errorf("STUN message does not have XOR-MAPPED-ADDRESS attribute")
+}
+
+func (msg *stunMessage) setXorMappedAddress(addr *net.UDPAddr) {
+	var value []byte
+	ip4 := addr.IP.To4()
+	if ip4 != nil {
+		// IPv4
+		value = make([]byte, 8)
+		value[1] = 0x01
+		copy(value[4:8], ip4)
+	} else {
+		// IPv6
+		ip6 := addr.IP.To16()
+		value = make([]byte, 20)
+		value[1] = 0x02
+		copy(value[4:20], ip6)
+	}
+	binary.BigEndian.PutUint16(value[2:4], uint16(addr.Port))
+
+	xorBytes(value[2:4], stunMagicCookieBytes[0:2])
+	xorBytes(value[4:8], stunMagicCookieBytes)
+	xorBytes(value[8:], msg.transactionID)
+	msg.addAttribute(stunAttrXorMappedAddress, value)
+}
+
+func xorBytes(dest []byte, xor []byte) {
+	for i := range dest {
+		dest[i] ^= xor[i]
+	}
+}
+
+// RFC 5389 Section 15.4. MESSAGE-INTEGRITY
+func (msg *stunMessage) addMessageIntegrity(password string) {
+	// Use the password to make a new HMAC hash, which has sig.Size() == 20
+	sig := hmac.New(sha1.New, []byte(password))
+
+	// Add a dummy MESSAGE-INTEGRITY attribute, such that it is included in msg.length.
+	attr := msg.addAttribute(stunAttrMessageIntegrity, zeros[0:20])
+
+	// Compute hash of the message contents up to *just before* the MESSAGE-INTEGRITY.
+	b := msg.Bytes()
+	beforeMessageIntegrity := len(b) - attr.numBytes()
+	sig.Write(b[0:beforeMessageIntegrity])
+
+	copy(attr.Value, sig.Sum(nil))
+}
+
+// RFC 5389 Section 15.5. FINGERPRINT
+func (msg *stunMessage) addFingerprint() {
+	// Add a dummy FINGERPRINT attribute, such that it is included in msg.length.
+	attr := msg.addAttribute(stunAttrFingerprint, zeros[0:4])
+
+	// Compute the CRC32 of the message up to *just before* the FINGERPRINT.
+	b := msg.Bytes()
+	beforeFingerprint := len(b) - attr.numBytes()
+	var crc uint32 = crc32.ChecksumIEEE(b[0:beforeFingerprint])
+
+	binary.BigEndian.PutUint32(attr.Value, crc ^ 0x5354554e)
+
+	log.Printf("fingerprint: %x", attr.Value)
+}
+
+// Send a STUN binding request to the given address, and await a binding response.
+func getStunCandidate(conn net.PacketConn, addr net.Addr) (*Candidate, error) {
+	req := newStunBindingRequest()
+	log.Printf("STUN binding request: %x", req.Bytes())
+	_, err := conn.WriteTo(req.Bytes(), addr)
+	if err != nil {
+		log.Println("Failed to send STUN binding request:", err)
+		return nil, err
+	}
+	log.Println("Sent STUN binding request")
+
+	buf := make([]byte, 1500)
+	n, _, err := conn.ReadFrom(buf)
+	if err != nil {
+		log.Println("Did not receive STUN binding response:", err)
+		return nil, err
+	}
+	log.Println("Received STUN binding response")
+
+	resp, err := parseStunMessage(buf[:n])
+	if err != nil {
+		return nil, err
+	}
+	log.Println(resp)
+
+	if !bytes.Equal(resp.transactionID, req.transactionID) {
+		return nil, fmt.Errorf("Unknown transaction ID in STUN binding response: %s", resp.transactionID)
+	}
+	if resp.class != stunSuccessResponse {
+		return nil, fmt.Errorf("STUN binding response is not successful: %d", resp.class)
+	}
+
+	// Find XOR-MAPPED-ADDRESS attribute in the response.
+	for _, attr := range resp.attributes {
+		log.Printf("STUN attribute: %#x %d %s", attr.Type, attr.Length, hex.EncodeToString(attr.Value))
+	}
+	mappedAddr, err := resp.getXorMappedAddress()
+	if err != nil {
+		return nil, err
+	}
+	log.Printf("mappedAddr = %s", mappedAddr)
+
+	c := Candidate{typ: "host", component: 1}
+	c.setAddress(mappedAddr)
+	return &c, nil
+}

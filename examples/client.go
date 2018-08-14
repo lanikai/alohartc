@@ -8,6 +8,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/thinkski/webrtc"
+	"github.com/thinkski/webrtc/ice"
 )
 
 var upgrader = websocket.Upgrader{
@@ -28,30 +29,30 @@ type message struct {
 }
 
 func doPeerConnection(ws *websocket.Conn, remoteDesc string, remoteCandidates <-chan string) {
-	ice := webrtc.NewIceAgent()
+	iceAgent := ice.NewAgent()
 
 	pc := webrtc.NewPeerConnection()
 	pc.SetRemoteDescription(remoteDesc)
 
 	// Answer
 	localDesc, _ := pc.CreateAnswer()
-	if err := ws.WriteJSON(message{"answer", localDesc.String(), nil}); err != nil {
+	if err := ws.WriteJSON(message{Type: "answer", Text: localDesc.String()}); err != nil {
 		log.Fatal(err)
 	}
 	log.Println("sent answer")
 
-	// Send ICE candidates
-	localCandidates, err := ice.GatherCandidates()
+	// Send local ICE candidates.
+	localCandidates, err := iceAgent.GatherLocalCandidates()
 	if err != nil {
 		log.Fatal(err)
 	}
 	iceParams := map[string]string {"sdpMid": localDesc.GetMedia().GetAttr("mid")}
 	for _, c := range localCandidates {
-		ws.WriteJSON(message{"iceCandidate", c.String(), iceParams})
+		log.Println("Local ICE", c.String())
+		ws.WriteJSON(message{Type: "iceCandidate", Text: c.String(), Params: iceParams})
 	}
-
 	// Plus an empty candidate to indicate the end of the list.
-	ws.WriteJSON(message{"iceCandidate", "", nil})
+	ws.WriteJSON(message{Type: "iceCandidate"})
 
 	// Wait for remote ICE candidates.
 	for {
@@ -61,13 +62,11 @@ func doPeerConnection(ws *websocket.Conn, remoteDesc string, remoteCandidates <-
 			log.Println("End of remote ICE candidates")
 			break  // Empty string means there are no more candidates.
 		}
-		log.Println("Adding remote ICE candidate:", rc)
-		ice.AddRemoteCandidate(rc)
+		log.Println("Remote ICE", rc)
+		iceAgent.AddRemoteCandidate(rc)
 	}
 
-	if err := ice.CheckConnectivity(); err != nil {
-		log.Fatal("ICE connectivity checking failed:", err)
-	}
+	_, err = iceAgent.EstablishConnection(pc.Username(), pc.Password())
 }
 
 // websocketHandler handles websocket connections
