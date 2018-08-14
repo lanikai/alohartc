@@ -163,6 +163,10 @@ func (pc *PeerConnection) Username() string {
 	return remoteUfrag + ":" + localUfrag
 }
 
-func (pc *PeerConnection) Password() string {
+func (pc *PeerConnection) LocalPassword() string {
+	return pc.localDescription.GetMedia().GetAttr("ice-pwd")
+}
+
+func (pc *PeerConnection) RemotePassword() string {
 	return pc.remoteDescription.GetMedia().GetAttr("ice-pwd")
 }

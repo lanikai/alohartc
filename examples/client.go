@@ -66,7 +66,7 @@ func doPeerConnection(ws *websocket.Conn, remoteDesc string, remoteCandidates <-
 		iceAgent.AddRemoteCandidate(rc)
 	}
 
-	_, err = iceAgent.EstablishConnection(pc.Username(), pc.Password())
+	_, err = iceAgent.EstablishConnection(pc.Username(), pc.LocalPassword(), pc.RemotePassword())
 }
 
 // websocketHandler handles websocket connections
