@@ -217,7 +217,7 @@ func pad4(n uint16) int {
 	return -int(n) & 3
 }
 
-var zeros []byte = make([]byte, 32)
+var zeros = make([]byte, 32)
 
 // If transactionID is nil, a random transaction ID will be generated.
 func newStunMessage(class uint16, method uint16, transactionID []byte) (*stunMessage, error) {
