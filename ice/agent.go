@@ -1,6 +1,7 @@
 package ice
 
 import (
+	"bytes"
 	"fmt"
 	"log"
 	"net"
@@ -13,7 +14,6 @@ type Agent struct {
 	remoteCandidates []Candidate
 
 	conn *net.UDPConn
-	localAddr *net.UDPAddr
 
 	foundationFingerprints []string
 }
@@ -46,17 +46,17 @@ func (a *Agent) GatherLocalCandidates() ([]Candidate, error) {
 	if err != nil {
 		return nil, err
 	}
-	a.localAddr = a.conn.LocalAddr().(*net.UDPAddr)
-	log.Println("Listening on UDP", a.localAddr)
+	localAddr := a.conn.LocalAddr().(*net.UDPAddr)
+	log.Println("Listening on UDP", localAddr)
 
 //	a.conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 
-	// Local host candidate
-	lc := Candidate{typ: "host", component: 1}
-	lc.setAddress(a.localAddr)
-	a.computeFoundation(&lc)
-	a.computePriority(&lc)
-	a.localCandidates = append(a.localCandidates, lc)
+//	// Default candidate for peers on the same LAN
+//	lc := Candidate{typ: "host", component: 1}
+//	lc.setAddress(localAddr)
+//	a.computeFoundation(&lc)
+//	a.computePriority(&lc)
+//	a.localCandidates = append(a.localCandidates, lc)
 
 	stunServerAddr, err := net.ResolveUDPAddr("udp", "stun2.l.google.com:19302")
 	if err != nil {
@@ -137,6 +137,7 @@ func (a *Agent) EstablishConnection(username, localPassword, remotePassword stri
 		return nil, err
 	}
 	req, err := parseStunMessage(buf[0:n])
+	transactionID := req.transactionID
 	if err != nil {
 		log.Println(err)
 		return nil, err
@@ -154,6 +155,7 @@ func (a *Agent) EstablishConnection(username, localPassword, remotePassword stri
 
 	// Now act as STUN client.
 	req2 := newStunBindingRequest()
+	req2.transactionID = transactionID
 	req2.addAttribute(stunAttrUsername, []byte(username))
 	req2.addAttribute(stunAttrIceControlled, []byte{1, 2, 3, 4, 5, 6, 7, 8})
 	req2.addMessageIntegrity(remotePassword)
@@ -161,19 +163,28 @@ func (a *Agent) EstablishConnection(username, localPassword, remotePassword stri
 	log.Println("Outgoing ICE request:", req2.String())
 	a.conn.WriteTo(req2.Bytes(), raddr)
 
-	n, _, err = a.conn.ReadFrom(buf)
-	if err != nil {
-		log.Println(err)
-		return nil, err
-	}
-	resp2, err := parseStunMessage(buf[0:n])
-	if err != nil {
-		log.Println(err)
-		return nil, err
-	}
-	log.Println("Incoming ICE response:", resp2.String())
-
 	for {
+		n, _, err = a.conn.ReadFrom(buf)
+		if err != nil {
+			log.Println(err)
+			return nil, err
+		}
+		resp2, err := parseStunMessage(buf[0:n])
+		if err != nil {
+			log.Println(err)
+			return nil, err
+		}
+		if bytes.Equal(resp2.transactionID, transactionID) {
+			log.Println("Incoming ICE response:", resp2.String())
+			raddr2, _ := resp2.getXorMappedAddress()
+			log.Println("Mapped address:", raddr2)
+			break
+		}
+
+		log.Println("Ignoring unexpected ICE message:", resp2.String())
+	}
+
+	for false {
 		// Act as STUN server, awaiting binding request from remote ICE agent.
 		n, raddr, err := a.conn.ReadFrom(buf)
 		if err != nil {
