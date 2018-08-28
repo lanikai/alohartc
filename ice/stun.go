@@ -28,7 +28,7 @@ type stunMessage struct {
 	method uint16
 
 	// Globally unique transaction ID, 12 bytes.
-	transactionID []byte
+	transactionID string
 
 	// Attributes with meaning determined by the class and method.
 	attributes []*stunAttribute
@@ -67,7 +67,7 @@ func (msg *stunMessage) String() string {
 	b.WriteString(fmt.Sprintf("length: %d\n", msg.length))
 	b.WriteString(fmt.Sprintf("class: %d\n", msg.class))
 	b.WriteString(fmt.Sprintf("method: %d\n", msg.method))
-	b.WriteString(fmt.Sprintf("transactionID: %v\n", msg.transactionID))
+	b.WriteString(fmt.Sprintf("transactionID: %s\n", msg.transactionID))
 	for _, attr := range msg.attributes {
 		b.WriteString(fmt.Sprintf("attribute: %+v\n", *attr))
 	}
@@ -129,9 +129,8 @@ func parseStunHeader(data []byte) *stunMessage {
 		length:        length,
 		class:         class,
 		method:        method,
-		transactionID: make([]byte, 12),
+		transactionID: string(data[8:20]),
 	}
-	copy(msg.transactionID, data[8:20])
 	return msg
 }
 
@@ -140,7 +139,7 @@ func writeStunHeader(msg *stunMessage, b *bytes.Buffer) {
 	binary.BigEndian.PutUint16(b.Next(2), messageType)
 	binary.BigEndian.PutUint16(b.Next(2), msg.length)
 	binary.BigEndian.PutUint32(b.Next(4), stunMagicCookie)
-	copy(b.Next(12), msg.transactionID)
+	msg.transactionID = string(b.Next(12))
 }
 
 // Figure 3: Format of STUN Message Type Field
@@ -219,8 +218,8 @@ func pad4(n uint16) int {
 
 var zeros = make([]byte, 32)
 
-// If transactionID is nil, a random transaction ID will be generated.
-func newStunMessage(class uint16, method uint16, transactionID []byte) (*stunMessage, error) {
+// If transactionID is empty, a random transaction ID will be generated.
+func newStunMessage(class uint16, method uint16, transactionID string) (*stunMessage, error) {
 	if class>>2 != 0 {
 		return nil, fmt.Errorf("Invalid STUN message class: %#x", class)
 	}
@@ -228,29 +227,29 @@ func newStunMessage(class uint16, method uint16, transactionID []byte) (*stunMes
 		return nil, fmt.Errorf("Invalid STUN method: %#x", method)
 	}
 
+	if transactionID == "" {
+		// Generate a random transaction ID.
+		buf := make([]byte, 12)
+		rand.Read(buf)
+		transactionID = string(buf)
+	} else if len(transactionID) != 12 {
+		return nil, fmt.Errorf("Invalid transaction ID: %s", transactionID)
+	}
 	msg := &stunMessage{
 		length:        0,
 		class:         class,
 		method:        method,
-		transactionID: make([]byte, 12),
-	}
-	if transactionID == nil {
-		// Generate a random transaction ID.
-		rand.Read(msg.transactionID)
-	} else if len(transactionID) != 12 {
-		return nil, fmt.Errorf("Invalid transaction ID: %s", transactionID)
-	} else {
-		copy(msg.transactionID, transactionID)
+		transactionID: transactionID,
 	}
 	return msg, nil
 }
 
 func newStunBindingRequest() stunMessage {
-	msg, _ := newStunMessage(stunRequest, stunBindingMethod, nil)
+	msg, _ := newStunMessage(stunRequest, stunBindingMethod, "")
 	return *msg
 }
 
-func newStunBindingResponse(transactionID []byte) stunMessage {
+func newStunBindingResponse(transactionID string) stunMessage {
 	msg, _ := newStunMessage(stunSuccessResponse, stunBindingMethod, transactionID)
 	return *msg
 }
@@ -287,8 +286,8 @@ const (
 	stunAttrIceControlling    = 0x802A
 )
 
-var stunMagicCookieBytes = []byte{0x21, 0x12, 0xA4, 0x42}
-var stunFingerprintXorBytes = []byte{0x53, 0x54, 0x55, 0x4e}
+const stunMagicCookieBytes = "\x21\x12\xA4\x42"
+const stunFingerprintXorBytes = "\x53\x54\x55\x4e"
 
 func (msg *stunMessage) getXorMappedAddress() (*net.UDPAddr, error) {
 	if msg.class != stunSuccessResponse {
@@ -343,7 +342,7 @@ func (msg *stunMessage) setXorMappedAddress(addr *net.UDPAddr) {
 	msg.addAttribute(stunAttrXorMappedAddress, value)
 }
 
-func xorBytes(dest []byte, xor []byte) {
+func xorBytes(dest []byte, xor string) {
 	for i := range dest {
 		dest[i] ^= xor[i]
 	}
@@ -403,7 +402,7 @@ func getStunCandidate(conn net.PacketConn, addr net.Addr) (*Candidate, error) {
 	}
 	log.Println(resp)
 
-	if !bytes.Equal(resp.transactionID, req.transactionID) {
+	if resp.transactionID != req.transactionID {
 		return nil, fmt.Errorf("Unknown transaction ID in STUN binding response: %s", resp.transactionID)
 	}
 	if resp.class != stunSuccessResponse {
