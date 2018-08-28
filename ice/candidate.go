@@ -8,19 +8,19 @@ import (
 	"strings"
 )
 
-//
 // https://tools.ietf.org/html/draft-ietf-mmusic-ice-sip-sdp-16
+// See rfc5245bis-20 Section 5.3 for a definition of fields.
 
 type Candidate struct {
 	foundation string
-	component  int
-	protocol   string
+	component  int    // Component ID
+	protocol   string // Transport protocol
 	priority   uint
 	ip         string
 	port       int
 	typ        string
-	raddr      string  // Optional
-	rport      int     // Optional
+	raddr      string // Related address (optional)
+	rport      int    // Related port (optional)
 
 	// Extension attributes
 	attrs []Attribute
