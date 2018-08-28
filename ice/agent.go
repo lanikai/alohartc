@@ -1,16 +1,23 @@
 package ice
 
 import (
-	"bytes"
 	"fmt"
 	"log"
 	"net"
 	"strconv"
 )
 
+// https://tools.ietf.org/html/draft-ietf-ice-rfc5245bis-20
 
+// In the language of the above specification, this is a Full implementation of a Controlled ICE
+// agent, supporting a single component of a data stream. It does not (yet) implement candidate
+// trickling.
 type Agent struct {
-	localCandidates []Candidate
+	username       string
+	localPassword  string
+	remotePassword string
+
+	localCandidates  []Candidate
 	remoteCandidates []Candidate
 
 	conn *net.UDPConn
@@ -18,9 +25,13 @@ type Agent struct {
 	foundationFingerprints []string
 }
 
-// Create a new ICE agent.
-func NewAgent() *Agent {
-	return &Agent{}
+// Create a new ICE agent with the given username and passwords.
+func NewAgent(username, localPassword, remotePassword string) *Agent {
+	a := &Agent{}
+	a.username = username
+	a.localPassword = localPassword
+	a.remotePassword = remotePassword
+	return a
 }
 
 func (a *Agent) AddRemoteCandidate(desc string) error {
@@ -125,8 +136,8 @@ func (a *Agent) computePriority(c *Candidate) {
 	c.priority = uint((typePref << 24) + (localPref << 8) + (256 - c.component))
 }
 
-func (a *Agent) EstablishConnection(username, localPassword, remotePassword string) (net.Conn, error) {
-//	a.conn.SetReadDeadline(time.Now().Add(time.Second))
+func (a *Agent) EstablishConnection() (net.Conn, error) {
+	//	a.conn.SetReadDeadline(time.Now().Add(time.Second))
 
 	buf := make([]byte, 1500)
 
@@ -147,18 +158,17 @@ func (a *Agent) EstablishConnection(username, localPassword, remotePassword stri
 	// Send response.
 	resp := newStunBindingResponse(req.transactionID)
 	resp.setXorMappedAddress(raddr.(*net.UDPAddr))
-	resp.addMessageIntegrity(localPassword)
+	resp.addMessageIntegrity(a.localPassword)
 	resp.addFingerprint()
 	log.Println("Outgoing ICE response:", resp.String())
 	a.conn.WriteTo(resp.Bytes(), raddr)
 
-
 	// Now act as STUN client.
 	req2 := newStunBindingRequest()
 	req2.transactionID = transactionID
-	req2.addAttribute(stunAttrUsername, []byte(username))
+	req2.addAttribute(stunAttrUsername, []byte(a.username))
 	req2.addAttribute(stunAttrIceControlled, []byte{1, 2, 3, 4, 5, 6, 7, 8})
-	req2.addMessageIntegrity(remotePassword)
+	req2.addMessageIntegrity(a.remotePassword)
 	req2.addFingerprint()
 	log.Println("Outgoing ICE request:", req2.String())
 	a.conn.WriteTo(req2.Bytes(), raddr)
@@ -184,28 +194,6 @@ func (a *Agent) EstablishConnection(username, localPassword, remotePassword stri
 		log.Println("Ignoring unexpected ICE message:", resp2.String())
 	}
 
-	for false {
-		// Act as STUN server, awaiting binding request from remote ICE agent.
-		n, raddr, err := a.conn.ReadFrom(buf)
-		if err != nil {
-			log.Println(err)
-			return nil, err
-		}
-		req, err := parseStunMessage(buf[0:n])
-		if err != nil {
-			log.Println(err)
-			return nil, err
-		}
-		log.Println("Incoming ICE request:", req.String())
-
-		// Send response.
-		resp := newStunBindingResponse(req.transactionID)
-		resp.setXorMappedAddress(raddr.(*net.UDPAddr))
-		resp.addMessageIntegrity(localPassword)
-		resp.addFingerprint()
-		log.Println("Outgoing ICE response:", resp.String())
-		a.conn.WriteTo(resp.Bytes(), raddr)
-	}
-
+	// TODO: Return an ice.ChannelConn
 	return a.conn, nil
 }

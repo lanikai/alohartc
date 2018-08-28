@@ -90,7 +90,12 @@ func (pc *PeerConnection) SetRemoteDescription(sdp string) error {
 
 // Receive remote ICE candidates from rcand. Send local ICE candidates to lcand.
 func (pc *PeerConnection) Connect(lcand chan<- string, rcand <-chan string) {
-	ia := ice.NewAgent()
+	remoteUfrag := pc.remoteDescription.GetMedia().GetAttr("ice-ufrag")
+	localUfrag := pc.localDescription.GetMedia().GetAttr("ice-ufrag")
+	username := remoteUfrag + ":" + localUfrag
+	localPassword := pc.localDescription.GetMedia().GetAttr("ice-pwd")
+	remotePassword := pc.remoteDescription.GetMedia().GetAttr("ice-pwd")
+	ia := ice.NewAgent(username, localPassword, remotePassword)
 
 	// Send local ICE candidates.
 	localCandidates, err := ia.GatherLocalCandidates()
@@ -106,31 +111,17 @@ func (pc *PeerConnection) Connect(lcand chan<- string, rcand <-chan string) {
 		ia.AddRemoteCandidate(c)
 	}
 
-	_, err = ia.EstablishConnection(pc.Username(), pc.LocalPassword(), pc.RemotePassword())
+	_, err = ia.EstablishConnection()
 	if err != nil {
 		log.Fatal(err)
 	}
 
 //	// Send DTLS client hello
-//	if _, err := dtls.DialWithConnection(pc.conn); err != nil {
+//	if _, err := dtls.DialWithConnection(conn); err != nil {
 //		log.Fatal(err)
 //	}
 }
 
 func (pc *PeerConnection) SdpMid() string {
 	return pc.remoteDescription.GetMedia().GetAttr("mid")
-}
-
-func (pc *PeerConnection) Username() string {
-	remoteUfrag := pc.remoteDescription.GetMedia().GetAttr("ice-ufrag")
-	localUfrag := pc.localDescription.GetMedia().GetAttr("ice-ufrag")
-	return remoteUfrag + ":" + localUfrag
-}
-
-func (pc *PeerConnection) LocalPassword() string {
-	return pc.localDescription.GetMedia().GetAttr("ice-pwd")
-}
-
-func (pc *PeerConnection) RemotePassword() string {
-	return pc.remoteDescription.GetMedia().GetAttr("ice-pwd")
 }
