@@ -8,7 +8,7 @@ import (
 
 func TestMessageIntegrity(t *testing.T) {
 	password := "hello"
-	transactionID := []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12}
+	transactionID := "0123456789AB"
 	raddr := &net.UDPAddr{IP: net.IPv4(1, 2, 3, 4), Port: 5678}
 
 	msg := newStunBindingResponse(transactionID)
@@ -20,7 +20,7 @@ func TestMessageIntegrity(t *testing.T) {
 
 func TestFingerprint(t *testing.T) {
 	password := "hello"
-	transactionID := []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12}
+	transactionID := "0123456789AB"
 	raddr := &net.UDPAddr{IP: net.IPv4(1, 2, 3, 4), Port: 5678}
 
 	msg := newStunBindingResponse(transactionID)

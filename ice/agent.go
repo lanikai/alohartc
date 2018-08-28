@@ -174,7 +174,7 @@ func (a *Agent) EstablishConnection(username, localPassword, remotePassword stri
 			log.Println(err)
 			return nil, err
 		}
-		if bytes.Equal(resp2.transactionID, transactionID) {
+		if resp2.transactionID == transactionID {
 			log.Println("Incoming ICE response:", resp2.String())
 			raddr2, _ := resp2.getXorMappedAddress()
 			log.Println("Mapped address:", raddr2)
