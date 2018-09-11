@@ -19,6 +19,7 @@ type Agent struct {
 
 	localCandidates  []Candidate
 	remoteCandidates []Candidate
+	pairs []*CandidatePair
 
 	conn *net.UDPConn
 
@@ -136,64 +137,27 @@ func (a *Agent) computePriority(c *Candidate) {
 	c.priority = uint((typePref << 24) + (localPref << 8) + (256 - c.component))
 }
 
+func sameAddr(a, b net.Addr) bool {
+	return a.Network() == b.Network() && a.String() == b.String()
+}
+
 func (a *Agent) EstablishConnection() (net.Conn, error) {
 	//	a.conn.SetReadDeadline(time.Now().Add(time.Second))
 
-	buf := make([]byte, 1500)
-
-	// Act as STUN server, awaiting binding request from remote ICE agent.
-	n, raddr, err := a.conn.ReadFrom(buf)
-	if err != nil {
-		log.Println(err)
-		return nil, err
-	}
-	req, err := parseStunMessage(buf[0:n])
-	transactionID := req.transactionID
-	if err != nil {
-		log.Println(err)
-		return nil, err
-	}
-	log.Println("Incoming ICE request:", req.String())
-
-	// Send response.
-	resp := newStunBindingResponse(req.transactionID)
-	resp.setXorMappedAddress(raddr.(*net.UDPAddr))
-	resp.addMessageIntegrity(a.localPassword)
-	resp.addFingerprint()
-	log.Println("Outgoing ICE response:", resp.String())
-	a.conn.WriteTo(resp.Bytes(), raddr)
-
-	// Now act as STUN client.
-	req2 := newStunBindingRequest()
-	req2.transactionID = transactionID
-	req2.addAttribute(stunAttrUsername, []byte(a.username))
-	req2.addAttribute(stunAttrIceControlled, []byte{1, 2, 3, 4, 5, 6, 7, 8})
-	req2.addMessageIntegrity(a.remotePassword)
-	req2.addFingerprint()
-	log.Println("Outgoing ICE request:", req2.String())
-	a.conn.WriteTo(req2.Bytes(), raddr)
-
-	for {
-		n, _, err = a.conn.ReadFrom(buf)
-		if err != nil {
-			log.Println(err)
-			return nil, err
+	// Create candidate pairs.
+	for _, local := range a.localCandidates {
+		laddr := local.getAddress()
+		for _, remote := range a.remoteCandidates {
+			raddr := remote.getAddress()
+			if laddr.Network() == raddr.Network() {
+				cp := newCandidatePair(a.conn, local, remote, laddr, raddr)
+				a.pairs = append(a.pairs, cp)
+			}
 		}
-		resp2, err := parseStunMessage(buf[0:n])
-		if err != nil {
-			log.Println(err)
-			return nil, err
-		}
-		if resp2.transactionID == transactionID {
-			log.Println("Incoming ICE response:", resp2.String())
-			raddr2, _ := resp2.getXorMappedAddress()
-			log.Println("Mapped address:", raddr2)
-			break
-		}
-
-		log.Println("Ignoring unexpected ICE message:", resp2.String())
 	}
 
-	// TODO: Return an ice.ChannelConn
-	return a.conn, nil
+	for i, cp := range a.pairs {
+		log.Printf("Pair #%d: %s\n", i, cp)
+	}
+	return nil, nil
 }

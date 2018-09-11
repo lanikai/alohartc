@@ -3,6 +3,7 @@ package ice
 import (
 	"bufio"
 	"fmt"
+	"log"
 	"net"
 	"strconv"
 	"strings"
@@ -53,6 +54,19 @@ func (c *Candidate) setAddress(addr net.Addr) {
 	}
 }
 
+func (c *Candidate) getAddress() net.Addr {
+	ip := net.ParseIP(c.ip)
+	switch strings.ToLower(c.protocol) {
+	case "tcp":
+		return &net.TCPAddr{IP: ip, Port: c.port}
+	case "udp":
+		return &net.UDPAddr{IP: ip, Port: c.port}
+	default:
+		log.Fatal("Unrecognized protocol: ", c.protocol)
+	}
+	return nil
+}
+
 func (c *Candidate) addAttribute(name, value string) {
 	c.attrs = append(c.attrs, Attribute{name, value})
 }
@@ -84,6 +98,7 @@ func parseCandidate(desc string) (c Candidate, err error) {
 		return
 	}
 
+	c.protocol = strings.ToLower(c.protocol)
 	if c.component < 1 || c.component > 256 {
 		return c, fmt.Errorf("Component ID out of range: %d", c.component)
 	}
