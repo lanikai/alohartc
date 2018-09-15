@@ -53,7 +53,7 @@ func (pc *PeerConnection) AddIceCandidate(candidate string) error {
 	pc.stunBinding(candidate, pc.password)
 
 	// Load client certificate from file
-	cert, err := dtls.LoadX509KeyPair("server.pem", "server-private.pem")
+	cert, err := dtls.LoadX509KeyPair("client.pem", "client.key")
 	if err != nil {
 		log.Fatal(err)
 	}
