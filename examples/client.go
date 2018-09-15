@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"html/template"
 	"log"
 	"net/http"
@@ -90,6 +91,7 @@ func main() {
 	))
 
 	// Listen on port
+	fmt.Println("Serving WebRTC demo at http://localhost:8000")
 	if err := http.ListenAndServe(":8000", nil); err != nil {
 		log.Fatal("ListenAndServer: ", err)
 	}
