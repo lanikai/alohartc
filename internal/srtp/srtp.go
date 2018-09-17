@@ -90,8 +90,8 @@ func NewSession(conn *net.UDPConn) (*Conn, error) {
 	// TODO Fix hard-coded dynamic RTP type,
 	return &Conn{
 		conn: conn,
-		typ:  100,       // must match SDP answer (hard-coded for now)
-		ssrc: 541098696, // must match SDP answer (hard-coded for now)
+		typ:  100,        // must match SDP answer (hard-coded for now)
+		ssrc: 2541098696, // must match SDP answer (hard-coded for now)
 		seq:  5984,
 		time: 3309803758,
 	}, nil
@@ -119,6 +119,7 @@ func (c *Conn) Send(b []byte) {
 		start := byte(0x80)
 		end := byte(0)
 		typ := byte(b[0] & 0x1F)
+		mark := false
 		for i := 1; i < len(b); i += 1000 {
 			tail := i + 1000
 			if tail > len(b) {
@@ -128,10 +129,14 @@ func (c *Conn) Send(b []byte) {
 			header := byte(start | end | typ)
 			data := append([]byte{indicator, header}, b[i:tail]...)
 
+			if end != 0 {
+				mark = true
+			}
+
 			m := rtpMsg{
 				c.typ,
 				c.time,
-				true,
+				mark,
 				[]uint32{},
 				c.ssrc,
 				c.seq,
