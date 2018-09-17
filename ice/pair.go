@@ -1,22 +1,21 @@
 package ice
 
 import (
-	"net"
+	"fmt"
 )
 
 type CandidatePair struct {
-	conn *net.UDPConn
+	seq int
 
 	local  Candidate
 	remote Candidate
 
-	laddr net.Addr
-	raddr net.Addr
-
 //	isDefault   bool
 //	isValid     bool
 //	isNominated bool
-//	state       cpState
+
+	state cpState
+	cin chan []byte
 }
 
 // Candidate pair states
@@ -30,16 +29,16 @@ const (
 )
 
 
-func newCandidatePair(conn *net.UDPConn, local, remote Candidate, laddr, raddr net.Addr) *CandidatePair {
-	return &CandidatePair{conn: conn, local: local, remote: remote, laddr: laddr, raddr: raddr}
+func newCandidatePair(seq int, local, remote Candidate) *CandidatePair {
+	cin := make(chan []byte, 32)
+	return &CandidatePair{seq: seq, local: local, remote: remote, cin: cin}
 }
 
 func (cp *CandidatePair) String() string {
-	ls := cp.local.protocol + ":" + cp.laddr.String()
-	rs := cp.remote.protocol + ":" + cp.raddr.String()
-	return ls + " -> " + rs
+	laddr := cp.local.Addr()
+	raddr := cp.remote.Addr()
+	return fmt.Sprintf("CP#%d %s:%s -> %s:%s", cp.seq, laddr.Network(), laddr, raddr.Network(), raddr)
 }
-
 
 func (cp *CandidatePair) Priority() uint64 {
 	G := uint64(cp.remote.priority)

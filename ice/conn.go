@@ -7,6 +7,7 @@ import (
 	"time"
 )
 
+// Implements net.Conn with channels.
 type ChannelConn struct {
 	in    <-chan []byte // Channel for reads
 	out   chan<- []byte // Channel for writes

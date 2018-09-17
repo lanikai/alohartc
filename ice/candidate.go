@@ -54,7 +54,7 @@ func (c *Candidate) setAddress(addr net.Addr) {
 	}
 }
 
-func (c *Candidate) getAddress() net.Addr {
+func (c *Candidate) Addr() net.Addr {
 	ip := net.ParseIP(c.ip)
 	switch strings.ToLower(c.protocol) {
 	case "tcp":
@@ -130,4 +130,22 @@ func parseCandidate(desc string) (c Candidate, err error) {
 	}
 
 	return
+}
+
+func makePeerCandidate(component int, raddr net.Addr) Candidate {
+	ip, portstr, err := net.SplitHostPort(raddr.String())
+	if err != nil {
+		log.Fatal(err)
+	}
+	port, err := strconv.Atoi(portstr)
+	if err != nil {
+		log.Fatal(err)
+	}
+	return Candidate{
+		component: component,
+		protocol: strings.ToLower(raddr.Network()),
+		ip: ip,
+		port: port,
+		typ: CandidateTypePeerReflexive,
+	}
 }
