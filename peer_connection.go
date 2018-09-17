@@ -81,23 +81,29 @@ func (pc *PeerConnection) AddIceCandidate(candidate string) error {
 	defer srtpSession.Close()
 
 	// Open file with H.264 test data
-	h264file, err := os.Open("testdata/pi.264")
+	h264file, err := os.Open("testdata/dump.264")
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	// Custom splitter. Extracts NAL units.
 	split := func(data []byte, atEOF bool) (advance int, token []byte, err error) {
-		a := bytes.Index(data, []byte{0, 0, 0, 1})
-		if a == -1 {
+		start := bytes.Index(data, []byte{0, 0, 0, 1})
+		log.Println("start:", start)
+		if start == -1 {
+			// No NAL unit found. Discard until find start.
 			return len(data), nil, nil
 		} else {
-			z := bytes.Index(data[a+4:], []byte{0, 0, 0, 1})
-			if z == -1 {
-				return a, nil, nil
-			} else {
-				return z + 4, data[a+4 : z-1], nil
+			if len(data) < start+4 {
+				return start, nil, nil
 			}
+			end := bytes.Index(data[start+4:], []byte{0, 0, 0, 1})
+			if end == -1 {
+				return start, nil, nil
+			}
+			end += 4
+			log.Println("end:", end)
+			return end, data[start+4 : end], nil
 		}
 	}
 
