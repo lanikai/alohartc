@@ -1,7 +1,18 @@
-WebRTC
-======
+# WebRTC
 
 Go package implementing a WebRTC native client
+
+
+## Quickstart
+
+Start simple web server + WebRTC client:
+
+    go run examples/client.go
+
+Open http://localhost:8000 in browser. Observe DTLS handshake in Wireshark.
+
+
+## Overview
 
 ```
 .
