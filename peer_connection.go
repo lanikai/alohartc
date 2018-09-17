@@ -2,12 +2,14 @@ package webrtc
 
 import (
 	"bufio"
+	"bytes"
 	"fmt"
 	"log"
 	"net"
+	"os"
 	"strings"
 
-	"github.com/thinkski/dtls"
+	"github.com/thinkski/webrtc/internal/srtp"
 )
 
 type PeerConnection struct {
@@ -53,28 +55,58 @@ func (pc *PeerConnection) AddIceCandidate(candidate string) error {
 	pc.stunBinding(candidate, pc.password)
 
 	// Load client certificate from file
-	cert, err := dtls.LoadX509KeyPair("client.pem", "client.key")
+	//	cert, err := dtls.LoadX509KeyPair("client.pem", "client.key")
+	//	if err != nil {
+	//		log.Fatal(err)
+	//	}
+
+	// Send DTLS client hello
+	//	_, err = dtls.NewSession(
+	//		pc.conn,
+	//		&dtls.Config{
+	//			Certificates:           []dtls.Certificate{cert},
+	//			InsecureSkipVerify:     true,
+	//			Renegotiation:          dtls.RenegotiateFreelyAsClient,
+	//			SessionTicketsDisabled: false,
+	//			ClientSessionCache:     dtls.NewLRUClientSessionCache(-1),
+	//			ProtectionProfiles:     []uint16{dtls.SRTP_AES128_CM_HMAC_SHA1_80},
+	//		},
+	//	)
+	//	if err != nil {
+	//		log.Println(err)
+	//	}
+
+	// Send SRTP stream
+	srtpSession, err := srtp.NewSession(pc.conn)
+	defer srtpSession.Close()
+
+	// Open file with H.264 test data
+	h264file, err := os.Open("testdata/pi.264")
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	// Send DTLS client hello
-	_, err = dtls.NewSession(
-		pc.conn,
-		&dtls.Config{
-			Certificates:           []dtls.Certificate{cert},
-			InsecureSkipVerify:     true,
-			Renegotiation:          dtls.RenegotiateFreelyAsClient,
-			SessionTicketsDisabled: false,
-			ClientSessionCache:     dtls.NewLRUClientSessionCache(-1),
-			ProtectionProfiles:     []uint16{dtls.SRTP_AES128_CM_HMAC_SHA1_80},
-		},
-	)
-	if err != nil {
-		log.Println(err)
+	// Custom splitter. Extracts NAL units.
+	split := func(data []byte, atEOF bool) (advance int, token []byte, err error) {
+		a := bytes.Index(data, []byte{0, 0, 0, 1})
+		if a == -1 {
+			return len(data), nil, nil
+		} else {
+			z := bytes.Index(data[a+4:], []byte{0, 0, 0, 1})
+			if z == -1 {
+				return a, nil, nil
+			} else {
+				return z + 4, data[a+4 : z-1], nil
+			}
+		}
 	}
 
-	//srtp.Send(pc.conn, file)
+	// Open H.264 file. Send each frame as RTP packet (or set of packets with same timestamp)
+	scanner := bufio.NewScanner(h264file)
+	scanner.Split(split)
+	for scanner.Scan() {
+		srtpSession.Send(scanner.Bytes())
+	}
 
 	return nil
 }
@@ -101,15 +133,10 @@ a=rtcp-mux
 a=rtcp-rsize
 a=rtpmap:100 H264/90000
 a=fmtp:100 level-asymmetry-allowed=1;packetization-mode=0;profile-level-id=42001f
-a=ssrc-group:FID 2541098696 3215547008
 a=ssrc:2541098696 cname:cYhx/N8U7h7+3GW3
 a=ssrc:2541098696 msid:SdWLKyaNRoUSWQ7BzkKGcbCWcuV7rScYxCAv e9b60276-a415-4a66-8395-28a893918d4c
 a=ssrc:2541098696 mslabel:SdWLKyaNRoUSWQ7BzkKGcbCWcuV7rScYxCAv
 a=ssrc:2541098696 label:e9b60276-a415-4a66-8395-28a893918d4c
-a=ssrc:3215547008 cname:cYhx/N8U7h7+3GW3
-a=ssrc:3215547008 msid:SdWLKyaNRoUSWQ7BzkKGcbCWcuV7rScYxCAv e9b60276-a415-4a66-8395-28a893918d4c
-a=ssrc:3215547008 mslabel:SdWLKyaNRoUSWQ7BzkKGcbCWcuV7rScYxCAv
-a=ssrc:3215547008 label:e9b60276-a415-4a66-8395-28a893918d4c
 `
 	return tmpl, nil
 }

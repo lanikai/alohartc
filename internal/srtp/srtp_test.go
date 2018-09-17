@@ -1,4 +1,4 @@
-package webrtc
+package srtp
 
 import (
 	"testing"
@@ -6,10 +6,10 @@ import (
 
 func TestSRTPMarshalBinary(t *testing.T) {
 	srtp := SRTP{
-		Marker: true,
-		PayloadType: 96,
+		Marker:         true,
+		PayloadType:    96,
 		SequenceNumber: 1234,
-		SSRC: 0x20180709,
+		SSRC:           0x20180709,
 		CSRC: []uint32{
 			0x20180709,
 			0x20180709,
