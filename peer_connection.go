@@ -4,7 +4,7 @@ import (
 	"log"
 	"net"
 
-//	"github.com/thinkski/webrtc/dtls"
+	"github.com/thinkski/webrtc/dtls"
 	"github.com/thinkski/webrtc/ice"
 )
 
@@ -103,6 +103,7 @@ func (pc *PeerConnection) Connect(lcand chan<- string, rcand <-chan string) {
 		log.Fatal(err)
 	}
 	for _, c := range localCandidates {
+		log.Println("Local ICE", c)
 		lcand <- c.String()
 	}
 
@@ -111,15 +112,15 @@ func (pc *PeerConnection) Connect(lcand chan<- string, rcand <-chan string) {
 		ia.AddRemoteCandidate(c)
 	}
 
-	_, err = ia.EstablishConnection()
+	conn, err := ia.EstablishConnection()
 	if err != nil {
 		log.Fatal(err)
 	}
 
-//	// Send DTLS client hello
-//	if _, err := dtls.DialWithConnection(conn); err != nil {
-//		log.Fatal(err)
-//	}
+	// Send DTLS client hello
+	if _, err := dtls.DialWithConnection(conn); err != nil {
+		log.Fatal(err)
+	}
 }
 
 func (pc *PeerConnection) SdpMid() string {

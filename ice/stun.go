@@ -64,12 +64,43 @@ func writeStunMessage(msg *stunMessage, b *bytes.Buffer) {
 
 func (msg *stunMessage) String() string {
 	b := new(strings.Builder)
-	b.WriteString(fmt.Sprintf("length: %d\n", msg.length))
-	b.WriteString(fmt.Sprintf("class: %d\n", msg.class))
-	b.WriteString(fmt.Sprintf("method: %d\n", msg.method))
-	b.WriteString(fmt.Sprintf("transactionID: %s\n", msg.transactionID))
+	switch msg.class {
+	case stunRequest:
+		b.WriteString("STUN request")
+	case stunIndication:
+		b.WriteString("STUN indication")
+	case stunSuccessResponse:
+		b.WriteString("STUN success response")
+	case stunErrorResponse:
+		b.WriteString("STUN error response")
+	}
+	fmt.Fprintf(b, ", tid=%s", hex.EncodeToString([]byte(msg.transactionID)))
 	for _, attr := range msg.attributes {
-		b.WriteString(fmt.Sprintf("attribute: %+v\n", *attr))
+		switch attr.Type {
+		case stunAttrMappedAddress:
+			fmt.Fprintf(b, ", MAPPED-ADDRESS %s", extractAddr(attr, msg.transactionID, false))
+		case stunAttrXorMappedAddress:
+			fmt.Fprintf(b, ", XOR-MAPPED-ADDRESS %s", extractAddr(attr, msg.transactionID, true))
+		case stunAttrUsername:
+			fmt.Fprintf(b, ", USERNAME %s", string(attr.Value))
+		case stunAttrErrorCode:
+			fmt.Fprintf(b, ", ERROR-CODE %s", string(attr.Value))
+		case stunAttrUnknownAttributes:
+			fmt.Fprintf(b, ", UNKNOWN %s", string(attr.Value))
+		case stunAttrUseCandidate:
+			fmt.Fprintf(b, ", USE-CANDIDATE")
+		case stunAttrIceControlled:
+			fmt.Fprintf(b, ", ICE-CONTROLLED")
+		case stunAttrIceControlling:
+			fmt.Fprintf(b, ", ICE-CONTROLLING")
+		case stunAttrPriority:
+		case stunAttrSoftware:
+		case stunAttrFingerprint:
+		case stunAttrMessageIntegrity:
+			// Ignore these
+		default:
+			fmt.Fprintf(b, "unknown attribute %x", attr.Type)
+		}
 	}
 	return b.String()
 }
@@ -139,7 +170,7 @@ func writeStunHeader(msg *stunMessage, b *bytes.Buffer) {
 	binary.BigEndian.PutUint16(b.Next(2), messageType)
 	binary.BigEndian.PutUint16(b.Next(2), msg.length)
 	binary.BigEndian.PutUint32(b.Next(4), stunMagicCookie)
-	msg.transactionID = string(b.Next(12))
+	copy(b.Next(12), msg.transactionID)
 }
 
 // Figure 3: Format of STUN Message Type Field
@@ -219,12 +250,12 @@ func pad4(n uint16) int {
 var zeros = make([]byte, 32)
 
 // If transactionID is empty, a random transaction ID will be generated.
-func newStunMessage(class uint16, method uint16, transactionID string) (*stunMessage, error) {
-	if class>>2 != 0 {
-		return nil, fmt.Errorf("Invalid STUN message class: %#x", class)
+func newStunMessage(class uint16, method uint16, transactionID string) *stunMessage {
+	if class >> 2 != 0 {
+		log.Panicf("Invalid STUN message class: %#x", class)
 	}
-	if method>>12 != 0 {
-		return nil, fmt.Errorf("Invalid STUN method: %#x", method)
+	if method >> 12 != 0 {
+		log.Panicf("Invalid STUN method: %#x", method)
 	}
 
 	if transactionID == "" {
@@ -233,7 +264,7 @@ func newStunMessage(class uint16, method uint16, transactionID string) (*stunMes
 		rand.Read(buf)
 		transactionID = string(buf)
 	} else if len(transactionID) != 12 {
-		return nil, fmt.Errorf("Invalid transaction ID: %s", transactionID)
+		log.Panicf("Invalid transaction ID: %s", transactionID)
 	}
 	msg := &stunMessage{
 		length:        0,
@@ -241,17 +272,19 @@ func newStunMessage(class uint16, method uint16, transactionID string) (*stunMes
 		method:        method,
 		transactionID: transactionID,
 	}
-	return msg, nil
+	return msg
 }
 
-func newStunBindingRequest() stunMessage {
-	msg, _ := newStunMessage(stunRequest, stunBindingMethod, "")
-	return *msg
+func newStunBindingRequest(transactionID string) *stunMessage {
+	return newStunMessage(stunRequest, stunBindingMethod, transactionID)
 }
 
-func newStunBindingResponse(transactionID string) stunMessage {
-	msg, _ := newStunMessage(stunSuccessResponse, stunBindingMethod, transactionID)
-	return *msg
+func newStunBindingResponse(transactionID string, raddr net.Addr, password string) *stunMessage {
+	msg := newStunMessage(stunSuccessResponse, stunBindingMethod, transactionID)
+	msg.setXorMappedAddress(raddr)
+	msg.addMessageIntegrity(password)
+	msg.addFingerprint()
+	return msg
 }
 
 func (msg *stunMessage) addAttribute(t uint16, v []byte) *stunAttribute {
@@ -289,52 +322,67 @@ const (
 const stunMagicCookieBytes = "\x21\x12\xA4\x42"
 const stunFingerprintXorBytes = "\x53\x54\x55\x4e"
 
-func (msg *stunMessage) getXorMappedAddress() (*net.UDPAddr, error) {
-	if msg.class != stunSuccessResponse {
-		return nil, fmt.Errorf("STUN message is not a success response")
-	}
-
-	addr := new(net.UDPAddr)
+func (msg *stunMessage) getMappedAddress() *net.UDPAddr {
 	for _, attr := range msg.attributes {
+		if attr.Type == stunAttrMappedAddress {
+			return extractAddr(attr, msg.transactionID, false)
+		}
 		if attr.Type == stunAttrXorMappedAddress {
-			family := attr.Value[1]
-			addr.Port = int(binary.BigEndian.Uint16(attr.Value[2:4]) ^ (stunMagicCookie >> 16))
-			switch family {
-			case 0x01:
-				// IPv4
-				addr.IP = attr.Value[4:8]
-				xorBytes(addr.IP, stunMagicCookieBytes)
-			case 0x02:
-				// IPv6
-				addr.IP = attr.Value[4:20]
-				xorBytes(addr.IP[0:4], stunMagicCookieBytes)
-				xorBytes(addr.IP[4:16], msg.transactionID)
-			default:
-				return nil, fmt.Errorf("Invalid mapped address family: %#x", family)
-			}
-			return addr, nil
+			return extractAddr(attr, msg.transactionID, true)
 		}
 	}
-
-	return nil, fmt.Errorf("STUN message does not have XOR-MAPPED-ADDRESS attribute")
+	return nil
 }
 
-func (msg *stunMessage) setXorMappedAddress(addr *net.UDPAddr) {
+func extractAddr(attr *stunAttribute, transactionID string, doXor bool) *net.UDPAddr {
+	addr := new(net.UDPAddr)
+	addr.Port = int(binary.BigEndian.Uint16(attr.Value[2:4]))
+
+	family := attr.Value[1]
+	switch family {
+	case 0x01:  // IPv4
+		addr.IP = make([]byte, 4)
+		copy(addr.IP, attr.Value[4:8])
+	case 0x02:  // IPv6
+		addr.IP = make([]byte, 16)
+		copy(addr.IP, attr.Value[4:20])
+	default:
+		log.Panicf("Invalid mapped address family: %#x", family)
+	}
+
+	if doXor {
+		addr.Port ^= stunMagicCookie >> 16
+		xorBytes(addr.IP[0:4], stunMagicCookieBytes)
+		xorBytes(addr.IP[4:], transactionID)
+	}
+	return addr
+}
+
+func (msg *stunMessage) setXorMappedAddress(addr net.Addr) {
+	var ip net.IP
+	var port int
+	switch a := addr.(type) {
+	case *net.UDPAddr:
+		ip = a.IP
+		port = a.Port
+	case *net.TCPAddr:
+		ip = a.IP
+		port = a.Port
+	}
+
 	var value []byte
-	ip4 := addr.IP.To4()
-	if ip4 != nil {
+	if ip.To4() != nil {
 		// IPv4
 		value = make([]byte, 8)
 		value[1] = 0x01
-		copy(value[4:8], ip4)
+		copy(value[4:8], ip.To4())
 	} else {
 		// IPv6
-		ip6 := addr.IP.To16()
 		value = make([]byte, 20)
 		value[1] = 0x02
-		copy(value[4:20], ip6)
+		copy(value[4:20], ip.To16())
 	}
-	binary.BigEndian.PutUint16(value[2:4], uint16(addr.Port))
+	binary.BigEndian.PutUint16(value[2:4], uint16(port))
 
 	xorBytes(value[2:4], stunMagicCookieBytes[0:2])
 	xorBytes(value[4:8], stunMagicCookieBytes)
@@ -377,9 +425,19 @@ func (msg *stunMessage) addFingerprint() {
 	binary.BigEndian.PutUint32(attr.Value, crc ^ 0x5354554e)
 }
 
+// Check if the STUN message has a USE-CANDIDATE attribute.
+func (msg *stunMessage) hasUseCandidate() bool {
+	for _, attr := range msg.attributes {
+		if attr.Type == stunAttrUseCandidate {
+			return true
+		}
+	}
+	return false
+}
+
 // Send a STUN binding request to the given address, and await a binding response.
 func getStunCandidate(conn net.PacketConn, addr net.Addr) (*Candidate, error) {
-	req := newStunBindingRequest()
+	req := newStunBindingRequest("")
 	log.Printf("STUN binding request: %x", req.Bytes())
 	_, err := conn.WriteTo(req.Bytes(), addr)
 	if err != nil {
@@ -413,10 +471,7 @@ func getStunCandidate(conn net.PacketConn, addr net.Addr) (*Candidate, error) {
 	for _, attr := range resp.attributes {
 		log.Printf("STUN attribute: %#x %d %s", attr.Type, attr.Length, hex.EncodeToString(attr.Value))
 	}
-	mappedAddr, err := resp.getXorMappedAddress()
-	if err != nil {
-		return nil, err
-	}
+	mappedAddr := resp.getMappedAddress()
 	log.Printf("mappedAddr = %s", mappedAddr)
 
 	// TODO: browser doesn't seem interested in "srflx" candidates

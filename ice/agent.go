@@ -5,9 +5,10 @@ import (
 	"log"
 	"net"
 	"strconv"
+	"time"
 )
 
-// https://tools.ietf.org/html/draft-ietf-ice-rfc5245bis-20
+// RFC8445: https://tools.ietf.org/html/rfc8445
 
 // In the language of the above specification, this is a Full implementation of a Controlled ICE
 // agent, supporting a single component of a data stream. It does not (yet) implement candidate
@@ -19,9 +20,13 @@ type Agent struct {
 
 	localCandidates  []Candidate
 	remoteCandidates []Candidate
+
 	pairs []*CandidatePair
 
 	conn *net.UDPConn
+
+	// Connection for the data stream.
+	dataconn *ChannelConn
 
 	foundationFingerprints []string
 }
@@ -58,26 +63,24 @@ func (a *Agent) GatherLocalCandidates() ([]Candidate, error) {
 	if err != nil {
 		return nil, err
 	}
-	localAddr := a.conn.LocalAddr().(*net.UDPAddr)
+	localAddr := a.conn.LocalAddr()
 	log.Println("Listening on UDP", localAddr)
 
-//	a.conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+	// Default candidate for peers on the same LAN.
+	lc := Candidate{typ: "host", component: 1}
+	lc.setAddress(localAddr)
+	a.computeFoundation(&lc)
+	a.computePriority(&lc)
+	a.localCandidates = append(a.localCandidates, lc)
 
-//	// Default candidate for peers on the same LAN
-//	lc := Candidate{typ: "host", component: 1}
-//	lc.setAddress(localAddr)
-//	a.computeFoundation(&lc)
-//	a.computePriority(&lc)
-//	a.localCandidates = append(a.localCandidates, lc)
-
+	// Query STUN server to get a server reflexive candidate.
 	stunServerAddr, err := net.ResolveUDPAddr("udp", "stun2.l.google.com:19302")
 	if err != nil {
 		return nil, err
 	}
-
 	sc, err := getStunCandidate(a.conn, stunServerAddr)
 	if err != nil {
-		log.Println("Failed to query STUN server:", err)
+		return nil, err
 	} else {
 		a.computeFoundation(sc)
 		a.computePriority(sc)
@@ -87,6 +90,7 @@ func (a *Agent) GatherLocalCandidates() ([]Candidate, error) {
 	return a.localCandidates, nil
 }
 
+// Get the IP address of this machine.
 func getLocalIP() (net.IP, error) {
 	conn, err := net.Dial("udp", "8.8.8.8:80")
 	if err != nil {
@@ -97,7 +101,7 @@ func getLocalIP() (net.IP, error) {
 	return conn.LocalAddr().(*net.UDPAddr).IP, nil
 }
 
-// [draft-ietf-ice-rfc5245bis-20] Section 5.1.1.3. Computing Foundations
+// [RFC8445] Section 5.1.1.3. Computing Foundations
 // The foundation must be unique for each tuple of
 //   (candidate type, base IP address, protocol, STUN/TURN server)
 // We compute a "fingerprint" that encodes this information, and assign each fingerprint
@@ -117,15 +121,13 @@ func (a *Agent) computeFoundation(c *Candidate) {
 	c.foundation = strconv.Itoa(n)
 }
 
-// [draft-ietf-ice-rfc5245bis-20] Section 5.1.2. Prioritizing Candidates
+// [RFC8445] Section 5.1.2. Prioritizing Candidates
 func (a *Agent) computePriority(c *Candidate) {
 	var typePref int
 	switch c.typ {
 	case "host":
 		typePref = 126
-	case "prflx":
-		typePref = 110
-	case "srflx":
+	case "prflx", "srflx":
 		typePref = 110
 	case "relay":
 		typePref = 0
@@ -141,23 +143,123 @@ func sameAddr(a, b net.Addr) bool {
 	return a.Network() == b.Network() && a.String() == b.String()
 }
 
-func (a *Agent) EstablishConnection() (net.Conn, error) {
-	//	a.conn.SetReadDeadline(time.Now().Add(time.Second))
-
+func (a *Agent) EstablishConnection() (conn net.Conn, err error) {
 	// Create candidate pairs.
 	for _, local := range a.localCandidates {
-		laddr := local.getAddress()
 		for _, remote := range a.remoteCandidates {
-			raddr := remote.getAddress()
-			if laddr.Network() == raddr.Network() {
-				cp := newCandidatePair(a.conn, local, remote, laddr, raddr)
+			if remote.protocol == local.protocol {
+				cp := newCandidatePair(len(a.pairs), local, remote)
 				a.pairs = append(a.pairs, cp)
 			}
 		}
 	}
 
-	for i, cp := range a.pairs {
-		log.Printf("Pair #%d: %s\n", i, cp)
+	for _, cp := range a.pairs {
+		log.Println(cp)
 	}
-	return nil, nil
+
+	ready := make(chan *ChannelConn, 1)
+	go a.loop(ready)
+
+	select {
+	case conn = <-ready:
+	case <-time.After(15 * time.Second):
+		err = fmt.Errorf("Failed to establish connection after 15 seconds")
+	}
+
+	return conn, err
+}
+
+
+func (a *Agent) loop(ready chan<- *ChannelConn) {
+	datain := make(chan []byte, 32)
+	dataout := make(chan []byte, 32)
+	go func() {
+		// Read constantly from the 'dataout' channel, and forward to the underlying connection.
+		for {
+			a.conn.Write(<-dataout)
+		}
+	}()
+
+	buf := make([]byte, 1500)
+	for {
+		// Read continuously from UDP connection
+		a.conn.SetReadDeadline(time.Now().Add(5*time.Second))
+		n, raddr, err := a.conn.ReadFrom(buf)
+		if err != nil {
+			log.Fatal(err)
+		}
+		data := buf[0:n]
+
+		// Decide which candidate pair the packet should be associated with.
+		var cp *CandidatePair
+		for i := range a.pairs {
+			if sameAddr(raddr, a.pairs[i].remote.Addr()) {
+				cp = a.pairs[i]
+				break
+			}
+		}
+
+		if cp == nil {
+			// No matching candidate pair found. Create a new one.
+			local := a.localCandidates[0]
+			remote := makePeerCandidate(local.component, raddr)
+			a.computeFoundation(&remote)
+			a.computePriority(&remote)
+			a.remoteCandidates = append(a.remoteCandidates, remote)
+
+			cp = newCandidatePair(len(a.pairs), local, remote)
+			log.Printf("Candidate pair #%d: %s", len(a.pairs), cp)
+			a.pairs = append(a.pairs, cp)
+		}
+
+		msg, err := parseStunMessage(data)
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		if msg != nil {
+			a.handleStun(cp, msg)
+			if a.dataconn == nil && cp.state == cpSucceeded {
+				// We have selected a candidate pair.
+				a.dataconn = newChannelConn(datain, dataout, cp.local.Addr(), cp.remote.Addr())
+				ready <- a.dataconn
+			}
+		} else if a.dataconn != nil {
+			datain <- data
+		} else {
+			log.Panicf("Received data packet before ICE candidate pair selected: %s", data)
+		}
+	}
+}
+
+func (a *Agent) handleStun(cp *CandidatePair, msg *stunMessage) {
+	log.Printf("CP #%d: Received %s\n", cp.seq, msg)
+
+	switch msg.class {
+	case stunRequest:
+		cp.state = cpInProgress
+
+		// Send a response.
+		resp := newStunBindingResponse(msg.transactionID, cp.remote.Addr(), a.localPassword)
+		log.Printf("CP #%d: Sending %s\n", cp.seq, resp)
+		a.conn.WriteTo(resp.Bytes(), cp.remote.Addr())
+
+		// Followed by a binding request of our own.
+		req := newStunBindingRequest(msg.transactionID)
+		req.addAttribute(stunAttrUsername, []byte(a.username))
+		req.addAttribute(stunAttrIceControlled, []byte{1, 2, 3, 4, 5, 6, 7, 8})
+		req.addMessageIntegrity(a.remotePassword)
+		req.addFingerprint()
+		log.Printf("CP #%d: Sending %s\n", cp.seq, req)
+		a.conn.WriteTo(req.Bytes(), cp.remote.Addr())
+	case stunSuccessResponse:
+		cp.state = cpSucceeded
+		log.Printf("CP #%d: Succeeded\n", cp.seq)
+	case stunErrorResponse:
+		cp.state = cpFailed
+		log.Printf("CP #%d: Failed\n", cp.seq)
+	case stunIndication:
+		// Ignore these.
+	}
 }
