@@ -5,7 +5,7 @@ import (
 	"net"
 
 	"github.com/thinkski/webrtc/dtls"
-	"github.com/thinkski/webrtc/ice"
+	"github.com/thinkski/webrtc/internal/ice"
 )
 
 type PeerConnection struct {
