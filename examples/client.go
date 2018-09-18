@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"html/template"
 	"log"
@@ -26,6 +25,7 @@ func indexHandler(w http.ResponseWriter, r *http.Request) {
 type message struct {
 	Type string `json:"type"`
 	Text string `json:"text"`
+	Params map[string]string `json:"params,omitempty"`
 }
 
 // websocketHandler handles websocket connections
@@ -38,44 +38,50 @@ func websocketHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	defer ws.Close()
 
-	// Create peer connection
-	pc := webrtc.NewPeerConnection()
+	// Remote ICE candidates, sent to us over the Websocket connection.
+	rcand := make(chan string, 16)
+	// Local ICE candidates, produced by the local ICE agent.
+	lcand := make(chan string, 16)
 
-	// Handle websocket messages
+	// Handle incoming websocket messages
 	for {
-		// Read websocket message
-		_, p, err := ws.ReadMessage()
-		if err != nil {
+		// Read JSON message
+		msg := message{}
+		if err := ws.ReadJSON(&msg); err != nil {
 			log.Println(err)
 			return
 		}
 
-		// Unmarshal websocket message
-		msg := message{}
-		if err := json.Unmarshal(p, &msg); err != nil {
-			log.Println(err)
-		}
-
-		// Parse message type
+		log.Printf("websocket message received: type = %s", msg.Type)
 		switch msg.Type {
 		case "offer":
-			log.Println("offer")
+			pc := webrtc.NewPeerConnection()
 			pc.SetRemoteDescription(msg.Text)
-
-			// Answer
-			sdp, _ := pc.CreateAnswer()
-			if err := ws.WriteMessage(
-				websocket.TextMessage,
-				[]byte(sdp),
-			); err != nil {
-				ws.Close()
-				break
-			}
+			ws.WriteJSON(message{Type: "answer", Text: pc.CreateAnswer()})
+			log.Println("sent answer")
+			go sendIceCandidates(ws, lcand, pc.SdpMid())
+			go pc.Connect(lcand, rcand)
 		case "iceCandidate":
-			log.Println("ice candidate")
-			pc.AddIceCandidate(msg.Text)
+			if msg.Text == "" {
+				log.Println("End of remote ICE candidates")
+				close(rcand)
+			} else {
+				log.Println("Remote ICE", msg.Text)
+				rcand <- msg.Text
+			}
 		}
 	}
+}
+
+// Relay local ICE candidates to the remote ICE agent as soon as they become available.
+func sendIceCandidates(ws *websocket.Conn, lcand <-chan string, sdpMid string) {
+	iceParams := map[string]string {"sdpMid": sdpMid}
+	for c := range lcand {
+		log.Println("Local ICE", c)
+		ws.WriteJSON(message{Type: "iceCandidate", Text: c, Params: iceParams})
+	}
+	// Plus an empty candidate to indicate the end of the list.
+	ws.WriteJSON(message{Type: "iceCandidate"})
 }
 
 // main function
