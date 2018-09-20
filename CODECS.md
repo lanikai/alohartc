@@ -14,3 +14,4 @@
 
 Raspberry Pi 3:	420028, 420029, 42002a, 4d0028, 4d0029, 4d002a, 640028, 640029, 64002a
 Ambarella A5s: 4d001f (likely others)
+Nvidia Tegra (Autopilot 2.0, Jetson TX2): 424020 (likely others)
