@@ -110,14 +110,35 @@ func (pc *PeerConnection) AddIceCandidate(candidate string) error {
 	// Open H.264 file. Send each frame as RTP packet (or set of packets with same timestamp)
 	scanner := bufio.NewScanner(h264file)
 	scanner.Split(split)
+	stap := []byte{0x38}
+	stapSent := false
 	for scanner.Scan() {
-		srtpSession.Send(scanner.Bytes())
+		b := scanner.Bytes()
+		typ := b[0] & 0x1f
+		if (typ == 0x7) || (typ == 8) || (typ == 6) {
+			len := len(b)
+			stap = append(stap, []byte{byte(len >> 8), byte(len)}...)
+			stap = append(stap, b...)
+		} else {
+			if stapSent == false {
+				srtpSession.Stap(stap)
+				stapSent = true
+			}
+			srtpSession.Send(b)
+		}
 	}
 
 	return nil
 }
 
 // Create SDP answer. Only needs SDP offer, no ICE candidates.
+//a=fmtp:100 level-asymmetry-allowed=1;packetization-mode=0;profile-level-id=42001f
+
+// Chrome offers following profile-level-id values:
+// 42001f (baseline)
+// 42e01f (constrained baseline)
+// 4d0032 (main)
+// 640032 (high)
 func (pc *PeerConnection) CreateAnswer() (string, error) {
 	tmpl := `v=0
 o=- 6830938501909068252 2 IN IP4 127.0.0.1
@@ -138,7 +159,7 @@ a=sendonly
 a=rtcp-mux
 a=rtcp-rsize
 a=rtpmap:100 H264/90000
-a=fmtp:100 level-asymmetry-allowed=1;packetization-mode=0;profile-level-id=42001f
+a=fmtp:100 level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42001e
 a=ssrc:2541098696 cname:cYhx/N8U7h7+3GW3
 a=ssrc:2541098696 msid:SdWLKyaNRoUSWQ7BzkKGcbCWcuV7rScYxCAv e9b60276-a415-4a66-8395-28a893918d4c
 a=ssrc:2541098696 mslabel:SdWLKyaNRoUSWQ7BzkKGcbCWcuV7rScYxCAv

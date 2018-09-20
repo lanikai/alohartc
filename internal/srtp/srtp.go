@@ -100,13 +100,27 @@ func NewSession(conn *net.UDPConn) (*Conn, error) {
 func (c *Conn) Close() {
 }
 
+func (c *Conn) Stap(b []byte) {
+	m := rtpMsg{
+		c.typ,
+		c.time,
+		false,
+		[]uint32{},
+		c.ssrc,
+		c.seq,
+		b,
+	}
+	c.conn.Write(m.marshal())
+	c.seq += 1
+}
+
 func (c *Conn) Send(b []byte) {
 
 	if len(b) < 1000 {
 		m := rtpMsg{
 			c.typ,
 			c.time,
-			true,
+			false,
 			[]uint32{},
 			c.ssrc,
 			c.seq,
@@ -150,6 +164,6 @@ func (c *Conn) Send(b []byte) {
 		}
 	}
 
-	c.time += 3000
+	c.time += 2970
 	time.Sleep(32 * time.Millisecond)
 }
