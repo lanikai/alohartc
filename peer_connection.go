@@ -81,7 +81,7 @@ func (pc *PeerConnection) AddIceCandidate(candidate string) error {
 	defer srtpSession.Close()
 
 	// Open file with H.264 test data
-	h264file, err := os.Open("testdata/640028.264")
+	h264file, err := os.Open("testdata/424020.264")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -156,7 +156,7 @@ a=sendonly
 a=rtcp-mux
 a=rtcp-rsize
 a=rtpmap:100 H264/90000
-a=fmtp:100 level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=640028
+a=fmtp:100 level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=424020
 a=ssrc:2541098696 cname:cYhx/N8U7h7+3GW3
 a=ssrc:2541098696 msid:SdWLKyaNRoUSWQ7BzkKGcbCWcuV7rScYxCAv e9b60276-a415-4a66-8395-28a893918d4c
 a=ssrc:2541098696 mslabel:SdWLKyaNRoUSWQ7BzkKGcbCWcuV7rScYxCAv
