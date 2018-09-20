@@ -29,6 +29,8 @@
   <script>
     let pc;
 
+    const remoteVideo = document.getElementById("remoteVideo");
+
     // Create a websocket connection for exchanging SDP data
     addr = 'ws://' +
            location.hostname+(location.port ? ':'+location.port: '') +
@@ -48,6 +50,7 @@
       pc = new RTCPeerConnection();
 
       pc.onicecandidate = onIceCandidate;
+      pc.ontrack = gotRemoteStream;
 
       // Called on ICE candidate
       function onIceCandidate(event) {
@@ -58,6 +61,13 @@
             text: event.candidate.candidate
           }));
         }
+      }
+
+      function gotRemoteStream(e) {
+		if (remoteVideo.srcObject !== e.streams[0]) {
+			remoteVideo.srcObject = e.streams[0];
+			console.log("recevied remote stream!");
+		}
       }
 
       // Called upon successful offer creation
