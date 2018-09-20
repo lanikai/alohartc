@@ -129,7 +129,7 @@ func (c *Conn) Send(b []byte) {
 		c.conn.Write(m.marshal())
 		c.seq += 1
 	} else {
-		indicator := byte(0x80 | (b[0] & 0x60) | 28)
+		indicator := byte((0 & 0x80) | (b[0] & 0x60) | 28)
 		start := byte(0x80)
 		end := byte(0)
 		typ := byte(b[0] & 0x1F)

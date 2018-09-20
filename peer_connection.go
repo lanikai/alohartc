@@ -81,39 +81,35 @@ func (pc *PeerConnection) AddIceCandidate(candidate string) error {
 	defer srtpSession.Close()
 
 	// Open file with H.264 test data
-	h264file, err := os.Open("testdata/dump.264")
+	h264file, err := os.Open("testdata/640028.264")
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	// Custom splitter. Extracts NAL units.
-	split := func(data []byte, atEOF bool) (advance int, token []byte, err error) {
-		start := bytes.Index(data, []byte{0, 0, 0, 1})
-		log.Println("start:", start)
-		if start == -1 {
-			// No NAL unit found. Discard until find start.
-			return len(data), nil, nil
-		} else {
-			if len(data) < start+4 {
-				return start, nil, nil
-			}
-			end := bytes.Index(data[start+4:], []byte{0, 0, 0, 1})
-			if end == -1 {
-				return start, nil, nil
-			}
-			end += 4
-			log.Println("end:", end)
-			return end, data[start+4 : end], nil
+	ScanNALU := func(data []byte, atEOF bool) (advance int, token []byte, err error) {
+		i := bytes.Index(data, []byte{0, 0, 0, 1})
+
+		switch i {
+		case -1:
+			return 0, nil, nil
+		case 0:
+			return 4, nil, nil
+		default:
+			return i + 4, data[0:i], nil
 		}
 	}
 
 	// Open H.264 file. Send each frame as RTP packet (or set of packets with same timestamp)
+	buffer := make([]byte, 1024*1024)
 	scanner := bufio.NewScanner(h264file)
-	scanner.Split(split)
+	scanner.Buffer(buffer, 1024*1024)
+	scanner.Split(ScanNALU)
 	stap := []byte{0x38}
 	stapSent := false
 	for scanner.Scan() {
 		b := scanner.Bytes()
+		fmt.Printf("start: %x%x end: %x%x len: %v\n", b[0], b[1], b[len(b)-2], b[len(b)-1], len(b))
 		typ := b[0] & 0x1f
 		if (typ == 0x7) || (typ == 8) || (typ == 6) {
 			len := len(b)
@@ -127,6 +123,7 @@ func (pc *PeerConnection) AddIceCandidate(candidate string) error {
 			srtpSession.Send(b)
 		}
 	}
+	log.Println("ended?", scanner.Err())
 
 	return nil
 }
@@ -159,7 +156,7 @@ a=sendonly
 a=rtcp-mux
 a=rtcp-rsize
 a=rtpmap:100 H264/90000
-a=fmtp:100 level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42001e
+a=fmtp:100 level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=640028
 a=ssrc:2541098696 cname:cYhx/N8U7h7+3GW3
 a=ssrc:2541098696 msid:SdWLKyaNRoUSWQ7BzkKGcbCWcuV7rScYxCAv e9b60276-a415-4a66-8395-28a893918d4c
 a=ssrc:2541098696 mslabel:SdWLKyaNRoUSWQ7BzkKGcbCWcuV7rScYxCAv
