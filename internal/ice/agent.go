@@ -173,18 +173,11 @@ func (a *Agent) EstablishConnection() (conn net.Conn, err error) {
 
 func (a *Agent) loop(ready chan<- *ChannelConn) {
 	datain := make(chan []byte, 32)
-	dataout := make(chan []byte, 32)
-	go func() {
-		// Read constantly from the 'dataout' channel, and forward to the underlying connection.
-		for {
-			a.conn.Write(<-dataout)
-		}
-	}()
 
 	buf := make([]byte, 1500)
 	for {
 		// Read continuously from UDP connection
-		a.conn.SetReadDeadline(time.Now().Add(5*time.Second))
+		a.conn.SetReadDeadline(time.Now().Add(60*time.Second))
 		n, raddr, err := a.conn.ReadFrom(buf)
 		if err != nil {
 			log.Fatal(err)
@@ -221,8 +214,7 @@ func (a *Agent) loop(ready chan<- *ChannelConn) {
 		if msg != nil {
 			a.handleStun(cp, msg)
 			if a.dataconn == nil && cp.state == cpSucceeded {
-				// We have selected a candidate pair.
-				a.dataconn = newChannelConn(datain, dataout, cp.local.Addr(), cp.remote.Addr())
+				a.selectCandidatePair(cp, datain)
 				ready <- a.dataconn
 			}
 		} else if a.dataconn != nil {
@@ -234,15 +226,17 @@ func (a *Agent) loop(ready chan<- *ChannelConn) {
 }
 
 func (a *Agent) handleStun(cp *CandidatePair, msg *stunMessage) {
-	log.Printf("CP #%d: Received %s\n", cp.seq, msg)
+//	log.Printf("CP #%d: Received %s\n", cp.seq, msg)
 
 	switch msg.class {
 	case stunRequest:
-		cp.state = cpInProgress
+		if cp.state != cpSucceeded {
+			cp.state = cpInProgress
+		}
 
 		// Send a response.
 		resp := newStunBindingResponse(msg.transactionID, cp.remote.Addr(), a.localPassword)
-		log.Printf("CP #%d: Sending %s\n", cp.seq, resp)
+//		log.Printf("CP #%d: Sending %s\n", cp.seq, resp)
 		a.conn.WriteTo(resp.Bytes(), cp.remote.Addr())
 
 		// Followed by a binding request of our own.
@@ -251,15 +245,40 @@ func (a *Agent) handleStun(cp *CandidatePair, msg *stunMessage) {
 		req.addAttribute(stunAttrIceControlled, []byte{1, 2, 3, 4, 5, 6, 7, 8})
 		req.addMessageIntegrity(a.remotePassword)
 		req.addFingerprint()
-		log.Printf("CP #%d: Sending %s\n", cp.seq, req)
+//		log.Printf("CP #%d: Sending %s\n", cp.seq, req)
 		a.conn.WriteTo(req.Bytes(), cp.remote.Addr())
 	case stunSuccessResponse:
-		cp.state = cpSucceeded
-		log.Printf("CP #%d: Succeeded\n", cp.seq)
+		if cp.state != cpSucceeded {
+			cp.state = cpSucceeded
+			log.Printf("CP #%d: Succeeded\n", cp.seq)
+		}
+
+		laddr := msg.getMappedAddress()
+		if !sameAddr(cp.local.Addr(), laddr) {
+			log.Printf("CP #%d: Local address updated to %s\n", cp.seq, laddr)
+			cp.local.setAddress(laddr)
+		}
 	case stunErrorResponse:
 		cp.state = cpFailed
 		log.Printf("CP #%d: Failed\n", cp.seq)
 	case stunIndication:
 		// Ignore these.
 	}
+}
+
+func (a *Agent) selectCandidatePair(cp *CandidatePair, datain chan []byte) {
+	dataout := make(chan []byte, 32)
+	a.dataconn = newChannelConn(datain, dataout, cp.local.Addr(), cp.remote.Addr())
+
+	go func() {
+		// Read constantly from the 'dataout' channel, and forward to the underlying connection.
+		for {
+			data := <-dataout
+			_, err := a.conn.WriteTo(data, cp.remote.Addr())
+			if err != nil {
+				log.Println(err)
+				a.dataconn.Close()
+			}
+		}
+	}()
 }
