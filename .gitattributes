@@ -1,0 +1,14 @@
+testdata/428028.264 filter=lfs diff=lfs merge=lfs -text
+testdata/64002a.264 filter=lfs diff=lfs merge=lfs -text
+testdata/dump.264 filter=lfs diff=lfs merge=lfs -text
+testdata/420029.264 filter=lfs diff=lfs merge=lfs -text
+testdata/42002a.264 filter=lfs diff=lfs merge=lfs -text
+testdata/4d0028.264 filter=lfs diff=lfs merge=lfs -text
+testdata/640028.264 filter=lfs diff=lfs merge=lfs -text
+testdata/admiral.264 filter=lfs diff=lfs merge=lfs -text
+testdata/424020.264 filter=lfs diff=lfs merge=lfs -text
+testdata/4d0029.264 filter=lfs diff=lfs merge=lfs -text
+testdata/4d002a.264 filter=lfs diff=lfs merge=lfs -text
+testdata/640029.264 filter=lfs diff=lfs merge=lfs -text
+testdata/baseline.264 filter=lfs diff=lfs merge=lfs -text
+testdata/pi.264 filter=lfs diff=lfs merge=lfs -text
