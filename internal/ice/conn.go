@@ -15,7 +15,7 @@ type ChannelConn struct {
 	raddr net.Addr      // Remote address
 	rtimer *time.Timer  // Timer to enforce read deadline
 	wtimer *time.Timer  // Timer to enforce write deadline
-	closed chan bool
+	closed chan struct{}
 }
 
 const never = math.MaxInt64
@@ -28,14 +28,13 @@ func newChannelConn(in <-chan []byte, out chan<- []byte, laddr, raddr net.Addr) 
 	c.raddr = raddr
 	c.rtimer = time.NewTimer(never)
 	c.wtimer = time.NewTimer(never)
-	c.closed = make(chan bool, 1)
+	c.closed = make(chan struct{})
 	return c
 }
 
 func (c *ChannelConn) Read(b []byte) (n int, err error) {
 	select {
 	case <-c.closed:
-		c.closed <- true
 		err = errors.New("Channel closed during read")
 	case data, ok := <-c.in:
 		if ok {
@@ -52,7 +51,6 @@ func (c *ChannelConn) Read(b []byte) (n int, err error) {
 func (c *ChannelConn) Write(b []byte) (n int, err error) {
 	select {
 	case <-c.closed:
-		c.closed <- true
 		err = errors.New("Channel closed during write")
 	case c.out <- b:
 		n = len(b)
@@ -65,11 +63,10 @@ func (c *ChannelConn) Write(b []byte) (n int, err error) {
 func (c *ChannelConn) Close() error {
 	switch {
 	case <-c.closed:
-		c.closed <- true
 	default:
 		// First time closing, so also close the in channel.
 		close(c.out)
-		c.closed <- true
+		close(c.closed)
 	}
 	return nil
 }
