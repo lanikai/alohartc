@@ -4,9 +4,11 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
+	"html/template"
 	"log"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/thinkski/webrtc/internal/dtls"
@@ -23,7 +25,8 @@ type PeerConnection struct {
 	// Remote peer session description
 	remoteDescription string
 
-	password string
+	password    string
+	DynamicType uint8
 }
 
 func NewPeerConnection() *PeerConnection {
@@ -82,7 +85,7 @@ func (pc *PeerConnection) AddIceCandidate(candidate string) error {
 	//	fmt.Println("client salt:", dc.ClientIV)
 
 	// Send SRTP stream
-	srtpSession, err := srtp.NewSession(pc.conn, dc.ClientKey, dc.ClientIV)
+	srtpSession, err := srtp.NewSession(pc.conn, pc.DynamicType, dc.ClientKey, dc.ClientIV)
 	defer srtpSession.Close()
 
 	// Open file with H.264 test data
@@ -144,13 +147,13 @@ func (pc *PeerConnection) AddIceCandidate(candidate string) error {
 // 4d0032 (main)
 // 640032 (high)
 func (pc *PeerConnection) CreateAnswer() (string, error) {
-	tmpl := `v=0
+	const sdp = `v=0
 o=- 6830938501909068252 2 IN IP4 127.0.0.1
 s=-
 t=0 0
 a=group:BUNDLE video
 a=msid-semantic: WMS SdWLKyaNRoUSWQ7BzkKGcbCWcuV7rScYxCAv
-m=video 9 UDP/TLS/RTP/SAVPF 96
+m=video 9 UDP/TLS/RTP/SAVPF {{ .DynamicType }}
 c=IN IP4 0.0.0.0
 a=rtcp:9 IN IP4 0.0.0.0
 a=ice-ufrag:n3E3
@@ -162,14 +165,16 @@ a=mid:video
 a=sendonly
 a=rtcp-mux
 a=rtcp-rsize
-a=rtpmap:96 H264/90000
-a=fmtp:96 level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f
+a=rtpmap:{{ .DynamicType }} H264/90000
+a=fmtp:{{ .DynamicType }} level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f
 a=ssrc:2541098696 cname:cYhx/N8U7h7+3GW3
 a=ssrc:2541098696 msid:SdWLKyaNRoUSWQ7BzkKGcbCWcuV7rScYxCAv e9b60276-a415-4a66-8395-28a893918d4c
 a=ssrc:2541098696 mslabel:SdWLKyaNRoUSWQ7BzkKGcbCWcuV7rScYxCAv
 a=ssrc:2541098696 label:e9b60276-a415-4a66-8395-28a893918d4c
 `
-	return tmpl, nil
+	b := new(bytes.Buffer)
+	template.Must(template.New("answer").Parse(sdp)).Execute(b, pc)
+	return b.String(), nil
 }
 
 // Set remote SDP offer
@@ -182,6 +187,17 @@ func (pc *PeerConnection) SetRemoteDescription(sdp string) error {
 		if strings.HasPrefix(line, "a=ice-pwd") {
 			pc.password = strings.Split(line, ":")[1]
 			log.Println(pc.password)
+		}
+
+		// Simple dynamic type parser
+		if strings.HasPrefix(line, "a=rtpmap") {
+			if strings.Contains(line, "H264/90000") {
+				fields := strings.Fields(line)
+				n, _ := strconv.Atoi(strings.Split(fields[0], ":")[1])
+				if pc.DynamicType == 0 || pc.DynamicType > uint8(n) {
+					pc.DynamicType = uint8(n)
+				}
+			}
 		}
 	}
 	return nil

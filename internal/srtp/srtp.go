@@ -74,7 +74,7 @@ type Conn struct {
 	context *Context
 }
 
-func NewSession(conn *net.UDPConn, masterKey, masterSalt []byte) (*Conn, error) {
+func NewSession(conn *net.UDPConn, dynamicType uint8, masterKey, masterSalt []byte) (*Conn, error) {
 	ctx, err := CreateContext(masterKey, masterSalt)
 	if err != nil {
 		return nil, err
@@ -83,8 +83,8 @@ func NewSession(conn *net.UDPConn, masterKey, masterSalt []byte) (*Conn, error) 
 	// TODO Fix hard-coded dynamic RTP type,
 	return &Conn{
 		conn: conn,
-		typ:  96,         // must match SDP answer (hard-coded for now)
-		ssrc: 2541098696, // must match SDP answer (hard-coded for now)
+		typ:  dynamicType, // must match SDP answer (hard-coded for now)
+		ssrc: 2541098696,  // must match SDP answer (hard-coded for now)
 		seq:  5984,
 		time: 3309803758,
 
