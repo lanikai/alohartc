@@ -180,8 +180,9 @@ func keysFromMasterSecret(version uint16, suite *cipherSuite, masterSecret, clie
 // RFC 5764, section 4.2
 func srtpKeysFromMasterSecret(version uint16, suite *cipherSuite, masterSecret, clientRandom, serverRandom []byte, keyLen, ivLen int) (clientKey, serverKey, clientIV, serverIV []byte) {
 	seed := make([]byte, 0, len(serverRandom)+len(clientRandom))
-	seed = append(seed, serverRandom...)
+	// NOTE: client and server order is swapped from keysFromMasterSecret
 	seed = append(seed, clientRandom...)
+	seed = append(seed, serverRandom...)
 
 	n := 2*keyLen + 2*ivLen
 	keyMaterial := make([]byte, n)

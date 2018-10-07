@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"strconv"
 	"strings"
@@ -550,6 +551,14 @@ func (hs *clientHandshakeState) doFullHandshake() error {
 
 func (hs *clientHandshakeState) establishKeys() error {
 	c := hs.c
+
+	c.ClientKey, c.ServerKey, c.ClientIV, c.ServerIV =
+		srtpKeysFromMasterSecret(c.vers, hs.suite, hs.masterSecret, hs.hello.random, hs.serverHello.random, 16, 14)
+	log.Printf("master secret: %x", hs.masterSecret)
+	log.Printf("client random: %x", hs.hello.random)
+	log.Printf("server random: %x", hs.serverHello.random)
+	log.Printf("server key: %x", c.ServerKey)
+	log.Printf("server salt: %x", c.ServerIV)
 
 	clientMAC, serverMAC, clientKey, serverKey, clientIV, serverIV :=
 		keysFromMasterSecret(c.vers, hs.suite, hs.masterSecret, hs.hello.random, hs.serverHello.random, hs.suite.macLen, hs.suite.keyLen, hs.suite.ivLen)
