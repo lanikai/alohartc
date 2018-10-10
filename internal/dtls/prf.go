@@ -117,6 +117,7 @@ var masterSecretLabel = []byte("master secret")
 var keyExpansionLabel = []byte("key expansion")
 var clientFinishedLabel = []byte("client finished")
 var serverFinishedLabel = []byte("server finished")
+var srtpExporterLabel = []byte("EXTRACTOR-dtls_srtp")
 
 func prfAndHashForVersion(version uint16, suite *cipherSuite) (func(result, secret, label, seed []byte), crypto.Hash) {
 	switch version {
@@ -164,6 +165,28 @@ func keysFromMasterSecret(version uint16, suite *cipherSuite, masterSecret, clie
 	keyMaterial = keyMaterial[macLen:]
 	serverMAC = keyMaterial[:macLen]
 	keyMaterial = keyMaterial[macLen:]
+	clientKey = keyMaterial[:keyLen]
+	keyMaterial = keyMaterial[keyLen:]
+	serverKey = keyMaterial[:keyLen]
+	keyMaterial = keyMaterial[keyLen:]
+	clientIV = keyMaterial[:ivLen]
+	keyMaterial = keyMaterial[ivLen:]
+	serverIV = keyMaterial[:ivLen]
+	return
+}
+
+// srtpKeysFromMasterSecret generates SRTP keys from the master
+// secret, given the lengths of the cipher key and IV, as defined in
+// RFC 5764, section 4.2
+func srtpKeysFromMasterSecret(version uint16, suite *cipherSuite, masterSecret, clientRandom, serverRandom []byte, keyLen, ivLen int) (clientKey, serverKey, clientIV, serverIV []byte) {
+	seed := make([]byte, 0, len(serverRandom)+len(clientRandom))
+	// NOTE: client and server order is swapped from keysFromMasterSecret
+	seed = append(seed, clientRandom...)
+	seed = append(seed, serverRandom...)
+
+	n := 2*keyLen + 2*ivLen
+	keyMaterial := make([]byte, n)
+	prfForVersion(version, suite)(keyMaterial, masterSecret, srtpExporterLabel, seed)
 	clientKey = keyMaterial[:keyLen]
 	keyMaterial = keyMaterial[keyLen:]
 	serverKey = keyMaterial[:keyLen]

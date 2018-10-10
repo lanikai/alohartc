@@ -82,7 +82,7 @@ func cipherSuiteById(id uint16) *cipherSuite {
 // These test vectors were generated from GnuTLS using `gnutls-cli --insecure -d 9 `
 var testKeysFromTests = []testKeysFromTest{
 	{
-		VersionTLS10,
+		VersionDTLS10,
 		cipherSuiteById(TLS_RSA_WITH_RC4_128_SHA),
 		"0302cac83ad4b1db3b9ab49ad05957de2a504a634a386fc600889321e1a971f57479466830ac3e6f468e87f5385fa0c5",
 		"4ae66303755184a3917fcb44880605fcc53baa01912b22ed94473fc69cebd558",
@@ -96,7 +96,7 @@ var testKeysFromTests = []testKeysFromTest{
 		16,
 	},
 	{
-		VersionTLS10,
+		VersionDTLS10,
 		cipherSuiteById(TLS_RSA_WITH_RC4_128_SHA),
 		"03023f7527316bc12cbcd69e4b9e8275d62c028f27e65c745cfcddc7ce01bd3570a111378b63848127f1c36e5f9e4890",
 		"4ae66364b5ea56b20ce4e25555aed2d7e67f42788dd03f3fee4adae0459ab106",
@@ -110,7 +110,7 @@ var testKeysFromTests = []testKeysFromTest{
 		16,
 	},
 	{
-		VersionTLS10,
+		VersionDTLS10,
 		cipherSuiteById(TLS_RSA_WITH_RC4_128_SHA),
 		"832d515f1d61eebb2be56ba0ef79879efb9b527504abb386fb4310ed5d0e3b1f220d3bb6b455033a2773e6d8bdf951d278a187482b400d45deb88a5d5a6bb7d6a7a1decc04eb9ef0642876cd4a82d374d3b6ff35f0351dc5d411104de431375355addc39bfb1f6329fb163b0bc298d658338930d07d313cd980a7e3d9196cac1",
 		"4ae663b2ee389c0de147c509d8f18f5052afc4aaf9699efe8cb05ece883d3a5e",
@@ -120,20 +120,6 @@ var testKeysFromTests = []testKeysFromTest{
 		"0d73102994be74a575a3ead8532590ca32a526d4",
 		"ac7581b0b6c10d85bbd905ffbf36c65e",
 		"ff07edde49682b45466bd2e39464b306",
-		20,
-		16,
-	},
-	{
-		VersionSSL30,
-		cipherSuiteById(TLS_RSA_WITH_RC4_128_SHA),
-		"832d515f1d61eebb2be56ba0ef79879efb9b527504abb386fb4310ed5d0e3b1f220d3bb6b455033a2773e6d8bdf951d278a187482b400d45deb88a5d5a6bb7d6a7a1decc04eb9ef0642876cd4a82d374d3b6ff35f0351dc5d411104de431375355addc39bfb1f6329fb163b0bc298d658338930d07d313cd980a7e3d9196cac1",
-		"4ae663b2ee389c0de147c509d8f18f5052afc4aaf9699efe8cb05ece883d3a5e",
-		"4ae664d503fd4cff50cfc1fb8fc606580f87b0fcdac9554ba0e01d785bdf278e",
-		"a614863e56299dcffeea2938f22c2ba023768dbe4b3f6877bc9c346c6ae529b51d9cb87ff9695ea4d01f2205584405b2",
-		"2c450d5b6f6e2013ac6bea6a0b32200d4e1ffb94",
-		"7a7a7438769536f2fb1ae49a61f0703b79b2dc53",
-		"f8f6b26c10f12855c9aafb1e0e839ccf",
-		"2b9d4b4a60cb7f396780ebff50650419",
 		20,
 		16,
 	},
