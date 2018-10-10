@@ -4,11 +4,14 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
+	"html/template"
 	"log"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 
+	"github.com/thinkski/webrtc/internal/dtls"
 	"github.com/thinkski/webrtc/internal/srtp"
 )
 
@@ -22,7 +25,8 @@ type PeerConnection struct {
 	// Remote peer session description
 	remoteDescription string
 
-	password string
+	password    string
+	DynamicType uint8
 }
 
 func NewPeerConnection() *PeerConnection {
@@ -34,11 +38,11 @@ func NewPeerConnection() *PeerConnection {
 // Add remote ICE candidate
 func (pc *PeerConnection) AddIceCandidate(candidate string) error {
 	fields := strings.Fields(candidate)
-	if protocol := fields[2]; protocol != "udp" {
+	if protocol := fields[2]; strings.ToLower(protocol) != "udp" {
 		// Skip non-UDP
 		return nil
 	}
-	ip, port, _ := fields[4], fields[5], fields[11]
+	ip, port := fields[4], fields[5]
 
 	raddr, err := net.ResolveUDPAddr("udp", fmt.Sprintf("%s:%s", ip, port))
 	if err != nil {
@@ -55,55 +59,61 @@ func (pc *PeerConnection) AddIceCandidate(candidate string) error {
 	pc.stunBinding(candidate, pc.password)
 
 	// Load client certificate from file
-	//	cert, err := dtls.LoadX509KeyPair("client.pem", "client.key")
-	//	if err != nil {
-	//		log.Fatal(err)
-	//	}
+	cert, err := dtls.LoadX509KeyPair("client.pem", "client.key")
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	// Send DTLS client hello
-	//	_, err = dtls.NewSession(
-	//		pc.conn,
-	//		&dtls.Config{
-	//			Certificates:           []dtls.Certificate{cert},
-	//			InsecureSkipVerify:     true,
-	//			Renegotiation:          dtls.RenegotiateFreelyAsClient,
-	//			SessionTicketsDisabled: false,
-	//			ClientSessionCache:     dtls.NewLRUClientSessionCache(-1),
-	//			ProtectionProfiles:     []uint16{dtls.SRTP_AES128_CM_HMAC_SHA1_80},
-	//		},
-	//	)
-	//	if err != nil {
-	//		log.Println(err)
-	//	}
+	dc, err := dtls.NewSession(
+		pc.conn,
+		&dtls.Config{
+			Certificates:           []dtls.Certificate{cert},
+			InsecureSkipVerify:     true,
+			Renegotiation:          dtls.RenegotiateFreelyAsClient,
+			SessionTicketsDisabled: false,
+			ClientSessionCache:     dtls.NewLRUClientSessionCache(-1),
+			ProtectionProfiles:     []uint16{dtls.SRTP_AES128_CM_HMAC_SHA1_80},
+			KeyLogWriter:           os.Stdout,
+		},
+	)
+	if err != nil {
+		log.Println(err)
+	}
+
+	//	fmt.Println("client key:", dc.ClientKey)
+	//	fmt.Println("client salt:", dc.ClientIV)
 
 	// Send SRTP stream
-	srtpSession, err := srtp.NewSession(pc.conn)
+	srtpSession, err := srtp.NewSession(pc.conn, pc.DynamicType, dc.ClientKey, dc.ClientIV)
 	defer srtpSession.Close()
 
 	// Open file with H.264 test data
-	h264file, err := os.Open("testdata/424020.264")
+	h264file, err := os.Open("testdata/428028.264")
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	// Custom splitter. Extracts NAL units.
 	ScanNALU := func(data []byte, atEOF bool) (advance int, token []byte, err error) {
-		i := bytes.Index(data, []byte{0, 0, 0, 1})
+		i := bytes.Index(data, []byte{0, 0, 1})
 
 		switch i {
 		case -1:
 			return 0, nil, nil
 		case 0:
+			return 3, nil, nil
+		case 1:
 			return 4, nil, nil
 		default:
-			return i + 4, data[0:i], nil
+			return i + 3, data[0:i], nil
 		}
 	}
 
 	// Open H.264 file. Send each frame as RTP packet (or set of packets with same timestamp)
-	buffer := make([]byte, 1024*1024)
+	buffer := make([]byte, 2024*1024)
 	scanner := bufio.NewScanner(h264file)
-	scanner.Buffer(buffer, 1024*1024)
+	scanner.Buffer(buffer, 2024*1024)
 	scanner.Split(ScanNALU)
 	stap := []byte{0x38}
 	stapSent := false
@@ -129,7 +139,7 @@ func (pc *PeerConnection) AddIceCandidate(candidate string) error {
 }
 
 // Create SDP answer. Only needs SDP offer, no ICE candidates.
-//a=fmtp:100 level-asymmetry-allowed=1;packetization-mode=0;profile-level-id=42001f
+//a=fmtp:100 level-asymmetry-allowed=1;packetization-mode=0;profile-level-id=428028
 
 // Chrome offers following profile-level-id values:
 // 42001f (baseline)
@@ -137,13 +147,13 @@ func (pc *PeerConnection) AddIceCandidate(candidate string) error {
 // 4d0032 (main)
 // 640032 (high)
 func (pc *PeerConnection) CreateAnswer() (string, error) {
-	tmpl := `v=0
+	const sdp = `v=0
 o=- 6830938501909068252 2 IN IP4 127.0.0.1
 s=-
 t=0 0
 a=group:BUNDLE video
 a=msid-semantic: WMS SdWLKyaNRoUSWQ7BzkKGcbCWcuV7rScYxCAv
-m=video 9 UDP/TLS/RTP/SAVPF 100
+m=video 9 UDP/TLS/RTP/SAVPF {{ .DynamicType }}
 c=IN IP4 0.0.0.0
 a=rtcp:9 IN IP4 0.0.0.0
 a=ice-ufrag:n3E3
@@ -155,14 +165,16 @@ a=mid:video
 a=sendonly
 a=rtcp-mux
 a=rtcp-rsize
-a=rtpmap:100 H264/90000
-a=fmtp:100 level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=424020
+a=rtpmap:{{ .DynamicType }} H264/90000
+a=fmtp:{{ .DynamicType }} level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f
 a=ssrc:2541098696 cname:cYhx/N8U7h7+3GW3
 a=ssrc:2541098696 msid:SdWLKyaNRoUSWQ7BzkKGcbCWcuV7rScYxCAv e9b60276-a415-4a66-8395-28a893918d4c
 a=ssrc:2541098696 mslabel:SdWLKyaNRoUSWQ7BzkKGcbCWcuV7rScYxCAv
 a=ssrc:2541098696 label:e9b60276-a415-4a66-8395-28a893918d4c
 `
-	return tmpl, nil
+	b := new(bytes.Buffer)
+	template.Must(template.New("answer").Parse(sdp)).Execute(b, pc)
+	return b.String(), nil
 }
 
 // Set remote SDP offer
@@ -175,6 +187,17 @@ func (pc *PeerConnection) SetRemoteDescription(sdp string) error {
 		if strings.HasPrefix(line, "a=ice-pwd") {
 			pc.password = strings.Split(line, ":")[1]
 			log.Println(pc.password)
+		}
+
+		// Simple dynamic type parser
+		if strings.HasPrefix(line, "a=rtpmap") {
+			if strings.Contains(line, "H264/90000") {
+				fields := strings.Fields(line)
+				n, _ := strconv.Atoi(strings.Split(fields[0], ":")[1])
+				if pc.DynamicType == 0 || pc.DynamicType > uint8(n) {
+					pc.DynamicType = uint8(n)
+				}
+			}
 		}
 	}
 	return nil
