@@ -65,7 +65,7 @@ func (c *Context) getSSRCState(ssrc uint32) *ssrcState {
 }
 
 type Conn struct {
-	conn *net.UDPConn
+	conn net.Conn
 	ssrc uint32
 	seq  uint16
 	typ  uint8
@@ -74,7 +74,7 @@ type Conn struct {
 	context *Context
 }
 
-func NewSession(conn *net.UDPConn, dynamicType uint8, masterKey, masterSalt []byte) (*Conn, error) {
+func NewSession(conn net.Conn, dynamicType uint8, masterKey, masterSalt []byte) (*Conn, error) {
 	ctx, err := CreateContext(masterKey, masterSalt)
 	if err != nil {
 		return nil, err

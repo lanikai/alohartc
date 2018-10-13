@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"fmt"
 	"log"
-	"net"
 	"os"
 	"strconv"
 	"strings"
@@ -16,9 +15,6 @@ import (
 )
 
 type PeerConnection struct {
-	// Connection to peer. May be over TCP or UDP.
-	conn *net.UDPConn
-
 	// Local session description
 	localDescription SessionDesc
 
@@ -57,6 +53,7 @@ func (pc *PeerConnection) CreateAnswer() string {
 	for _, remoteMedia := range pc.remoteDescription.media {
 		for _, attr := range remoteMedia.attributes {
 			if attr.key == "rtpmap" && strings.Contains(attr.value, "H264/90000") {
+				// Choose smallest rtpmap entry
 				n, _ := strconv.Atoi(strings.Fields(attr.value)[0])
 				if pc.DynamicType == 0 || uint8(n) < pc.DynamicType {
 					pc.DynamicType = uint8(n)
@@ -148,6 +145,7 @@ func (pc *PeerConnection) Connect(lcand chan<- string, rcand <-chan string) {
 	if err != nil {
 		log.Fatal(err)
 	}
+	defer conn.Close()
 
 	// Load client certificate from file
 	cert, err := dtls.LoadX509KeyPair("client.pem", "client.key")
@@ -169,14 +167,17 @@ func (pc *PeerConnection) Connect(lcand chan<- string, rcand <-chan string) {
 		},
 	)
 	if err != nil {
-		log.Println(err)
+		log.Fatal(err)
 	}
 
 	//	fmt.Println("client key:", dc.ClientKey)
 	//	fmt.Println("client salt:", dc.ClientIV)
 
 	// Send SRTP stream
-	srtpSession, err := srtp.NewSession(pc.conn, pc.DynamicType, dc.ClientKey, dc.ClientIV)
+	srtpSession, err := srtp.NewSession(conn, pc.DynamicType, dc.ClientKey, dc.ClientIV)
+	if err != nil {
+		log.Fatal(err)
+	}
 	defer srtpSession.Close()
 
 	// Open file with H.264 test data
