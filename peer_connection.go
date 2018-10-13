@@ -1,11 +1,18 @@
 package webrtc
 
 import (
+	"bufio"
+	"bytes"
+	"fmt"
 	"log"
 	"net"
+	"os"
+	"strconv"
+	"strings"
 
 	"github.com/thinkski/webrtc/internal/dtls"
 	"github.com/thinkski/webrtc/internal/ice"
+	"github.com/thinkski/webrtc/internal/srtp"
 )
 
 type PeerConnection struct {
@@ -17,6 +24,8 @@ type PeerConnection struct {
 
 	// Remote peer session description
 	remoteDescription SessionDesc
+
+	DynamicType uint8
 }
 
 func NewPeerConnection() *PeerConnection {
@@ -46,11 +55,19 @@ func (pc *PeerConnection) CreateAnswer() string {
 	}
 
 	for _, remoteMedia := range pc.remoteDescription.media {
+		for _, attr := range remoteMedia.attributes {
+			if attr.key == "rtpmap" && strings.Contains(attr.value, "H264/90000") {
+				n, _ := strconv.Atoi(strings.Fields(attr.value)[0])
+				if pc.DynamicType == 0 || uint8(n) < pc.DynamicType {
+					pc.DynamicType = uint8(n)
+				}
+			}
+		}
 		m := MediaDesc{
 			typ: "video",
 			port: 9,
 			proto: "UDP/TLS/RTP/SAVPF",
-			format: []string{"100"},
+			format: []string{strconv.Itoa(int(pc.DynamicType))},
 			connection: &ConnectionDesc{
 				networkType: "IN",
 				addressType: "IP4",
@@ -66,7 +83,18 @@ func (pc *PeerConnection) CreateAnswer() string {
 				{"setup", "active"},
 				{"sendonly", ""},
 				{"rtcp-mux", ""},
-				{"rtpmap", "100 H264/90000"},
+				{"rtcp-rsize", ""},
+				{"rtpmap", fmt.Sprintf("%d H264/90000", pc.DynamicType)},
+				// Chrome offers following profile-level-id values:
+				// 42001f (baseline)
+				// 42e01f (constrained baseline)
+				// 4d0032 (main)
+				// 640032 (high)
+				{"fmtp", fmt.Sprintf("%d level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f", pc.DynamicType)},
+				{"ssrc", "2541098696 cname:cYhx/N8U7h7+3GW3"},
+				{"ssrc", "2541098696 msid:SdWLKyaNRoUSWQ7BzkKGcbCWcuV7rScYxCAv e9b60276-a415-4a66-8395-28a893918d4c"},
+				{"ssrc", "2541098696 mslabel:SdWLKyaNRoUSWQ7BzkKGcbCWcuV7rScYxCAv"},
+				{"ssrc", "2541098696 label:e9b60276-a415-4a66-8395-28a893918d4c"},
 			},
 		}
 		s.media = append(s.media, m)
@@ -128,7 +156,7 @@ func (pc *PeerConnection) Connect(lcand chan<- string, rcand <-chan string) {
 	}
 
 	// Send DTLS client hello
-	_, err = dtls.NewSession(
+	dc, err := dtls.NewSession(
 		conn,
 		&dtls.Config{
 			Certificates:           []dtls.Certificate{cert},
@@ -137,9 +165,64 @@ func (pc *PeerConnection) Connect(lcand chan<- string, rcand <-chan string) {
 			SessionTicketsDisabled: false,
 			ClientSessionCache:     dtls.NewLRUClientSessionCache(-1),
 			ProtectionProfiles:     []uint16{dtls.SRTP_AES128_CM_HMAC_SHA1_80},
+			KeyLogWriter:           os.Stdout,
 		},
 	)
 	if err != nil {
 		log.Println(err)
 	}
+
+	//	fmt.Println("client key:", dc.ClientKey)
+	//	fmt.Println("client salt:", dc.ClientIV)
+
+	// Send SRTP stream
+	srtpSession, err := srtp.NewSession(pc.conn, pc.DynamicType, dc.ClientKey, dc.ClientIV)
+	defer srtpSession.Close()
+
+	// Open file with H.264 test data
+	h264file, err := os.Open("testdata/428028.264")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// Custom splitter. Extracts NAL units.
+	ScanNALU := func(data []byte, atEOF bool) (advance int, token []byte, err error) {
+		i := bytes.Index(data, []byte{0, 0, 1})
+
+		switch i {
+		case -1:
+			return 0, nil, nil
+		case 0:
+			return 3, nil, nil
+		case 1:
+			return 4, nil, nil
+		default:
+			return i + 3, data[0:i], nil
+		}
+	}
+
+	// Open H.264 file. Send each frame as RTP packet (or set of packets with same timestamp)
+	buffer := make([]byte, 2024*1024)
+	scanner := bufio.NewScanner(h264file)
+	scanner.Buffer(buffer, 2024*1024)
+	scanner.Split(ScanNALU)
+	stap := []byte{0x38}
+	stapSent := false
+	for scanner.Scan() {
+		b := scanner.Bytes()
+		fmt.Printf("start: %x%x end: %x%x len: %v\n", b[0], b[1], b[len(b)-2], b[len(b)-1], len(b))
+		typ := b[0] & 0x1f
+		if (typ == 0x7) || (typ == 8) || (typ == 6) {
+			len := len(b)
+			stap = append(stap, []byte{byte(len >> 8), byte(len)}...)
+			stap = append(stap, b...)
+		} else {
+			if stapSent == false {
+				srtpSession.Stap(stap)
+				stapSent = true
+			}
+			srtpSession.Send(b)
+		}
+	}
+	log.Println("ended?", scanner.Err())
 }

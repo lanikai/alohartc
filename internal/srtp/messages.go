@@ -1,12 +1,13 @@
 package srtp
 
 type rtpMsg struct {
-	timestamp uint32
-	marker    bool
-	csrc      []uint32 // contributing source identifiers
-	ssrc      uint32   // synchronization source identifier
-	seq       uint16   // sequence number
-	payload   []byte
+	marker         bool
+	payloadType    uint8
+	sequenceNumber uint16
+	timestamp      uint32
+	ssrc           uint32
+	csrc           []uint32
+	payload        []byte
 }
 
 func (m *rtpMsg) marshal() []byte {
@@ -15,10 +16,10 @@ func (m *rtpMsg) marshal() []byte {
 	b[0] = 2 << 6
 
 	// csrc count
-	b[0] |= len(m.csrc) & 0xF
+	b[0] |= byte(len(m.csrc)) & 0xF
 
 	// payload type
-	b[1] = (m.ptyp & 0x7F)
+	b[1] = (m.payloadType & 0x7F)
 
 	// marker bit
 	if m.marker {
@@ -26,8 +27,8 @@ func (m *rtpMsg) marshal() []byte {
 	}
 
 	// sequence number
-	b[2] = byte(m.seq >> 8)
-	b[3] = byte(m.seq)
+	b[2] = byte(m.sequenceNumber >> 8)
+	b[3] = byte(m.sequenceNumber)
 
 	// timestamp
 	b[4] = byte(m.timestamp >> 24)
@@ -50,10 +51,7 @@ func (m *rtpMsg) marshal() []byte {
 	}
 
 	// payload
-	copy(b[12+4*len(csrc)], payload)
+	copy(b[12+4*len(m.csrc):], m.payload)
 
 	return b
-}
-
-func (m *rtpMsg) unmarshal(data []byte) bool {
 }
