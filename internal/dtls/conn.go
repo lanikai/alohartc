@@ -104,6 +104,11 @@ type Conn struct {
 	activeCall int32
 
 	tmp [16]byte
+
+	ClientKey []byte
+	ServerKey []byte
+	ClientIV  []byte
+	ServerIV  []byte
 }
 
 // Access to net.Conn methods.

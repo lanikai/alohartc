@@ -1,78 +1,169 @@
-package webrtc
+package srtp
 
 import (
+	"crypto/cipher"
 	"encoding/binary"
+	"net"
 	"time"
 )
 
-type SRTP struct {
-	Marker bool
+// encrypt a SRTP packet in place
+func (c *Context) encrypt(m *rtpMsg) bool {
+	s := c.getSSRCState(m.ssrc)
 
-	PayloadType uint8
+	c.updateRolloverCount(m.sequenceNumber, s)
 
-	// Sequence number
-	SequenceNumber uint16
+	stream := cipher.NewCTR(c.srtpBlock, c.generateCounter(m.sequenceNumber, s.rolloverCounter, s.ssrc, c.srtpSessionSalt))
+	stream.XORKeyStream(m.payload, m.payload)
 
-	// Synchronization source identifier
-	SSRC uint32
+	fullPkt := m.marshal()
 
-	// Contribution source identifiers
-	CSRC []uint32
+	fullPkt = append(fullPkt, make([]byte, 4)...)
+	binary.BigEndian.PutUint32(fullPkt[len(fullPkt)-4:], s.rolloverCounter)
 
-	// Optional extension
-	Extension []byte
-
-	Data []byte
-}
-
-const (
-	secondsFrom1900To1970 uint32 = 2208988800
-)
-
-// MarshalBinary encodes packet struct into byte array
-func (p *SRTP) MarshalBinary() ([]byte, error) {
-	// Packet size
-	n := 12 + 4 * len(p.CSRC) + len(p.Data)
-
-	// Create buffer
-	b := make([]byte, n, n)
-
-	// Set version
-	b[0] = 0x80
-
-	// Set number of contribution source identifiers
-	b[0] |= uint8(len(p.CSRC)) & 0xF
-
-	// Set marker
-	if p.Marker {
-		b[1] |= 0x80
+	authTag, err := c.generateAuthTag(fullPkt, c.srtpSessionAuthTag)
+	if err != nil {
+		return false
 	}
 
-	// Set payload type
-	b[1] |= p.PayloadType & 0x7F
-
-	// Set sequence number
-	binary.BigEndian.PutUint16(b[2:4], p.SequenceNumber)
-
-	// Timestamp (seconds since 1900)
-	binary.BigEndian.PutUint32(b[4:8],
-		secondsFrom1900To1970 + uint32(time.Now().Unix()),
-	)
-
-	// Synchronization source identifier
-	binary.BigEndian.PutUint32(b[8:12], p.SSRC)
-
-	// Contribution source identifier(s)
-	for i, csrc := range p.CSRC {
-		binary.BigEndian.PutUint32(b[12 + 4 * i : 16 + 4 * i], csrc)
-	}
-
-	// Copy payload
-	copy(b[12 + 4 * len(p.CSRC) :], p.Data)
-
-	return b, nil
+	m.payload = append(m.payload, authTag...)
+	return true
 }
 
-// UnmarshalBinary decodes byte array into packet struct
-func (p *SRTP) UnmarshalBinary(b []byte) {
+// https://tools.ietf.org/html/rfc3550#appendix-A.1
+func (c *Context) updateRolloverCount(sequenceNumber uint16, s *ssrcState) {
+	if !s.rolloverHasProcessed {
+		s.rolloverHasProcessed = true
+	} else if sequenceNumber == 0 { // We exactly hit the rollover count
+
+		// Only update rolloverCounter if lastSequenceNumber is greater then maxROCDisorder
+		// otherwise we already incremented for disorder
+		if s.lastSequenceNumber > maxROCDisorder {
+			s.rolloverCounter++
+		}
+	} else if s.lastSequenceNumber < maxROCDisorder && sequenceNumber > (maxSequenceNumber-maxROCDisorder) {
+		// Our last sequence number incremented because we crossed 0, but then our current number was within maxROCDisorder of the max
+		// So we fell behind, drop to account for jitter
+		s.rolloverCounter--
+	} else if sequenceNumber < maxROCDisorder && s.lastSequenceNumber > (maxSequenceNumber-maxROCDisorder) {
+		// our current is within a maxROCDisorder of 0
+		// and our last sequence number was a high sequence number, increment to account for jitter
+		s.rolloverCounter++
+	}
+	s.lastSequenceNumber = sequenceNumber
+}
+
+func (c *Context) getSSRCState(ssrc uint32) *ssrcState {
+	s, ok := c.ssrcStates[ssrc]
+	if ok {
+		return s
+	}
+
+	s = &ssrcState{ssrc: ssrc}
+	c.ssrcStates[ssrc] = s
+	return s
+}
+
+type Conn struct {
+	conn *net.UDPConn
+	ssrc uint32
+	seq  uint16
+	typ  uint8
+	time uint32
+
+	context *Context
+}
+
+func NewSession(conn *net.UDPConn, dynamicType uint8, masterKey, masterSalt []byte) (*Conn, error) {
+	ctx, err := CreateContext(masterKey, masterSalt)
+	if err != nil {
+		return nil, err
+	}
+
+	// TODO Fix hard-coded dynamic RTP type,
+	return &Conn{
+		conn: conn,
+		typ:  dynamicType, // must match SDP answer (hard-coded for now)
+		ssrc: 2541098696,  // must match SDP answer (hard-coded for now)
+		seq:  5984,
+		time: 3309803758,
+
+		context: ctx,
+	}, nil
+}
+
+func (c *Conn) Close() {
+}
+
+func (c *Conn) Stap(b []byte) {
+	m := rtpMsg{
+		payloadType:    c.typ,
+		timestamp:      c.time,
+		marker:         false,
+		csrc:           []uint32{},
+		ssrc:           c.ssrc,
+		sequenceNumber: c.seq,
+		payload:        b,
+	}
+	c.context.encrypt(&m)
+	c.conn.Write(m.marshal())
+	c.seq += 1
+}
+
+func (c *Conn) Send(b []byte) {
+
+	maxSize := 1280
+
+	if len(b) < maxSize {
+		m := rtpMsg{
+			payloadType:    c.typ,
+			timestamp:      c.time,
+			marker:         false,
+			csrc:           []uint32{},
+			ssrc:           c.ssrc,
+			sequenceNumber: c.seq,
+			payload:        b,
+		}
+		c.context.encrypt(&m)
+		c.conn.Write(m.marshal())
+		c.seq += 1
+	} else {
+		indicator := byte((0 & 0x80) | (b[0] & 0x60) | 28)
+		start := byte(0x80)
+		end := byte(0)
+		typ := byte(b[0] & 0x1F)
+		mark := false
+		for i := 1; i < len(b); i += maxSize {
+			tail := i + maxSize
+			if tail > len(b) {
+				end = 0x40
+				tail = len(b)
+			}
+			header := byte(start | end | typ)
+			data := append([]byte{indicator, header}, b[i:tail]...)
+
+			if end != 0 {
+				mark = true
+			}
+
+			m := rtpMsg{
+				payloadType:    c.typ,
+				timestamp:      c.time,
+				marker:         mark,
+				csrc:           []uint32{},
+				ssrc:           c.ssrc,
+				sequenceNumber: c.seq,
+				payload:        data,
+			}
+			c.context.encrypt(&m)
+			c.conn.Write(m.marshal())
+
+			c.seq += 1
+
+			start = 0
+		}
+	}
+
+	c.time += 4000
+	time.Sleep(40 * time.Millisecond)
 }
