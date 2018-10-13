@@ -61,10 +61,10 @@ func (c *ChannelConn) Write(b []byte) (n int, err error) {
 }
 
 func (c *ChannelConn) Close() error {
-	switch {
+	select {
 	case <-c.closed:
 	default:
-		// First time closing, so also close the in channel.
+		// First time closing, so also close the out channel.
 		close(c.out)
 		close(c.closed)
 	}
