@@ -274,6 +274,11 @@ func (a *Agent) selectCandidatePair(cp *CandidatePair, datain chan []byte) {
 		// Read constantly from the 'dataout' channel, and forward to the underlying connection.
 		for {
 			data := <-dataout
+			if data == nil {
+				// Channel closed.
+				log.Printf("CP #%d: Channel closed\n", cp.seq)
+				return
+			}
 			_, err := a.conn.WriteTo(data, cp.remote.Addr())
 			if err != nil {
 				log.Println(err)
