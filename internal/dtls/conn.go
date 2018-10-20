@@ -1324,7 +1324,7 @@ func (c *Conn) Handshake() error {
 	if c.isClient {
 		c.handshakeErr = c.clientHandshake()
 	} else {
-		c.handshakeErr = c.serverHandshake()
+		panic("server mode not implemented")
 	}
 	if c.handshakeErr == nil {
 		c.handshakes++
