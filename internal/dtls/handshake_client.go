@@ -693,16 +693,24 @@ func (hs *clientHandshakeState) readSessionTicket() error {
 		return nil
 	}
 
+	retries := 10
+retryReadSessionTicket:
 	c := hs.c
 	msg, err := c.readHandshake()
 	if err != nil {
 		return err
 	}
+
 	sessionTicketMsg, ok := msg.(*newSessionTicketMsg)
 	if !ok {
+		if retries > 0 {
+			retries--
+			goto retryReadSessionTicket
+		}
 		c.sendAlert(alertUnexpectedMessage)
 		return unexpectedMessageError(sessionTicketMsg, msg)
 	}
+	log.Println("got new session ticket", retries)
 	hs.finishedHash.Write(sessionTicketMsg.marshal())
 
 	hs.session = &ClientSessionState{
