@@ -170,14 +170,13 @@ func (a *Agent) EstablishConnection() (conn net.Conn, err error) {
 	return conn, err
 }
 
-
 func (a *Agent) loop(ready chan<- *ChannelConn) {
 	datain := make(chan []byte, 32)
 
 	buf := make([]byte, 1500)
 	for {
 		// Read continuously from UDP connection
-		a.conn.SetReadDeadline(time.Now().Add(60*time.Second))
+		a.conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 		n, raddr, err := a.conn.ReadFrom(buf)
 		if err != nil {
 			log.Fatal(err)
@@ -218,7 +217,13 @@ func (a *Agent) loop(ready chan<- *ChannelConn) {
 				ready <- a.dataconn
 			}
 		} else if a.dataconn != nil {
-			datain <- data
+			switch {
+			// RTP (or RTCP) per RFC 5764 Section 5.1.2.
+			case 127 < data[0] && data[0] < 192:
+				break
+			default:
+				datain <- data
+			}
 		} else {
 			log.Panicf("Received data packet before ICE candidate pair selected: %s", data)
 		}
@@ -226,7 +231,6 @@ func (a *Agent) loop(ready chan<- *ChannelConn) {
 }
 
 func (a *Agent) handleStun(cp *CandidatePair, msg *stunMessage) {
-//	log.Printf("CP #%d: Received %s\n", cp.seq, msg)
 
 	switch msg.class {
 	case stunRequest:
@@ -236,7 +240,6 @@ func (a *Agent) handleStun(cp *CandidatePair, msg *stunMessage) {
 
 		// Send a response.
 		resp := newStunBindingResponse(msg.transactionID, cp.remote.Addr(), a.localPassword)
-//		log.Printf("CP #%d: Sending %s\n", cp.seq, resp)
 		a.conn.WriteTo(resp.Bytes(), cp.remote.Addr())
 
 		// Followed by a binding request of our own.
@@ -245,7 +248,6 @@ func (a *Agent) handleStun(cp *CandidatePair, msg *stunMessage) {
 		req.addAttribute(stunAttrIceControlled, []byte{1, 2, 3, 4, 5, 6, 7, 8})
 		req.addMessageIntegrity(a.remotePassword)
 		req.addFingerprint()
-//		log.Printf("CP #%d: Sending %s\n", cp.seq, req)
 		a.conn.WriteTo(req.Bytes(), cp.remote.Addr())
 	case stunSuccessResponse:
 		if cp.state != cpSucceeded {
