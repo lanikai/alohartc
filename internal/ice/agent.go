@@ -218,7 +218,11 @@ func (a *Agent) loop(ready chan<- *ChannelConn) {
 				ready <- a.dataconn
 			}
 		} else if a.dataconn != nil {
-			datain <- data
+			select {
+			case datain <- data:
+			default:
+				// datain channel is full. Drop the packet.
+			}
 		} else {
 			log.Panicf("Received data packet before ICE candidate pair selected: %s", data)
 		}
