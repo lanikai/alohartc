@@ -1,7 +1,6 @@
 package webrtc
 
 import (
-	"bufio"
 	"bytes"
 	"fmt"
 	"log"
@@ -12,6 +11,19 @@ import (
 	"github.com/thinkski/webrtc/internal/dtls"
 	"github.com/thinkski/webrtc/internal/ice"
 	"github.com/thinkski/webrtc/internal/srtp"
+	"github.com/thinkski/webrtc/internal/v4l2"
+)
+
+const (
+	demoVideoBitrate = 2e6
+	demoVideoDevice  = "/dev/video0"
+	demoVideoHeight  = 720
+	demoVideoWidth   = 1280
+
+	nalTypeSingleTimeAggregationPacketA = 24
+	nalReferenceIndicatorPriority1      = 1 << 5
+	nalReferenceIndicatorPriority2      = 2 << 5
+	nalReferenceIndicatorPriority3      = 3 << 5
 )
 
 type PeerConnection struct {
@@ -180,50 +192,45 @@ func (pc *PeerConnection) Connect(lcand chan<- string, rcand <-chan string) {
 	}
 	defer srtpSession.Close()
 
-	// Open file with H.264 test data
-	h264file, err := os.Open("testdata/428028.264")
+	// Open video device
+	video, err := v4l2.OpenH264(demoVideoDevice, demoVideoWidth, demoVideoHeight)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	// Custom splitter. Extracts NAL units.
-	ScanNALU := func(data []byte, atEOF bool) (advance int, token []byte, err error) {
-		i := bytes.Index(data, []byte{0, 0, 1})
-
-		switch i {
-		case -1:
-			return 0, nil, nil
-		case 0:
-			return 3, nil, nil
-		case 1:
-			return 4, nil, nil
-		default:
-			return i + 3, data[0:i], nil
-		}
+	if err := video.SetBitrate(demoVideoBitrate); err != nil {
+		log.Fatal(err)
 	}
 
-	// Open H.264 file. Send each frame as RTP packet (or set of packets with same timestamp)
-	buffer := make([]byte, 2024*1024)
-	scanner := bufio.NewScanner(h264file)
-	scanner.Buffer(buffer, 2024*1024)
-	scanner.Split(ScanNALU)
-	stap := []byte{0x38}
-	stapSent := false
-	for scanner.Scan() {
-		b := scanner.Bytes()
-		fmt.Printf("start: %x%x end: %x%x len: %v\n", b[0], b[1], b[len(b)-2], b[len(b)-1], len(b))
-		typ := b[0] & 0x1f
-		if (typ == 0x7) || (typ == 8) || (typ == 6) {
-			len := len(b)
-			stap = append(stap, []byte{byte(len >> 8), byte(len)}...)
-			stap = append(stap, b...)
-		} else {
-			if stapSent == false {
-				srtpSession.Stap(stap)
-				stapSent = true
-			}
-			srtpSession.Send(b)
-		}
+	// Start video
+	if err := video.Start(); err != nil {
+		log.Fatal(err)
 	}
-	log.Println("ended?", scanner.Err())
+
+	buffer := make([]byte, demoVideoBitrate)
+
+	// Wrap SPS/PPS/SEI in STAP-A packet
+	n, err := video.Read(buffer)
+	if err != nil {
+		panic(err)
+	}
+	b := buffer[4:n]
+	nals := bytes.Split(b, []byte{0, 0, 0, 1})
+	pkt := []byte{nalTypeSingleTimeAggregationPacketA}
+	for _, nal := range nals {
+		pkt = append(pkt, []byte{byte(len(nal) >> 8), byte(len(nal))}...)
+		pkt = append(pkt, nal...)
+	}
+	srtpSession.Stap(pkt)
+	log.Println(buffer[:n])
+
+	// Write remaining NAL units
+	for {
+		n, err := video.Read(buffer)
+		if err != nil {
+			panic(err)
+		}
+		b := buffer[4:n]
+		srtpSession.Send(b)
+	}
 }
