@@ -46,3 +46,9 @@ Open http://localhost:8000 in browser. Observe DTLS handshake in Wireshark.
         └── js
             └── adapter-latest.js
 ```
+
+## Building
+
+To cross-compile for an armv7-based architecture, such as the Raspberry Pi Model 3B+:
+
+    GOARM=7 GOARCH=arm GOOS=linux go build examples/client.go
