@@ -104,10 +104,10 @@ func generateCertificate() (certPEMBlock, keyPEMBlock []byte, fingerprint string
 	h := sha256.Sum256(derBytes)
 	fingerprint = fmt.Sprintf(
 		"sha-256 "+
-			"%x:%x:%x:%x:%x:%x:%x:%x:"+
-			"%x:%x:%x:%x:%x:%x:%x:%x:"+
-			"%x:%x:%x:%x:%x:%x:%x:%x:"+
-			"%x:%x:%x:%x:%x:%x:%x:%x",
+			"%02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X:"+
+			"%02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X:"+
+			"%02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X:"+
+			"%02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X",
 		h[0], h[1], h[2], h[3], h[4], h[5], h[6], h[7],
 		h[8], h[9], h[10], h[11], h[12], h[13], h[14], h[15],
 		h[16], h[17], h[18], h[19], h[20], h[21], h[22], h[23],
