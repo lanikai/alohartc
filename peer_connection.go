@@ -33,11 +33,28 @@ type PeerConnection struct {
 	// Remote peer session description
 	remoteDescription SessionDesc
 
+	// RTP payload type (negotiated via SDP)
 	DynamicType uint8
+
+	// Local certificate
+	certPEMBlock []byte // Public key
+	keyPEMBlock  []byte // Private key
+	fingerprint  string
 }
 
 func NewPeerConnection() *PeerConnection {
-	pc := &PeerConnection{}
+	// Dynamically generate a certificate for the peer connection
+	cert, key, fp, err := generateCertificate()
+	if err != nil {
+		panic(err)
+	}
+
+	pc := &PeerConnection{
+		certPEMBlock: cert,
+		keyPEMBlock:  key,
+		fingerprint:  fp,
+	}
+
 	return pc
 }
 
@@ -88,7 +105,7 @@ func (pc *PeerConnection) CreateAnswer() string {
 				{"ice-ufrag", "n3E3"},
 				{"ice-pwd", "auh7I7RsuhlZQgS2XYLStR05"},
 				{"ice-options", "trickle"},
-				{"fingerprint", "sha-256 B8:D4:15:07:0A:E4:6B:6D:67:B9:A1:4F:7D:B8:29:A9:93:25:74:97:91:A4:41:58:68:F3:94:E6:57:A9:5F:BC"},
+				{"fingerprint", pc.fingerprint},
 				{"setup", "active"},
 				{"sendonly", ""},
 				{"rtcp-mux", ""},
@@ -159,8 +176,8 @@ func (pc *PeerConnection) Connect(lcand chan<- string, rcand <-chan string) {
 	}
 	defer conn.Close()
 
-	// Load client certificate from file
-	cert, err := dtls.LoadX509KeyPair("client.pem", "client.key")
+	// Load dynamically generated certificate
+	cert, err := dtls.X509KeyPair(pc.certPEMBlock, pc.keyPEMBlock)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -181,9 +198,6 @@ func (pc *PeerConnection) Connect(lcand chan<- string, rcand <-chan string) {
 	if err != nil {
 		log.Fatal(err)
 	}
-
-	//	fmt.Println("client key:", dc.ClientKey)
-	//	fmt.Println("client salt:", dc.ClientIV)
 
 	// Send SRTP stream
 	srtpSession, err := srtp.NewSession(conn, pc.DynamicType, dc.ClientKey, dc.ClientIV)
