@@ -155,22 +155,19 @@ func (pc *PeerConnection) Connect(lcand chan<- string, rcand <-chan string) {
 	remotePassword := pc.remoteDescription.GetMedia().GetAttr("ice-pwd")
 	ia := ice.NewAgent(username, localPassword, remotePassword)
 
-	// Send local ICE candidates.
-	localCandidates, err := ia.GatherLocalCandidates()
-	if err != nil {
-		log.Fatal(err)
-	}
-	for _, c := range localCandidates {
-		log.Println("Local ICE", c)
-		lcand <- c.String()
-	}
+	// Process incoming remote ICE candidates.
+	go func() {
+		for c := range rcand {
+			err := ia.AddRemoteCandidate(c)
+			if err != nil {
+				log.Fatal(err)
+			}
+		}
+		// Signal end of remote candidates.
+		ia.AddRemoteCandidate("")
+	}()
 
-	// Wait for remote ICE candidates.
-	for c := range rcand {
-		ia.AddRemoteCandidate(c)
-	}
-
-	conn, err := ia.EstablishConnection()
+	conn, err := ia.EstablishConnection(lcand)
 	if err != nil {
 		log.Fatal(err)
 	}

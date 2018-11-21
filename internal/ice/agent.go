@@ -4,15 +4,13 @@ import (
 	"fmt"
 	"log"
 	"net"
-	"strconv"
 	"time"
 )
 
-// RFC8445: https://tools.ietf.org/html/rfc8445
+// RFC 8445: https://tools.ietf.org/html/rfc8445
 
 // In the language of the above specification, this is a Full implementation of a Controlled ICE
-// agent, supporting a single component of a data stream. It does not (yet) implement candidate
-// trickling.
+// agent, supporting a single component of a single data stream.
 type Agent struct {
 	username       string
 	localPassword  string
@@ -21,14 +19,11 @@ type Agent struct {
 	localCandidates  []Candidate
 	remoteCandidates []Candidate
 
-	pairs []*CandidatePair
-
-	conn *net.UDPConn
+	checklist Checklist
 
 	// Connection for the data stream.
-	dataconn *ChannelConn
-
-	foundationFingerprints []string
+	dataConn *ChannelConn
+	ready chan *ChannelConn
 }
 
 // Create a new ICE agent with the given username and passwords.
@@ -37,256 +32,240 @@ func NewAgent(username, localPassword, remotePassword string) *Agent {
 	a.username = username
 	a.localPassword = localPassword
 	a.remotePassword = remotePassword
+	a.ready = make(chan *ChannelConn, 1)
 	return a
 }
 
+// On success, returns a net.Conn object from which data can be read/written.
+func (a *Agent) EstablishConnection(lcand chan<- string) (net.Conn, error) {
+	// TODO: Handle multiple components
+	component := 1
+	base, err := createBase(component)
+	if err != nil {
+		return nil, err
+	}
+	log.Printf("Listening on %s\n", base.address)
+
+	// Start gathering condidates, trickling them to the remote agent via 'lcand'.
+	go func() {
+		err := a.gatherLocalCandidates(base, lcand)
+		if err != nil {
+			log.Fatal(err)
+		}
+	}()
+
+	// Begin connectivity checks.
+	go a.loop(base)
+
+	// Wait for a candidate to be selected.
+	select {
+	case conn := <-a.ready:
+		return conn, nil
+	case <-time.After(30 * time.Second):
+		return nil, fmt.Errorf("Failed to establish connection after 30 seconds")
+	}
+}
+
 func (a *Agent) AddRemoteCandidate(desc string) error {
-	candidate, err := parseCandidate(desc)
+	if desc == "" {
+		return nil
+	}
+
+	c, err := parseCandidateSDP(desc)
 	if err != nil {
 		return err
 	}
 
-	a.remoteCandidates = append(a.remoteCandidates, candidate)
+	a.remoteCandidates = append(a.remoteCandidates, c)
+	// Pair new remote candidate with all existing local candidates.
+	a.checklist.addCandidatePairs(a.localCandidates, []Candidate{c})
 	return nil
 }
 
-func (a *Agent) GatherLocalCandidates() ([]Candidate, error) {
-	localIP, err := getLocalIP()
-	if err != nil {
-		log.Println("Failed to get local address")
-		return nil, err
-	}
+func (a *Agent) addLocalCandidate(c Candidate) {
+	a.localCandidates = append(a.localCandidates, c)
+	// Pair new local candidate with all existing remote candidates.
+	a.checklist.addCandidatePairs([]Candidate{c}, a.remoteCandidates)
+}
 
-	// Listen on an arbitrary UDP port.
-	listenAddr := &net.UDPAddr{IP: localIP, Port: 0}
-	a.conn, err = net.ListenUDP("udp4", listenAddr)
-	if err != nil {
-		return nil, err
-	}
-	localAddr := a.conn.LocalAddr()
-	log.Println("Listening on UDP", localAddr)
-
-	// Default candidate for peers on the same LAN.
-	lc := Candidate{typ: "host", component: 1}
-	lc.setAddress(localAddr)
-	a.computeFoundation(&lc)
-	a.computePriority(&lc)
-	a.localCandidates = append(a.localCandidates, lc)
+// Gather local candidates. Pass candidate strings to lcand as they become known.
+func (a *Agent) gatherLocalCandidates(base Base, lcand chan<- string) error {
+	// Host candidate for peers on the same LAN.
+	hc := makeHostCandidate(base)
+	a.addLocalCandidate(hc)
+	lcand <- hc.String()
 
 	// Query STUN server to get a server reflexive candidate.
-	stunServerAddr, err := net.ResolveUDPAddr("udp", "stun2.l.google.com:19302")
+	stunServer := "stun2.l.google.com:19302"
+	mappedAddress, err := a.queryStunServer(base, stunServer)
 	if err != nil {
-		return nil, err
-	}
-	sc, err := getStunCandidate(a.conn, stunServerAddr)
-	if err != nil {
-		return nil, err
+		log.Printf("Failed to create STUN server candidate for base %s\n", base.address)
 	} else {
-		a.computeFoundation(sc)
-		a.computePriority(sc)
-		a.localCandidates = append(a.localCandidates, *sc)
+		c := makeServerReflexiveCandidate(mappedAddress, base, stunServer)
+		a.addLocalCandidate(c)
+		lcand <- c.String()
 	}
 
-	return a.localCandidates, nil
+	// TODO: IPv6, TURN, TCP, multiple local interfaces
+
+	close(lcand)
+	return nil
 }
 
-// Get the IP address of this machine.
-func getLocalIP() (net.IP, error) {
-	conn, err := net.Dial("udp", "8.8.8.8:80")
+// Return the mapped address of the given base.
+func (a *Agent) queryStunServer(base Base, stunServer string) (mappedAddr net.Addr, err error) {
+	stunServerAddr, err := net.ResolveUDPAddr("udp4", stunServer)
 	if err != nil {
-		return nil, err
+		return
 	}
-	defer conn.Close()
 
-	return conn.LocalAddr().(*net.UDPAddr).IP, nil
-}
+	req := newStunBindingRequest("")
+	trace("Sending to %s: %s\n", stunServer, req)
 
-// [RFC8445] Section 5.1.1.3. Computing Foundations
-// The foundation must be unique for each tuple of
-//   (candidate type, base IP address, protocol, STUN/TURN server)
-// We compute a "fingerprint" that encodes this information, and assign each fingerprint
-// an integer based on the order it was encountered.
-func (a *Agent) computeFoundation(c *Candidate) {
-	fingerprint := fmt.Sprintf("%s/%s/%s/nil", c.typ, c.ip, c.protocol)
-	for n, f := range a.foundationFingerprints {
-		if f == fingerprint {
-			c.foundation = strconv.Itoa(n)
-			return
+	done := make(chan error, 1)
+	err = base.sendStun(req, stunServerAddr, func(resp *stunMessage, raddr net.Addr, base Base) {
+		if resp.class == stunSuccessResponse {
+			mappedAddr = resp.getMappedAddress()
+			done <- nil
+		} else {
+			done <- fmt.Errorf("STUN server query failed: %s", resp)
 		}
+	})
+	if err != nil {
+		return
 	}
-
-	// Fingerprint is new. Save it and return the next available index.
-	n := len(a.foundationFingerprints)
-	a.foundationFingerprints = append(a.foundationFingerprints, fingerprint)
-	c.foundation = strconv.Itoa(n)
-}
-
-// [RFC8445] Section 5.1.2. Prioritizing Candidates
-func (a *Agent) computePriority(c *Candidate) {
-	var typePref int
-	switch c.typ {
-	case "host":
-		typePref = 126
-	case "prflx", "srflx":
-		typePref = 110
-	case "relay":
-		typePref = 0
-	}
-
-	// Assume there's a single local IP address
-	localPref := 65535
-
-	c.priority = uint((typePref << 24) + (localPref << 8) + (256 - c.component))
-}
-
-func sameAddr(a, b net.Addr) bool {
-	return a.Network() == b.Network() && a.String() == b.String()
-}
-
-func (a *Agent) EstablishConnection() (conn net.Conn, err error) {
-	// Create candidate pairs.
-	for _, local := range a.localCandidates {
-		for _, remote := range a.remoteCandidates {
-			if remote.protocol == local.protocol {
-				cp := newCandidatePair(len(a.pairs), local, remote)
-				a.pairs = append(a.pairs, cp)
-			}
-		}
-	}
-
-	for _, cp := range a.pairs {
-		log.Println(cp)
-	}
-
-	ready := make(chan *ChannelConn, 1)
-	go a.loop(ready)
 
 	select {
-	case conn = <-ready:
-	case <-time.After(15 * time.Second):
-		err = fmt.Errorf("Failed to establish connection after 15 seconds")
+	case err = <-done:
+	case <-time.After(10 * time.Second):
+		err = fmt.Errorf("Timed out waiting for response from %s", stunServer)
 	}
-
-	return conn, err
+	return
 }
 
-func (a *Agent) loop(ready chan<- *ChannelConn) {
-	datain := make(chan []byte, 32)
+func (a *Agent) loop(base Base) {
+	dataIn := make(chan []byte, 64)
+	go base.demuxStun(a.handleStun, dataIn)
 
-	buf := make([]byte, 1500)
+	Ta := time.NewTicker(50 * time.Millisecond)
+	defer Ta.Stop()
+
+	Tr := time.NewTicker(30 * time.Second)
+	defer Tr.Stop()
+
+	checklistUpdate := make(chan struct{})
+	a.checklist.addListener(checklistUpdate)
+
 	for {
-		// Read continuously from UDP connection
-		a.conn.SetReadDeadline(time.Now().Add(60 * time.Second))
-		n, raddr, err := a.conn.ReadFrom(buf)
-		if err != nil {
-			log.Fatal(err)
-		}
-		data := buf[0:n]
+		select {
+		case <-checklistUpdate:
+			trace("Checklist state: %d", a.checklist.state)
+			switch a.checklist.state {
+			case checklistCompleted:
+				// Use selected candidate.
+				if a.dataConn == nil {
+					Ta.Stop()
+					a.dataConn = createDataConn(a.checklist.selected, dataIn)
+					a.ready <- a.dataConn
+				}
+			case checklistFailed:
+				log.Fatalf("Failed to connect to remote peer")
+			}
 
-		// Decide which candidate pair the packet should be associated with.
-		var cp *CandidatePair
-		for i := range a.pairs {
-			if sameAddr(raddr, a.pairs[i].remote.Addr()) {
-				cp = a.pairs[i]
-				break
+		case <-Ta.C: // Periodic check.
+			p := a.checklist.nextPair()
+			if p != nil {
+				trace("Next candidate to check: %s\n", p)
+				err := a.checklist.sendCheck(p, a.username, a.remotePassword)
+				if err != nil {
+					log.Fatalf("Failed to send connectivity check: %s", err)
+				}
+			}
+
+		// TODO: Triggered checks
+
+		case <-Tr.C: // Keepalive.
+			// [RFC8445 §11] Send STUN binding indication.
+			p := a.checklist.selected
+			if p != nil {
+				p.local.base.sendStun(newStunBindingIndication(), p.remote.address.netAddr(), nil)
 			}
 		}
 
-		if cp == nil {
-			// No matching candidate pair found. Create a new one.
-			local := a.localCandidates[0]
-			remote := makePeerCandidate(local.component, raddr)
-			a.computeFoundation(&remote)
-			a.computePriority(&remote)
-			a.remoteCandidates = append(a.remoteCandidates, remote)
-
-			cp = newCandidatePair(len(a.pairs), local, remote)
-			log.Printf("Candidate pair #%d: %s", len(a.pairs), cp)
-			a.pairs = append(a.pairs, cp)
-		}
-
-		msg, err := parseStunMessage(data)
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		if msg != nil {
-			a.handleStun(cp, msg)
-			if a.dataconn == nil && cp.state == cpSucceeded {
-				a.selectCandidatePair(cp, datain)
-				ready <- a.dataconn
-			}
-		} else if a.dataconn != nil {
-			select {
-			case datain <- data:
-			default:
-				// datain channel is full. Drop the packet.
-			}
-		} else {
-			log.Panicf("Received data packet before ICE candidate pair selected: %s", data)
-		}
 	}
 }
 
-func (a *Agent) handleStun(cp *CandidatePair, msg *stunMessage) {
-	//	log.Printf("CP #%d: Received %s\n", cp.seq, msg)
+func (a *Agent) handleStun(msg *stunMessage, raddr net.Addr, base Base) {
+	if msg.method != stunBindingMethod {
+		log.Fatalf("Unexpected STUN message: %s", msg)
+	}
 
 	switch msg.class {
 	case stunRequest:
-		if cp.state != cpSucceeded {
-			cp.state = cpInProgress
-		}
-
-		// Send a response.
-		resp := newStunBindingResponse(msg.transactionID, cp.remote.Addr(), a.localPassword)
-		//		log.Printf("CP #%d: Sending %s\n", cp.seq, resp)
-		a.conn.WriteTo(resp.Bytes(), cp.remote.Addr())
-
-		// Followed by a binding request of our own.
-		req := newStunBindingRequest(msg.transactionID)
-		req.addAttribute(stunAttrUsername, []byte(a.username))
-		req.addAttribute(stunAttrIceControlled, []byte{1, 2, 3, 4, 5, 6, 7, 8})
-		req.addMessageIntegrity(a.remotePassword)
-		req.addFingerprint()
-		//		log.Printf("CP #%d: Sending %s\n", cp.seq, req)
-		a.conn.WriteTo(req.Bytes(), cp.remote.Addr())
-	case stunSuccessResponse:
-		if cp.state != cpSucceeded {
-			cp.state = cpSucceeded
-			log.Printf("CP #%d: Succeeded\n", cp.seq)
-		}
-
-		laddr := msg.getMappedAddress()
-		if !sameAddr(cp.local.Addr(), laddr) {
-			log.Printf("CP #%d: Local address updated to %s\n", cp.seq, laddr)
-			cp.local.setAddress(laddr)
-		}
-	case stunErrorResponse:
-		cp.state = cpFailed
-		log.Printf("CP #%d: Failed\n", cp.seq)
+		a.handleStunRequest(msg, raddr, base)
 	case stunIndication:
-		// Ignore these.
+		// No-op
+	case stunSuccessResponse, stunErrorResponse:
+		trace("Received unexpected STUN response: %s\n", msg)
 	}
 }
 
-func (a *Agent) selectCandidatePair(cp *CandidatePair, datain chan []byte) {
-	dataout := make(chan []byte, 32)
-	a.dataconn = newChannelConn(datain, dataout, cp.local.Addr(), cp.remote.Addr())
+// [RFC8445 §7.3] Respond to STUN binding request by sending a success response.
+func (a *Agent) handleStunRequest(req *stunMessage, raddr net.Addr, base Base) {
+	p := a.checklist.findPair(base, raddr)
+	if p == nil {
+		p = a.adoptPeerReflexiveCandidate(raddr, base, req.getPriority())
+	}
+	if req.hasUseCandidate() && !p.nominated {
+		trace("Nominating %s\n", p.id)
+		a.checklist.nominate(p)
+	}
+
+	resp := newStunBindingResponse(req.transactionID, raddr, a.localPassword)
+	trace("Response %s -> %s: %s\n", base.LocalAddr(), raddr, resp)
+	if err := base.sendStun(resp, raddr, nil); err != nil {
+		log.Fatalf("Failed to send STUN response: %s", err)
+	}
+
+	// TODO: Enqueue triggered check
+}
+
+// [RFC8445 §7.3.1.3-4]
+func (a *Agent) adoptPeerReflexiveCandidate(raddr net.Addr, base Base, priority uint32) *CandidatePair {
+	c := makePeerReflexiveCandidate(raddr, base, priority)
+	a.remoteCandidates = append(a.remoteCandidates, c)
+
+	// Pair peer reflexive candidate with host candidate.
+	hc := makeHostCandidate(base)
+	a.checklist.addCandidatePairs([]Candidate{hc}, []Candidate{c})
+
+	p := a.checklist.findPair(base, raddr)
+	if p == nil {
+		log.Fatalf("Expected candidate pair not present after creating peer reflexive candidate")
+	}
+	return p
+}
+
+func createDataConn(p *CandidatePair, dataIn chan []byte) *ChannelConn {
+	base := p.local.base
+	remoteAddr := p.remote.address.netAddr()
+	dataOut := make(chan []byte, 32)
+	dataConn := newChannelConn(dataIn, dataOut, base.LocalAddr(), remoteAddr)
 
 	go func() {
-		// Read constantly from the 'dataout' channel, and forward to the underlying connection.
+		// Read constantly from the 'dataOut' channel, and forward to the underlying connection.
 		for {
-			data := <-dataout
+			data := <-dataOut
 			if data == nil {
-				// Channel closed.
-				log.Printf("CP #%d: Channel closed\n", cp.seq)
+				trace("%s: Channel closed\n", p.id)
 				return
 			}
-			_, err := a.conn.WriteTo(data, cp.remote.Addr())
-			if err != nil {
+			if _, err := base.WriteTo(data, remoteAddr); err != nil {
 				log.Println(err)
-				a.dataconn.Close()
+				dataConn.Close()
 			}
 		}
 	}()
+
+	return dataConn
 }
