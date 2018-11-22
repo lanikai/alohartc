@@ -13,67 +13,66 @@ import (
 // - https://tools.ietf.org/html/draft-ietf-mmusic-ice-sip-sdp-21
 
 type SessionDesc struct {
-	version int
-	origin OriginDesc
-	name string
-	info string  // Optional
-	uri string  // Optional
-	email string  // Optional
-	phone string  // Optional
-	connection *ConnectionDesc  // Optional
-//	bandwidth []string
+	version    int
+	origin     OriginDesc
+	name       string
+	info       string          // Optional
+	uri        string          // Optional
+	email      string          // Optional
+	phone      string          // Optional
+	connection *ConnectionDesc // Optional
+	//	bandwidth []string
 	time []TimeDesc
-//	timezone string  // Optional
-//	encryptionKey string  // Optional
+	//	timezone string  // Optional
+	//	encryptionKey string  // Optional
 	attributes []AttributeDesc
-	media []MediaDesc
+	media      []MediaDesc
 
 	// Initialized on first call to GetAttr()
 	attributeCache map[string]string
 }
 
 type OriginDesc struct {
-	username string
-	sessionId string
+	username       string
+	sessionId      string
 	sessionVersion uint64
-	networkType string
-	addressType string
-	address string
+	networkType    string
+	addressType    string
+	address        string
 }
 
 type ConnectionDesc struct {
 	networkType string
 	addressType string
-	address string
+	address     string
 }
 
 type TimeDesc struct {
 	start *time.Time
-	stop *time.Time  // Optional
-//	repeat []string
+	stop  *time.Time // Optional
+	//	repeat []string
 }
 
 type AttributeDesc struct {
-	key string
+	key   string
 	value string
 }
 
 type MediaDesc struct {
-	typ string
-	port int
-	proto string
+	typ    string
+	port   int
+	proto  string
 	format []string
 
-	info string  // Optional
-	connection *ConnectionDesc  // Optional
-//	bandwidth []string
-//	encryptionKey string  // Optional
+	info       string          // Optional
+	connection *ConnectionDesc // Optional
+	//	bandwidth []string
+	//	encryptionKey string  // Optional
 	attributes []AttributeDesc
 
 	// Initialized on first call to GetAttr()
 	attributeCache map[string]string
 }
-
 
 type Desc interface {
 	String() string
@@ -95,7 +94,6 @@ func (w *SdpWriter) String() string {
 	return (*strings.Builder)(w).String()
 }
 
-
 type sdpParseError struct {
 	which string
 	value string
@@ -110,7 +108,6 @@ func (e *sdpParseError) Error() (msg string) {
 	return
 }
 
-
 func (o *OriginDesc) String() string {
 	return fmt.Sprintf("%s %s %d %s %s %s",
 		o.username, o.sessionId, o.sessionVersion, o.networkType, o.addressType, o.address)
@@ -120,11 +117,10 @@ func parseOrigin(s string) (o OriginDesc, err error) {
 	_, err = fmt.Sscanf(s, "%s %s %d %s %s %s",
 		&o.username, &o.sessionId, &o.sessionVersion, &o.networkType, &o.addressType, &o.address)
 	if err != nil {
-		err = &sdpParseError{ "origin", s, err }
+		err = &sdpParseError{"origin", s, err}
 	}
 	return
 }
-
 
 func (c *ConnectionDesc) String() string {
 	return fmt.Sprintf("%s %s %s", c.networkType, c.addressType, c.address)
@@ -133,11 +129,10 @@ func (c *ConnectionDesc) String() string {
 func parseConnection(s string) (c ConnectionDesc, err error) {
 	_, err = fmt.Sscanf(s, "%s %s %s", &c.networkType, &c.addressType, &c.address)
 	if err != nil {
-		err = &sdpParseError{ "connection", s, err }
+		err = &sdpParseError{"connection", s, err}
 	}
 	return
 }
-
 
 func (t TimeDesc) String() string {
 	return fmt.Sprintf("%d %d", toNtp(t.start), toNtp(t.stop))
@@ -149,7 +144,7 @@ func parseTime(s string) (t TimeDesc, err error) {
 	t.start = fromNtp(start)
 	t.stop = fromNtp(stop)
 	if err != nil {
-		err = &sdpParseError{ "time", s, err }
+		err = &sdpParseError{"time", s, err}
 	}
 	return
 }
@@ -168,10 +163,9 @@ func fromNtp(ntp int64) *time.Time {
 	if ntp == 0 {
 		return nil
 	}
-	t := time.Unix(ntp - ntpOffset, 0)
+	t := time.Unix(ntp-ntpOffset, 0)
 	return &t
 }
-
 
 func (a AttributeDesc) String() string {
 	if a.value == "" {
@@ -190,7 +184,6 @@ func parseAttribute(s string) (a AttributeDesc, err error) {
 	}
 	return
 }
-
 
 func (m *MediaDesc) GetAttr(key string) string {
 	if m.attributeCache == nil {
@@ -254,13 +247,12 @@ func parseMedia(text string) (m MediaDesc, rtext string, err error) {
 		}
 
 		if err != nil {
-			err = &sdpParseError{ "media", line, err }
+			err = &sdpParseError{"media", line, err}
 			break
 		}
 	}
 	return m, text, err
 }
-
 
 func (s *SessionDesc) GetAttr(key string) string {
 	if s.attributeCache == nil {
@@ -274,7 +266,7 @@ func (s *SessionDesc) GetAttr(key string) string {
 
 func (s *SessionDesc) GetMedia() *MediaDesc {
 	if len(s.media) != 1 {
-		return nil  // TODO: should be an error
+		return nil // TODO: should be an error
 	}
 	return &s.media[0]
 }
@@ -351,7 +343,7 @@ func parseSession(text string) (s SessionDesc, err error) {
 		}
 
 		if err != nil {
-			return s, &sdpParseError{ "session", line, err }
+			return s, &sdpParseError{"session", line, err}
 			break
 		}
 	}

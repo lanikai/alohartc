@@ -10,16 +10,17 @@ type CandidatePair struct {
 	local  Candidate
 	remote Candidate
 
-//	isDefault   bool
-//	isValid     bool
-//	isNominated bool
+	//	isDefault   bool
+	//	isValid     bool
+	//	isNominated bool
 
 	state cpState
-	cin chan []byte
+	cin   chan []byte
 }
 
 // Candidate pair states
 type cpState int
+
 const (
 	cpWaiting    cpState = 0
 	cpInProgress         = 1
@@ -27,7 +28,6 @@ const (
 	cpFailed             = 3
 	cpFrozen             = 4
 )
-
 
 func newCandidatePair(seq int, local, remote Candidate) *CandidatePair {
 	cin := make(chan []byte, 32)
