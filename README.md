@@ -3,52 +3,43 @@
 Go package implementing a WebRTC native client
 
 
-## Quickstart
+## Setup
 
-Start simple web server + WebRTC client:
+Set a pre-commit hook to `go fmt` code (see https://tip.golang.org/misc/git/pre-commit)
 
-    go run examples/client.go
-
-Open http://localhost:8000 in browser. Observe DTLS handshake in Wireshark.
-
-
-## Overview
-
-```
-.
-├── NOTES.md
-├── README.md
-├── client.key                 Client certificate private key (for now)
-├── client.pem                 Client certificate (for now)
-├── examples
-│   └── client.go              Run this example for demo
-├── internal                   Special Go directory for internal modules
-│   └── srtp
-│       ├── kdf.go
-│       ├── kdf_test.go
-│       ├── messages.go
-│       └── srtp.go
-├── peer_connection.go         Top-level WebRTC PeerConnection
-├── stun.go                    Bare-bones STUN implementation for demo
-├── stun_test.go
-├── testdata                   Special Go directory for testdata
-│   └── admiral.264
-├── web                        Web content for demo
-│   ├── static
-│   │   └── js
-│   │       └── adapter-latest.js
-│   └── templates
-│       └── index.html
-└── x                          Experiments
-    └── twobrowser             Browser-to-browser manual WebRTC call
-        ├── callee.html
-        ├── caller.html
-        └── js
-            └── adapter-latest.js
-```
 
 ## Building
 
 To cross-compile for an armv7-based architecture, such as the Raspberry Pi Model 3B+:
 
-    GOARM=7 GOARCH=arm GOOS=linux go build examples/client.go
+    make
+
+
+## Quickstart
+
+Build code as above, then transfer `examples/demo/demo` to Raspberry Pi and run.
+Open http://<target>:8000 in browser. This should start a live video stream from
+Raspberry Pi.
+    
+    
+## Notes
+
+Ensure camera is enabled on Raspberry Pi and that v4l2 module is loaded.
+
+Modify `/etc/modules` as follows:
+```/etc/modules
+# /etc/modules: kernel modules to load at boot time.
+#
+# This file contains the names of kernel modules that should be loaded
+# at boot time, one per line. Lines beginning with "#" are ignored.
+
+bcm2835-v4l2
+...
+```
+
+Modify `/boot/config.txt` as follows:
+```/boot/config.txt
+...
+start_x=1
+gpu_mem=128
+```
