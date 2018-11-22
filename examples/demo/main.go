@@ -1,25 +1,26 @@
 package main
 
 import (
+	"flag"
 	"fmt"
-	"html/template"
 	"log"
 	"net/http"
+	"os"
 
 	"github.com/gorilla/websocket"
 
 	"github.com/thinkski/webrtc"
 )
 
+// Flags
+var (
+	// HTTP port on which to listen
+	flagPort int
+)
+
 var upgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
-}
-
-// indexHandler serves index.html
-func indexHandler(w http.ResponseWriter, r *http.Request) {
-	t := template.Must(template.ParseFiles("web/templates/index.html"))
-	t.Execute(w, nil)
 }
 
 type message struct {
@@ -84,21 +85,29 @@ func sendIceCandidates(ws *websocket.Conn, lcand <-chan string, sdpMid string) {
 	ws.WriteJSON(message{Type: "iceCandidate"})
 }
 
-// main function
+func init() {
+	flag.IntVar(&flagPort, "p", 8000, "HTTP port on which to listen")
+}
+
 func main() {
+	flag.Parse()
+
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 
+	// Routes
 	http.HandleFunc("/", indexHandler)
+	http.Handle("/static/", http.StripPrefix("/static/", StaticServer()))
 	http.HandleFunc("/ws", websocketHandler)
 
-	// Static file handler
-	http.Handle("/static/", http.StripPrefix(
-		"/static/", http.FileServer(http.Dir("web/static")),
-	))
+	// Get hostname
+	hostname, err := os.Hostname()
+	if err != nil {
+		hostname = "localhost"
+	}
 
 	// Listen on port
-	fmt.Println("Serving WebRTC demo at http://localhost:8000")
-	if err := http.ListenAndServe(":8000", nil); err != nil {
+	fmt.Printf("Demo is running. Open http://%s:%d in a browser.\n", hostname, flagPort)
+	if err := http.ListenAndServe(fmt.Sprintf(":%d", flagPort), nil); err != nil {
 		log.Fatal("ListenAndServer: ", err)
 	}
 }
