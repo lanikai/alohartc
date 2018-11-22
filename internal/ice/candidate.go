@@ -143,9 +143,9 @@ func makePeerCandidate(component int, raddr net.Addr) Candidate {
 	}
 	return Candidate{
 		component: component,
-		protocol: strings.ToLower(raddr.Network()),
-		ip: ip,
-		port: port,
-		typ: CandidateTypePeerReflexive,
+		protocol:  strings.ToLower(raddr.Network()),
+		ip:        ip,
+		port:      port,
+		typ:       CandidateTypePeerReflexive,
 	}
 }

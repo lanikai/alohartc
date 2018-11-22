@@ -9,12 +9,12 @@ import (
 
 // Implements net.Conn with channels.
 type ChannelConn struct {
-	in    <-chan []byte // Channel for reads
-	out   chan<- []byte // Channel for writes
-	laddr net.Addr      // Local address
-	raddr net.Addr      // Remote address
-	rtimer *time.Timer  // Timer to enforce read deadline
-	wtimer *time.Timer  // Timer to enforce write deadline
+	in     <-chan []byte // Channel for reads
+	out    chan<- []byte // Channel for writes
+	laddr  net.Addr      // Local address
+	raddr  net.Addr      // Remote address
+	rtimer *time.Timer   // Timer to enforce read deadline
+	wtimer *time.Timer   // Timer to enforce write deadline
 	closed chan struct{}
 }
 
