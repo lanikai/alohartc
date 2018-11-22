@@ -251,10 +251,10 @@ var zeros = make([]byte, 32)
 
 // If transactionID is empty, a random transaction ID will be generated.
 func newStunMessage(class uint16, method uint16, transactionID string) *stunMessage {
-	if class >> 2 != 0 {
+	if class>>2 != 0 {
 		log.Panicf("Invalid STUN message class: %#x", class)
 	}
-	if method >> 12 != 0 {
+	if method>>12 != 0 {
 		log.Panicf("Invalid STUN method: %#x", method)
 	}
 
@@ -340,10 +340,10 @@ func extractAddr(attr *stunAttribute, transactionID string, doXor bool) *net.UDP
 
 	family := attr.Value[1]
 	switch family {
-	case 0x01:  // IPv4
+	case 0x01: // IPv4
 		addr.IP = make([]byte, 4)
 		copy(addr.IP, attr.Value[4:8])
-	case 0x02:  // IPv6
+	case 0x02: // IPv6
 		addr.IP = make([]byte, 16)
 		copy(addr.IP, attr.Value[4:20])
 	default:
@@ -422,7 +422,7 @@ func (msg *stunMessage) addFingerprint() {
 	beforeFingerprint := len(b) - attr.numBytes()
 	var crc uint32 = crc32.ChecksumIEEE(b[0:beforeFingerprint])
 
-	binary.BigEndian.PutUint32(attr.Value, crc ^ 0x5354554e)
+	binary.BigEndian.PutUint32(attr.Value, crc^0x5354554e)
 }
 
 // Check if the STUN message has a USE-CANDIDATE attribute.

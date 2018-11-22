@@ -24,8 +24,8 @@ var upgrader = websocket.Upgrader{
 }
 
 type message struct {
-	Type string `json:"type"`
-	Text string `json:"text"`
+	Type   string            `json:"type"`
+	Text   string            `json:"text"`
 	Params map[string]string `json:"params,omitempty"`
 }
 
@@ -76,7 +76,7 @@ func websocketHandler(w http.ResponseWriter, r *http.Request) {
 
 // Relay local ICE candidates to the remote ICE agent as soon as they become available.
 func sendIceCandidates(ws *websocket.Conn, lcand <-chan string, sdpMid string) {
-	iceParams := map[string]string {"sdpMid": sdpMid}
+	iceParams := map[string]string{"sdpMid": sdpMid}
 	for c := range lcand {
 		log.Println("Local ICE", c)
 		ws.WriteJSON(message{Type: "iceCandidate", Text: c, Params: iceParams})

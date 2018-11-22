@@ -63,19 +63,19 @@ func (pc *PeerConnection) CreateAnswer() string {
 	s := SessionDesc{
 		version: 0,
 		origin: OriginDesc{
-			username: "golang",
-			sessionId: "123456",
+			username:       "golang",
+			sessionId:      "123456",
 			sessionVersion: 2,
-			networkType: "IN",
-			addressType: "IP4",
-			address: "127.0.0.1",
+			networkType:    "IN",
+			addressType:    "IP4",
+			address:        "127.0.0.1",
 		},
 		name: "-",
 		time: []TimeDesc{
-			{ nil, nil },
+			{nil, nil},
 		},
 		attributes: []AttributeDesc{
-			{ "group", pc.remoteDescription.GetAttr("group") },
+			{"group", pc.remoteDescription.GetAttr("group")},
 		},
 	}
 
@@ -90,14 +90,14 @@ func (pc *PeerConnection) CreateAnswer() string {
 			}
 		}
 		m := MediaDesc{
-			typ: "video",
-			port: 9,
-			proto: "UDP/TLS/RTP/SAVPF",
+			typ:    "video",
+			port:   9,
+			proto:  "UDP/TLS/RTP/SAVPF",
 			format: []string{strconv.Itoa(int(pc.DynamicType))},
 			connection: &ConnectionDesc{
 				networkType: "IN",
 				addressType: "IP4",
-				address: "0.0.0.0",
+				address:     "0.0.0.0",
 			},
 			attributes: []AttributeDesc{
 				{"mid", remoteMedia.GetAttr("mid")},

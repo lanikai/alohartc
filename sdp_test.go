@@ -122,12 +122,12 @@ func TestWriteSession(t *testing.T) {
 	s := SessionDesc{
 		version: 0,
 		origin: OriginDesc{
-			username: "fred",
-			sessionId: "123",
+			username:       "fred",
+			sessionId:      "123",
 			sessionVersion: 9,
-			networkType: "IN",
-			addressType: "IP4",
-			address: "127.0.0.1",
+			networkType:    "IN",
+			addressType:    "IP4",
+			address:        "127.0.0.1",
 		},
 		name: "mysession",
 	}
