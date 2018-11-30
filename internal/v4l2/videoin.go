@@ -97,7 +97,7 @@ func (r *VideoReader) Read(p []byte) (int, error) {
 	fds := unix.FdSet{}
 
 	// Set bit in set corresponding to file descriptor
-	fds.Bits[r.fd>>8] |= 1 << (uint(r.fd) & 63)
+	fds.Bits[r.fd>>6] |= 1 << (uint(r.fd) & 0x3F)
 
 	// Block until data available
 	_, err := unix.Select(r.fd+1, &fds, nil, nil, nil)
