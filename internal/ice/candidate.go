@@ -17,9 +17,9 @@ type Candidate struct {
 	priority   uint32
 	foundation string
 	component  int
-	attrs      []Attribute  // Extension attributes
+	attrs      []Attribute // Extension attributes
 
-	base       Base  // nil for remote candidates
+	base Base // nil for remote candidates
 }
 
 type Attribute struct {
@@ -28,12 +28,7 @@ type Attribute struct {
 }
 
 const (
-	CandidateTypeHost            = "host"
-	CandidateTypePeerReflexive   = "prflx"
-	CandidateTypeServerReflexive = "srflx"
-	CandidateTypeRelay           = "relay"
-
-	hostType = "host"
+	hostType  = "host"
 	srflxType = "srflx"
 	prflxType = "prflx"
 	relayType = "relay"
@@ -41,24 +36,24 @@ const (
 
 func makeHostCandidate(base Base) Candidate {
 	return Candidate{
-		address: base.address,
-		typ: hostType,
-		priority: computePriority(hostType, base.component),
+		address:    base.address,
+		typ:        hostType,
+		priority:   computePriority(hostType, base.component),
 		foundation: computeFoundation(hostType, base.address, ""),
-		component: base.component,
-		base: base,
+		component:  base.component,
+		base:       base,
 	}
 }
 
 // TODO: Take 'mapped TransportAddress' instead
 func makeServerReflexiveCandidate(addr net.Addr, base Base, stunServer string) Candidate {
 	c := Candidate{
-		address: makeTransportAddress(addr),
-		typ: srflxType,
-		priority: computePriority(srflxType, base.component),
+		address:    makeTransportAddress(addr),
+		typ:        srflxType,
+		priority:   computePriority(srflxType, base.component),
 		foundation: computeFoundation(srflxType, base.address, stunServer),
-		component: base.component,
-		base: base,
+		component:  base.component,
+		base:       base,
 	}
 	// [RFC5245 §15.1] requires raddr/rport. This is enforced by some browsers (e.g. Firefox).
 	c.addAttribute("raddr", "0.0.0.0")
@@ -69,12 +64,12 @@ func makeServerReflexiveCandidate(addr net.Addr, base Base, stunServer string) C
 func makePeerReflexiveCandidate(addr net.Addr, base Base, priority uint32) Candidate {
 	ta := makeTransportAddress(addr)
 	c := Candidate{
-		address: ta,
-		typ: prflxType,
-		priority: priority,
+		address:    ta,
+		typ:        prflxType,
+		priority:   priority,
 		foundation: computeFoundation(prflxType, ta, ""),
-		component: base.component,
-		base: base,
+		component:  base.component,
+		base:       base,
 	}
 	// [RFC5245 §15.1] requires raddr/rport. This is enforced by some browsers (e.g. Firefox).
 	c.addAttribute("raddr", "0.0.0.0")

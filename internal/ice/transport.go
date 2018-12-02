@@ -6,11 +6,10 @@ import (
 	"strings"
 )
 
-
 type TransportAddress struct {
-	protocol string  // Either "tcp" or "udp"
-	ip string
-	port int
+	protocol string // Either "tcp" or "udp"
+	ip       string
+	port     int
 }
 
 func makeTransportAddress(addr net.Addr) TransportAddress {
@@ -22,10 +21,6 @@ func makeTransportAddress(addr net.Addr) TransportAddress {
 	default:
 		panic("Unsupported net.Addr type: " + a.String())
 	}
-
-//	host, sport, _ := net.SplitHostPort(addr.String())
-//	port, _ := strings.Atoi(sport)
-//	return TransportAddress{addr.Network(), host, port}
 }
 
 func (ta *TransportAddress) netAddr() (addr net.Addr) {

@@ -11,7 +11,7 @@ type Checklist struct {
 	state checklistState
 	pairs []*CandidatePair
 
-	valid []*CandidatePair
+	valid    []*CandidatePair
 	selected *CandidatePair
 
 	// Listeners that gets notified every time checklist state changes.
@@ -28,8 +28,8 @@ type checklistState int
 
 const (
 	checklistRunning   checklistState = 0
-	checklistCompleted         = 1
-	checklistFailed            = 2
+	checklistCompleted                = 1
+	checklistFailed                   = 2
 )
 
 // Pair up local candidates with remote candidates, and add them to the checklist. Then re-sort and
@@ -53,7 +53,7 @@ func (cl *Checklist) addCandidatePairs(locals, remotes []Candidate) {
 	// [RFC8445 §6.1.2.3] Order pairs by priority.
 	sort.Slice(cl.pairs, func(i, j int) bool {
 		return cl.pairs[i].Priority() < cl.pairs[j].Priority()
-	});
+	})
 
 	// [RFC8445 §6.1.2.4] Prune redundant pairs.
 	for i := 0; i < len(cl.pairs); i++ {

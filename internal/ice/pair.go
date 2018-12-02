@@ -6,18 +6,19 @@ import (
 )
 
 type CandidatePair struct {
-	id string
-	local  Candidate
-	remote Candidate
+	id         string
+	local      Candidate
+	remote     Candidate
 	foundation string
-	component int
+	component  int
 
-	state CandidatePairState
+	state     CandidatePairState
 	nominated bool
 }
 
 // Candidate pair states
 type CandidatePairState int
+
 const (
 	Frozen     CandidatePairState = 0
 	Waiting                       = 1

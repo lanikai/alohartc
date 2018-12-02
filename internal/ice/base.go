@@ -11,7 +11,7 @@ import (
 // particular candidate." It is represented here by a UDP connection, listening on a single port.
 type Base struct {
 	*net.UDPConn
-	address TransportAddress
+	address   TransportAddress
 	component int
 
 	// STUN response handlers for transactions sent from this base, keyed by transaction ID.
@@ -63,7 +63,7 @@ func (base *Base) sendStun(msg *stunMessage, raddr net.Addr, handler stunHandler
 func (base *Base) demuxStun(defaultHandler stunHandler, dataIn chan<- []byte) {
 	buf := make([]byte, 4096)
 	for {
-		base.SetReadDeadline(time.Now().Add(60*time.Second))
+		base.SetReadDeadline(time.Now().Add(60 * time.Second))
 		n, raddr, err := base.ReadFrom(buf)
 		if err == io.EOF {
 			log.Printf("Connection closed")

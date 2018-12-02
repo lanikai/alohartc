@@ -23,7 +23,7 @@ type Agent struct {
 
 	// Connection for the data stream.
 	dataConn *ChannelConn
-	ready chan *ChannelConn
+	ready    chan *ChannelConn
 }
 
 // Create a new ICE agent with the given username and passwords.

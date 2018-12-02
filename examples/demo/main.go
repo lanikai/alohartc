@@ -53,13 +53,11 @@ func websocketHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-//		log.Printf("websocket message received: type = %s", msg.Type)
 		switch msg.Type {
 		case "offer":
 			pc := webrtc.NewPeerConnection()
 			pc.SetRemoteDescription(msg.Text)
 			ws.WriteJSON(message{Type: "answer", Text: pc.CreateAnswer()})
-//			log.Println("sent answer")
 			go sendIceCandidates(ws, lcand, pc.SdpMid())
 			go pc.Connect(lcand, rcand)
 		case "iceCandidate":
