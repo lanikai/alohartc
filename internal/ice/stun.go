@@ -74,6 +74,9 @@ func (msg *stunMessage) String() string {
 	case stunErrorResponse:
 		b.WriteString("STUN error response")
 	}
+	if msg.method != stunBindingMethod {
+		fmt.Fprintf(b, ", method %x", msg.method)
+	}
 	fmt.Fprintf(b, ", tid=%s", hex.EncodeToString([]byte(msg.transactionID)))
 	for _, attr := range msg.attributes {
 		switch attr.Type {
@@ -94,12 +97,13 @@ func (msg *stunMessage) String() string {
 		case stunAttrIceControlling:
 			fmt.Fprintf(b, ", ICE-CONTROLLING")
 		case stunAttrPriority:
+			fmt.Fprintf(b, ", PRIORITY ?")
 		case stunAttrSoftware:
 		case stunAttrFingerprint:
 		case stunAttrMessageIntegrity:
 			// Ignore these
 		default:
-			fmt.Fprintf(b, "unknown attribute %x", attr.Type)
+			fmt.Fprintf(b, ", unknown attribute %x", attr.Type)
 		}
 	}
 	return b.String()
@@ -282,7 +286,15 @@ func newStunBindingRequest(transactionID string) *stunMessage {
 func newStunBindingResponse(transactionID string, raddr net.Addr, password string) *stunMessage {
 	msg := newStunMessage(stunSuccessResponse, stunBindingMethod, transactionID)
 	msg.setXorMappedAddress(raddr)
+	// TODO: Make this an option, and use an actual random number.
+	msg.addAttribute(stunAttrIceControlled, []byte{1, 2, 3, 4, 5, 6, 7, 8})
 	msg.addMessageIntegrity(password)
+	msg.addFingerprint()
+	return msg
+}
+
+func newStunBindingIndication() *stunMessage {
+	msg := newStunMessage(stunIndication, stunBindingMethod, "")
 	msg.addFingerprint()
 	return msg
 }
@@ -425,6 +437,21 @@ func (msg *stunMessage) addFingerprint() {
 	binary.BigEndian.PutUint32(attr.Value, crc^0x5354554e)
 }
 
+func (msg *stunMessage) addPriority(p uint32) {
+	v := make([]byte, 4)
+	binary.BigEndian.PutUint32(v, p)
+	msg.addAttribute(stunAttrPriority, v)
+}
+
+func (msg *stunMessage) getPriority() uint32 {
+	for _, attr := range msg.attributes {
+		if attr.Type == stunAttrPriority {
+			return binary.BigEndian.Uint32(attr.Value)
+		}
+	}
+	return 0
+}
+
 // Check if the STUN message has a USE-CANDIDATE attribute.
 func (msg *stunMessage) hasUseCandidate() bool {
 	for _, attr := range msg.attributes {
@@ -433,49 +460,4 @@ func (msg *stunMessage) hasUseCandidate() bool {
 		}
 	}
 	return false
-}
-
-// Send a STUN binding request to the given address, and await a binding response.
-func getStunCandidate(conn net.PacketConn, addr net.Addr) (*Candidate, error) {
-	req := newStunBindingRequest("")
-	log.Printf("STUN binding request: %x", req.Bytes())
-	_, err := conn.WriteTo(req.Bytes(), addr)
-	if err != nil {
-		log.Println("Failed to send STUN binding request:", err)
-		return nil, err
-	}
-	log.Println("Sent STUN binding request")
-
-	buf := make([]byte, 1500)
-	n, _, err := conn.ReadFrom(buf)
-	if err != nil {
-		log.Println("Did not receive STUN binding response:", err)
-		return nil, err
-	}
-	log.Println("Received STUN binding response")
-
-	resp, err := parseStunMessage(buf[:n])
-	if err != nil {
-		return nil, err
-	}
-	log.Println(resp)
-
-	if resp.transactionID != req.transactionID {
-		return nil, fmt.Errorf("Unknown transaction ID in STUN binding response: %s", resp.transactionID)
-	}
-	if resp.class != stunSuccessResponse {
-		return nil, fmt.Errorf("STUN binding response is not successful: %d", resp.class)
-	}
-
-	// Find XOR-MAPPED-ADDRESS attribute in the response.
-	for _, attr := range resp.attributes {
-		log.Printf("STUN attribute: %#x %d %s", attr.Type, attr.Length, hex.EncodeToString(attr.Value))
-	}
-	mappedAddr := resp.getMappedAddress()
-	log.Printf("mappedAddr = %s", mappedAddr)
-
-	// TODO: browser doesn't seem interested in "srflx" candidates
-	c := Candidate{typ: "host", component: 1}
-	c.setAddress(mappedAddr)
-	return &c, nil
 }
