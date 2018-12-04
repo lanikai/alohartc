@@ -53,13 +53,11 @@ func websocketHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		log.Printf("websocket message received: type = %s", msg.Type)
 		switch msg.Type {
 		case "offer":
 			pc := webrtc.NewPeerConnection()
 			pc.SetRemoteDescription(msg.Text)
 			ws.WriteJSON(message{Type: "answer", Text: pc.CreateAnswer()})
-			log.Println("sent answer")
 			go sendIceCandidates(ws, lcand, pc.SdpMid())
 			go pc.Connect(lcand, rcand)
 		case "iceCandidate":
@@ -81,6 +79,7 @@ func sendIceCandidates(ws *websocket.Conn, lcand <-chan string, sdpMid string) {
 		log.Println("Local ICE", c)
 		ws.WriteJSON(message{Type: "iceCandidate", Text: c, Params: iceParams})
 	}
+	log.Println("End of local ICE candidates")
 	// Plus an empty candidate to indicate the end of the list.
 	ws.WriteJSON(message{Type: "iceCandidate"})
 }
@@ -92,7 +91,7 @@ func init() {
 func main() {
 	flag.Parse()
 
-	log.SetFlags(log.LstdFlags | log.Lshortfile)
+	log.SetFlags(log.LstdFlags | log.Lshortfile | log.Lmicroseconds)
 
 	// Routes
 	http.HandleFunc("/", indexHandler)

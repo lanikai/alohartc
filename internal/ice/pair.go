@@ -2,47 +2,72 @@ package ice
 
 import (
 	"fmt"
+	"log"
 )
 
 type CandidatePair struct {
-	seq int
+	id         string
+	local      Candidate
+	remote     Candidate
+	foundation string
+	component  int
 
-	local  Candidate
-	remote Candidate
-
-	//	isDefault   bool
-	//	isValid     bool
-	//	isNominated bool
-
-	state cpState
-	cin   chan []byte
+	state     CandidatePairState
+	nominated bool
 }
 
 // Candidate pair states
-type cpState int
+type CandidatePairState int
 
 const (
-	cpWaiting    cpState = 0
-	cpInProgress         = 1
-	cpSucceeded          = 2
-	cpFailed             = 3
-	cpFrozen             = 4
+	Frozen CandidatePairState = iota
+	Waiting
+	InProgress
+	Succeeded
+	Failed
 )
 
+func (state CandidatePairState) String() string {
+	switch state {
+	case Frozen:
+		return "Frozen"
+	case Waiting:
+		return "Waiting"
+	case InProgress:
+		return "In Progress"
+	case Succeeded:
+		return "Succedeed"
+	case Failed:
+		return "Failed"
+	default:
+		panic(fmt.Sprintf("Invalid CandidatePairState: %d", state))
+	}
+}
+
 func newCandidatePair(seq int, local, remote Candidate) *CandidatePair {
-	cin := make(chan []byte, 32)
-	return &CandidatePair{seq: seq, local: local, remote: remote, cin: cin}
+	if local.component != remote.component {
+		log.Panicf("Candidates in pair have different components: %d != %d", local.component, remote.component)
+	}
+	id := fmt.Sprintf("Pair#%d", seq)
+	foundation := fmt.Sprintf("%s/%s", local.foundation, remote.foundation)
+	return &CandidatePair{
+		id:         id,
+		local:      local,
+		remote:     remote,
+		foundation: foundation,
+		component:  local.component,
+		state:      Frozen,
+	}
 }
 
-func (cp *CandidatePair) String() string {
-	laddr := cp.local.Addr()
-	raddr := cp.remote.Addr()
-	return fmt.Sprintf("CP#%d %s:%s -> %s:%s", cp.seq, laddr.Network(), laddr, raddr.Network(), raddr)
+func (p *CandidatePair) String() string {
+	return fmt.Sprintf("%s: %s -> %s [%s]", p.id, p.local.address, p.remote.address, p.state)
 }
 
-func (cp *CandidatePair) Priority() uint64 {
-	G := uint64(cp.remote.priority)
-	D := uint64(cp.local.priority)
+// TODO: Handle case where we're the controlling agent.
+func (p *CandidatePair) Priority() uint64 {
+	G := uint64(p.remote.priority)
+	D := uint64(p.local.priority)
 	var B uint64 = 0
 	if G > D {
 		B = 1
