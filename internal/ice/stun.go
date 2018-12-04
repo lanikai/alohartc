@@ -286,7 +286,7 @@ func newStunBindingRequest(transactionID string) *stunMessage {
 func newStunBindingResponse(transactionID string, raddr net.Addr, password string) *stunMessage {
 	msg := newStunMessage(stunSuccessResponse, stunBindingMethod, transactionID)
 	msg.setXorMappedAddress(raddr)
-	// TODO: Make this an option.
+	// TODO: Make this an option, and use an actual random number.
 	msg.addAttribute(stunAttrIceControlled, []byte{1, 2, 3, 4, 5, 6, 7, 8})
 	msg.addMessageIntegrity(password)
 	msg.addFingerprint()

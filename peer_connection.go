@@ -160,7 +160,7 @@ func (pc *PeerConnection) Connect(lcand chan<- string, rcand <-chan string) {
 		for c := range rcand {
 			err := ia.AddRemoteCandidate(c)
 			if err != nil {
-				log.Fatal(err)
+				log.Printf("Failed to add remote candidate \"%s\": %s\n", c, err)
 			}
 		}
 		// Signal end of remote candidates.

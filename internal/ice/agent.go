@@ -137,7 +137,7 @@ func (a *Agent) queryStunServer(base Base, stunServer string) (mappedAddr net.Ad
 
 	select {
 	case err = <-done:
-	case <-time.After(10 * time.Second):
+	case <-time.After(3 * time.Second):
 		err = fmt.Errorf("Timed out waiting for response from %s", stunServer)
 	}
 	return

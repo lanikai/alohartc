@@ -20,12 +20,29 @@ type CandidatePair struct {
 type CandidatePairState int
 
 const (
-	Frozen     CandidatePairState = 0
-	Waiting                       = 1
-	InProgress                    = 2
-	Succeeded                     = 3
-	Failed                        = 4
+	Frozen CandidatePairState = iota
+	Waiting
+	InProgress
+	Succeeded
+	Failed
 )
+
+func (state CandidatePairState) String() string {
+	switch state {
+	case Frozen:
+		return "Frozen"
+	case Waiting:
+		return "Waiting"
+	case InProgress:
+		return "In Progress"
+	case Succeeded:
+		return "Succedeed"
+	case Failed:
+		return "Failed"
+	default:
+		panic(fmt.Sprintf("Invalid CandidatePairState: %d", state))
+	}
+}
 
 func newCandidatePair(seq int, local, remote Candidate) *CandidatePair {
 	if local.component != remote.component {
@@ -33,24 +50,18 @@ func newCandidatePair(seq int, local, remote Candidate) *CandidatePair {
 	}
 	id := fmt.Sprintf("Pair#%d", seq)
 	foundation := fmt.Sprintf("%s/%s", local.foundation, remote.foundation)
-	return &CandidatePair{id: id, local: local, remote: remote, foundation: foundation, component: local.component}
+	return &CandidatePair{
+		id:         id,
+		local:      local,
+		remote:     remote,
+		foundation: foundation,
+		component:  local.component,
+		state:      Frozen,
+	}
 }
 
 func (p *CandidatePair) String() string {
-	var state string
-	switch p.state {
-	case Frozen:
-		state = "Frozen"
-	case Waiting:
-		state = "Waiting"
-	case InProgress:
-		state = "In Progress"
-	case Succeeded:
-		state = "Succedeed"
-	case Failed:
-		state = "Failed"
-	}
-	return fmt.Sprintf("%s: %s -> %s [%s]", p.id, p.local.address, p.remote.address, state)
+	return fmt.Sprintf("%s: %s -> %s [%s]", p.id, p.local.address, p.remote.address, p.state)
 }
 
 // TODO: Handle case where we're the controlling agent.

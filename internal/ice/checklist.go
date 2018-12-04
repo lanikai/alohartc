@@ -43,7 +43,7 @@ func (cl *Checklist) addCandidatePairs(locals, remotes []Candidate) {
 			if canBePaired(local, remote) {
 				p := newCandidatePair(len(cl.pairs), local, remote)
 				trace("Adding candidate pair %s", p)
-				// HACK: Immediately set state to Waiting
+				// TODO: Check that this is a new foundation, otherwise it should stay Frozen.
 				p.state = Waiting
 				cl.pairs = append(cl.pairs, p)
 			}
@@ -71,7 +71,6 @@ func (cl *Checklist) addCandidatePairs(locals, remotes []Candidate) {
 				break
 			}
 		}
-		i++
 	}
 
 	// TODO: Only change the top candidate per foundation.
