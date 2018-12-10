@@ -69,7 +69,11 @@
     ws.addEventListener("open", function (event) {
       console.log("websocket opened");
       // Create WebRTC peer-to-peer connection
-      pc = new RTCPeerConnection();
+      pc = new RTCPeerConnection({
+        iceServers: [{
+          urls: ["stun:stun3.l.google.com:19302"]
+        }]
+      });
 
       // Called by the browser's ICE agent when it determines a new local candidate.
       pc.onicecandidate = function(event) {
