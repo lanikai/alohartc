@@ -3,6 +3,7 @@ package webrtc
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"strconv"
@@ -11,15 +12,9 @@ import (
 	"github.com/thinkski/webrtc/internal/dtls"
 	"github.com/thinkski/webrtc/internal/ice"
 	"github.com/thinkski/webrtc/internal/srtp"
-	"github.com/thinkski/webrtc/internal/v4l2"
 )
 
 const (
-	demoVideoBitrate = 2e6
-	demoVideoDevice  = "/dev/video0"
-	demoVideoHeight  = 720
-	demoVideoWidth   = 1280
-
 	nalTypeSingleTimeAggregationPacketA = 24
 	nalReferenceIndicatorPriority1      = 1 << 5
 	nalReferenceIndicatorPriority2      = 2 << 5
@@ -35,6 +30,9 @@ type PeerConnection struct {
 
 	// RTP payload type (negotiated via SDP)
 	DynamicType uint8
+
+	// SRTP session, established after successful call to Connect()
+	srtpSession *srtp.Conn
 
 	// Local certificate
 	certPEMBlock []byte // Public key
@@ -147,7 +145,7 @@ func (pc *PeerConnection) SdpMid() string {
 }
 
 // Receive remote ICE candidates from rcand. Send local ICE candidates to lcand.
-func (pc *PeerConnection) Connect(lcand chan<- string, rcand <-chan string) {
+func (pc *PeerConnection) Connect(lcand chan<- string, rcand <-chan string) error {
 	remoteUfrag := pc.remoteDescription.GetMedia().GetAttr("ice-ufrag")
 	localUfrag := pc.localDescription.GetMedia().GetAttr("ice-ufrag")
 	username := remoteUfrag + ":" + localUfrag
@@ -169,14 +167,14 @@ func (pc *PeerConnection) Connect(lcand chan<- string, rcand <-chan string) {
 
 	conn, err := ia.EstablishConnection(lcand)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 	defer conn.Close()
 
 	// Load dynamically generated certificate
 	cert, err := dtls.X509KeyPair(pc.certPEMBlock, pc.keyPEMBlock)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 
 	// Send DTLS client hello
@@ -193,32 +191,38 @@ func (pc *PeerConnection) Connect(lcand chan<- string, rcand <-chan string) {
 		},
 	)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 
-	// Send SRTP stream
-	srtpSession, err := srtp.NewSession(conn, pc.DynamicType, dc.ClientKey, dc.ClientIV)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer srtpSession.Close()
+	pc.srtpSession, err = srtp.NewSession(conn, pc.DynamicType, dc.ClientKey, dc.ClientIV)
+	return err
+}
 
-	// Open video device
-	video, err := v4l2.OpenH264(demoVideoDevice, demoVideoWidth, demoVideoHeight)
-	if err != nil {
-		log.Fatal(err)
+func (pc *PeerConnection) Close() {
+	if pc.srtpSession != nil {
+		pc.srtpSession.Close()
 	}
+}
 
-	if err := video.SetBitrate(demoVideoBitrate); err != nil {
-		log.Fatal(err)
+type VideoSource interface {
+	io.Reader
+	io.Closer
+	Start() error
+	Stop() error
+}
+
+func (pc *PeerConnection) StreamH264(video VideoSource) {
+	if pc.srtpSession == nil {
+		log.Fatal("Must establish connection before streaming")
 	}
 
 	// Start video
 	if err := video.Start(); err != nil {
 		log.Fatal(err)
 	}
+	defer video.Stop()
 
-	buffer := make([]byte, demoVideoBitrate)
+	buffer := make([]byte, 1024*1024)
 
 	// Wrap SPS/PPS/SEI in STAP-A packet
 	n, err := video.Read(buffer)
@@ -232,7 +236,7 @@ func (pc *PeerConnection) Connect(lcand chan<- string, rcand <-chan string) {
 		pkt = append(pkt, []byte{byte(len(nal) >> 8), byte(len(nal))}...)
 		pkt = append(pkt, nal...)
 	}
-	srtpSession.Stap(pkt)
+	pc.srtpSession.Stap(pkt)
 	log.Println(buffer[:n])
 
 	// Write remaining NAL units
@@ -242,6 +246,6 @@ func (pc *PeerConnection) Connect(lcand chan<- string, rcand <-chan string) {
 			panic(err)
 		}
 		b := buffer[4:n]
-		srtpSession.Send(b)
+		pc.srtpSession.Send(b)
 	}
 }
