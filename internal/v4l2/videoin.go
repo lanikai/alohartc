@@ -5,10 +5,10 @@ package v4l2
 
 import (
 	"encoding/binary"
-	"errors"
 	"io"
 	"unsafe"
 
+	"github.com/pkg/errors"
 	"golang.org/x/sys/unix"
 )
 
@@ -23,10 +23,15 @@ type VideoReader struct {
 
 	fd   int    // File descriptor
 	data []byte // Memory-mapped buffer
+
+	active bool
 }
 
 // Close video device
 func (r *VideoReader) Close() error {
+	if err := r.Stop(); err != nil {
+		return err
+	}
 	if err := unix.Munmap(r.data); err != nil {
 		return err
 	}
@@ -290,11 +295,16 @@ func (r *VideoReader) Start() error {
 		return errors.New(errno.Error())
 	}
 
+	r.active = true
 	return nil
 }
 
 // Stop video capture
 func (r *VideoReader) Stop() error {
+	if !r.active {
+		return nil
+	}
+
 	typ := V4L2_BUF_TYPE_VIDEO_CAPTURE
 	_, _, errno := unix.Syscall(
 		unix.SYS_IOCTL,
