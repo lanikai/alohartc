@@ -10,12 +10,20 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/thinkski/webrtc"
+	"github.com/thinkski/webrtc/internal/v4l2"
 )
 
 // Flags
 var (
 	// HTTP port on which to listen
 	flagPort int
+)
+
+const (
+	demoVideoBitrate = 2e6
+	demoVideoDevice  = "/dev/video0"
+	demoVideoHeight  = 720
+	demoVideoWidth   = 1280
 )
 
 var upgrader = websocket.Upgrader{
@@ -59,7 +67,14 @@ func websocketHandler(w http.ResponseWriter, r *http.Request) {
 			pc.SetRemoteDescription(msg.Text)
 			ws.WriteJSON(message{Type: "answer", Text: pc.CreateAnswer()})
 			go sendIceCandidates(ws, lcand, pc.SdpMid())
-			go pc.Connect(lcand, rcand)
+			go func() {
+				if err := pc.Connect(lcand, rcand); err != nil {
+					log.Fatal(err)
+				}
+				defer pc.Close()
+
+				streamLiveVideo(pc)
+			}()
 		case "iceCandidate":
 			if msg.Text == "" {
 				log.Println("End of remote ICE candidates")
@@ -82,6 +97,21 @@ func sendIceCandidates(ws *websocket.Conn, lcand <-chan string, sdpMid string) {
 	log.Println("End of local ICE candidates")
 	// Plus an empty candidate to indicate the end of the list.
 	ws.WriteJSON(message{Type: "iceCandidate"})
+}
+
+func streamLiveVideo(pc *webrtc.PeerConnection) {
+	// Open video device
+	video, err := v4l2.OpenH264(demoVideoDevice, demoVideoWidth, demoVideoHeight)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer video.Close()
+
+	if err := video.SetBitrate(demoVideoBitrate); err != nil {
+		log.Fatal(err)
+	}
+
+	pc.StreamH264(video)
 }
 
 func init() {
