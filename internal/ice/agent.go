@@ -178,7 +178,7 @@ func (a *Agent) loop(base Base) {
 				trace("Next candidate to check: %s\n", p)
 				err := a.checklist.sendCheck(p, a.username, a.remotePassword)
 				if err != nil {
-					log.Fatalf("Failed to send connectivity check: %s", err)
+					log.Printf("Failed to send connectivity check: %s", err)
 				}
 			}
 
