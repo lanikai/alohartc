@@ -42,7 +42,11 @@ func createBase(component int) (base Base, err error) {
 func getLocalIP() (net.IP, error) {
 	conn, err := net.Dial("udp", "8.8.8.8:80")
 	if err != nil {
-		return nil, err
+		// Try with link-local address
+		conn, err = net.Dial("udp", "169.254.1.1:80")
+		if err != nil {
+			return nil, err
+		}
 	}
 	defer conn.Close()
 
