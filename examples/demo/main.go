@@ -3,9 +3,11 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
+	"strings"
 
 	"github.com/gorilla/websocket"
 
@@ -17,6 +19,9 @@ import (
 var (
 	// HTTP port on which to listen
 	flagPort int
+
+	// Path to raw H.264 video source
+	flagVideoSource string
 )
 
 const (
@@ -73,7 +78,7 @@ func websocketHandler(w http.ResponseWriter, r *http.Request) {
 				}
 				defer pc.Close()
 
-				streamLiveVideo(pc)
+				streamVideo(pc)
 			}()
 		case "iceCandidate":
 			if msg.Text == "" {
@@ -99,23 +104,48 @@ func sendIceCandidates(ws *websocket.Conn, lcand <-chan string, sdpMid string) {
 	ws.WriteJSON(message{Type: "iceCandidate"})
 }
 
-func streamLiveVideo(pc *webrtc.PeerConnection) {
-	// Open video device
-	video, err := v4l2.OpenH264(demoVideoDevice, demoVideoWidth, demoVideoHeight)
-	if err != nil {
+func streamVideo(pc *webrtc.PeerConnection) {
+	var source io.Reader
+	wholeNALUs := false
+
+	// Open the video source, either a v42l device, stdin, or a plain file.
+	if strings.HasPrefix(flagVideoSource, "/dev/video") {
+		v, err := v4l2.OpenH264(flagVideoSource, demoVideoWidth, demoVideoHeight)
+		if err != nil {
+			log.Fatal(err)
+		}
+		defer v.Close()
+
+		if err := v.SetBitrate(demoVideoBitrate); err != nil {
+			log.Fatal(err)
+		}
+
+		// Start v
+		if err := v.Start(); err != nil {
+			log.Fatal(err)
+		}
+		defer v.Stop()
+
+		source = v
+		wholeNALUs = true
+	} else if flagVideoSource == "-" {
+		source = os.Stdin
+	} else {
+		f, err := os.Open(flagVideoSource)
+		if err != nil {
+			log.Fatal(err)
+		}
+		source = f
+	}
+
+	if err := pc.StreamH264(source, wholeNALUs); err != nil {
 		log.Fatal(err)
 	}
-	defer video.Close()
-
-	if err := video.SetBitrate(demoVideoBitrate); err != nil {
-		log.Fatal(err)
-	}
-
-	pc.StreamH264(video)
 }
 
 func init() {
 	flag.IntVar(&flagPort, "p", 8000, "HTTP port on which to listen")
+	flag.StringVar(&flagVideoSource, "i", "/dev/video0", "H.264 video source ('-' for stdin)")
 }
 
 func main() {

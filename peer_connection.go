@@ -1,7 +1,9 @@
 package webrtc
 
 import (
+	"bufio"
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -19,6 +21,8 @@ const (
 	nalReferenceIndicatorPriority1      = 1 << 5
 	nalReferenceIndicatorPriority2      = 2 << 5
 	nalReferenceIndicatorPriority3      = 3 << 5
+
+	naluBufferSize = 2 * 1024 * 1024
 )
 
 type PeerConnection struct {
@@ -169,7 +173,6 @@ func (pc *PeerConnection) Connect(lcand chan<- string, rcand <-chan string) erro
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
 
 	// Load dynamically generated certificate
 	cert, err := dtls.X509KeyPair(pc.certPEMBlock, pc.keyPEMBlock)
@@ -204,48 +207,79 @@ func (pc *PeerConnection) Close() {
 	}
 }
 
-type VideoSource interface {
-	io.Reader
-	io.Closer
-	Start() error
-	Stop() error
-}
-
-func (pc *PeerConnection) StreamH264(video VideoSource) {
+// Stream a raw H.264 video over the peer connection. If wholeNALUs is true, assume that each Read()
+// returns a whole number of NAL units (this is just an optimization).
+func (pc *PeerConnection) StreamH264(source io.Reader, wholeNALUs bool) error {
 	if pc.srtpSession == nil {
-		log.Fatal("Must establish connection before streaming")
+		return errors.New("Must establish connection before streaming video")
 	}
 
-	// Start video
-	if err := video.Start(); err != nil {
-		log.Fatal(err)
-	}
-	defer video.Stop()
+	// Custom splitter. Extracts NAL units.
+	ScanNALU := func(data []byte, atEOF bool) (advance int, token []byte, err error) {
+		i := bytes.Index(data, []byte{0, 0, 1})
 
-	buffer := make([]byte, 1024*1024)
-
-	// Wrap SPS/PPS/SEI in STAP-A packet
-	n, err := video.Read(buffer)
-	if err != nil {
-		panic(err)
-	}
-	b := buffer[4:n]
-	nals := bytes.Split(b, []byte{0, 0, 0, 1})
-	pkt := []byte{nalTypeSingleTimeAggregationPacketA}
-	for _, nal := range nals {
-		pkt = append(pkt, []byte{byte(len(nal) >> 8), byte(len(nal))}...)
-		pkt = append(pkt, nal...)
-	}
-	pc.srtpSession.Stap(pkt)
-	log.Println(buffer[:n])
-
-	// Write remaining NAL units
-	for {
-		n, err := video.Read(buffer)
-		if err != nil {
-			panic(err)
+		switch i {
+		case -1:
+			if wholeNALUs {
+				// Assume entire remaining data chunk is one NALU.
+				return len(data), data, nil
+			} else {
+				// No NALU boundary found. Wait for more data.
+				return 0, nil, nil
+			}
+		case 0:
+			return 3, nil, nil
+		case 1:
+			return 4, nil, nil
+		default:
+			return i + 3, data[0:i], nil
 		}
-		b := buffer[4:n]
-		pc.srtpSession.Send(b)
 	}
+
+	buffer := make([]byte, naluBufferSize)
+	scanner := bufio.NewScanner(source)
+	scanner.Buffer(buffer, naluBufferSize)
+	scanner.Split(ScanNALU)
+	var stap []byte
+	for scanner.Scan() {
+		b := scanner.Bytes()
+
+		// https://tools.ietf.org/html/rfc6184#section-1.3
+		fbit := (b[0] & 0x80) >> 7
+		nri := (b[0] & 0x60) >> 5
+		typ := b[0] & 0x1f
+		//log.Printf("F: %b, NRI: %02b, Type: %d, Length: %d\n", fbit, nri, typ, len(b))
+
+		if (typ == 6) || (typ == 7) || (typ == 8) {
+			// Wrap SPS/PPS/SEI in STAP-A packet
+			// https://tools.ietf.org/html/rfc6184#section-5.7
+			if stap == nil {
+				stap = []byte{nalTypeSingleTimeAggregationPacketA}
+			}
+			len := len(b)
+			stap = append(stap, byte(len>>8), byte(len))
+			stap = append(stap, b...)
+
+			// STAP-A F bit equals the bitwise OR of all aggregated F bits.
+			stap[0] |= fbit << 7
+
+			// STAP-A NRI value is the maximum of all aggregated NRI values.
+			stapnri := (stap[0] & 0x60) >> 5
+			if nri > stapnri {
+				stap[0] = (stap[0] &^ 0x60) | (nri << 5)
+			}
+		} else {
+			if stap != nil {
+				pc.srtpSession.Stap(stap)
+				stap = nil
+			}
+
+			// Make a copy of the NALU, since the RTP payload gets encrypted in place.
+			nalu := make([]byte, len(b))
+			copy(nalu, b)
+			pc.srtpSession.Send(nalu)
+		}
+	}
+
+	return scanner.Err()
 }
