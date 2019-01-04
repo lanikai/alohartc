@@ -92,6 +92,8 @@ func NewSession(conn net.Conn, dynamicType uint8, masterKey, masterSalt []byte) 
 }
 
 func (c *Conn) Close() {
+	// Close the underlying connection.
+	c.conn.Close()
 }
 
 func (c *Conn) Stap(b []byte) {
@@ -165,5 +167,5 @@ func (c *Conn) Send(b []byte) {
 
 	// TODO This should be replaced with the difference between successive
 	// TODO timecodes returned by the v4l2 device (or other future source).
-	c.time += 4000
+	c.time += 1
 }
