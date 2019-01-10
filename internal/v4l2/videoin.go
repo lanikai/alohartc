@@ -5,10 +5,10 @@ package v4l2
 
 import (
 	"encoding/binary"
+	"errors"
 	"io"
 	"unsafe"
 
-	"github.com/pkg/errors"
 	"golang.org/x/sys/unix"
 )
 

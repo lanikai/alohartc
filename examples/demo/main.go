@@ -22,14 +22,20 @@ var (
 
 	// Path to raw H.264 video source
 	flagVideoSource string
+
+	// Video parameters when using v4l2 source
+	flagVideoBitrate int
+	flagVideoWidth   uint
+	flagVideoHeight  uint
 )
 
-const (
-	demoVideoBitrate = 2e6
-	demoVideoDevice  = "/dev/video0"
-	demoVideoHeight  = 720
-	demoVideoWidth   = 1280
-)
+func init() {
+	flag.IntVar(&flagPort, "p", 8000, "HTTP port on which to listen")
+	flag.StringVar(&flagVideoSource, "i", "/dev/video0", "H.264 video source ('-' for stdin)")
+	flag.IntVar(&flagVideoBitrate, "b", 2e6, "Bitrate for v4l2 video")
+	flag.UintVar(&flagVideoWidth, "w", 1280, "Width for v4l2 video")
+	flag.UintVar(&flagVideoHeight, "h", 720, "Height for v4l2 video")
+}
 
 var upgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
@@ -110,17 +116,17 @@ func streamVideo(pc *webrtc.PeerConnection) {
 
 	// Open the video source, either a v42l device, stdin, or a plain file.
 	if strings.HasPrefix(flagVideoSource, "/dev/video") {
-		v, err := v4l2.OpenH264(flagVideoSource, demoVideoWidth, demoVideoHeight)
+		v, err := v4l2.OpenH264(flagVideoSource, flagVideoWidth, flagVideoHeight)
 		if err != nil {
 			log.Fatal(err)
 		}
 		defer v.Close()
 
-		if err := v.SetBitrate(demoVideoBitrate); err != nil {
+		if err := v.SetBitrate(flagVideoBitrate); err != nil {
 			log.Fatal(err)
 		}
 
-		// Start v
+		// Start video
 		if err := v.Start(); err != nil {
 			log.Fatal(err)
 		}
@@ -141,11 +147,6 @@ func streamVideo(pc *webrtc.PeerConnection) {
 	if err := pc.StreamH264(source, wholeNALUs); err != nil {
 		log.Fatal(err)
 	}
-}
-
-func init() {
-	flag.IntVar(&flagPort, "p", 8000, "HTTP port on which to listen")
-	flag.StringVar(&flagVideoSource, "i", "/dev/video0", "H.264 video source ('-' for stdin)")
 }
 
 func main() {
