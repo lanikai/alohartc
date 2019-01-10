@@ -1,4 +1,4 @@
-#/bin/bash
+#!/bin/bash
 #
 # Loop the given source video repeatedly. Play it in real-time to simulate a live stream.
 
@@ -11,5 +11,5 @@ if ! [ -p $DEST ]; then
 fi
 
 ffmpeg -re -stream_loop -1 -i $SOURCE \
-    -f h264 -profile:v baseline -level 3.1 \
+    -f h264 -profile:v baseline -level 4.0 \
     -y $DEST

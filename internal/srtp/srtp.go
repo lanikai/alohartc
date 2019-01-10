@@ -167,5 +167,5 @@ func (c *Conn) Send(b []byte) {
 
 	// TODO This should be replaced with the difference between successive
 	// TODO timecodes returned by the v4l2 device (or other future source).
-	c.time += 1
+	c.time += 4000
 }
