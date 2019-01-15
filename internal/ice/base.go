@@ -20,37 +20,57 @@ type Base struct {
 
 type stunHandler func(msg *stunMessage, addr net.Addr, base Base)
 
-func createBase(component int) (base Base, err error) {
-	localIP, err := getLocalIP()
+// Create a base for each local IP address.
+func establishBases(component int) (bases []Base, err error) {
+	ifaces, err := net.Interfaces()
 	if err != nil {
 		return
 	}
-
-	// Listen on an arbitrary UDP port.
-	listenAddr := &net.UDPAddr{IP: localIP, Port: 0}
-	conn, err := net.ListenUDP("udp4", listenAddr)
-	if err != nil {
-		return
+	for _, iface := range ifaces {
+		trace("Interface %d: %s (%s)\n", iface.Index, iface.Name, iface.Flags)
+		if iface.Flags&net.FlagLoopback != 0 {
+			// Skip loopback interfaces to reduce the number of candidates.
+			// TODO: Probably we need these if we're not connected to any network.
+			continue
+		}
+		var addrs []net.Addr
+		addrs, err = iface.Addrs()
+		if err != nil {
+			return
+		}
+		for _, addr := range addrs {
+			trace("Local address %v", addr)
+			ipnet, ok := addr.(*net.IPNet)
+			if !ok {
+				log.Panicf("Unexpected address type: %T", addr)
+			}
+			base, err := createBase(ipnet.IP, component)
+			if err != nil {
+				log.Printf("Failed to create base for %s\n", ipnet.IP)
+				// This can happen for link-local IPv6 addresses. Just skip it and try
+				// something else.
+				continue
+			}
+			bases = append(bases, base)
+		}
 	}
-
-	transactions := make(map[string]stunHandler)
-	base = Base{conn, makeTransportAddress(conn.LocalAddr()), component, transactions}
 	return
 }
 
-// Get the IP address of this machine.
-func getLocalIP() (net.IP, error) {
-	conn, err := net.Dial("udp", "8.8.8.8:80")
+func createBase(ip net.IP, component int) (base Base, err error) {
+	// Listen on an arbitrary UDP port.
+	listenAddr := &net.UDPAddr{IP: ip, Port: 0}
+	conn, err := net.ListenUDP("udp", listenAddr)
 	if err != nil {
-		// Try with link-local address
-		conn, err = net.Dial("udp", "169.254.1.1:80")
-		if err != nil {
-			return nil, err
-		}
+		return
 	}
-	defer conn.Close()
 
-	return conn.LocalAddr().(*net.UDPAddr).IP, nil
+	address := makeTransportAddress(conn.LocalAddr())
+	log.Printf("Listening on %s\n", address)
+
+	transactions := make(map[string]stunHandler)
+	base = Base{conn, address, component, transactions}
+	return
 }
 
 // Send a STUN message to the given remote address. If a handler is supplied, it will be used to
@@ -70,9 +90,16 @@ func (base *Base) demuxStun(defaultHandler stunHandler, dataIn chan<- []byte) {
 		base.SetReadDeadline(time.Now().Add(60 * time.Second))
 		n, raddr, err := base.ReadFrom(buf)
 		if err == io.EOF {
-			log.Printf("Connection closed")
+			log.Printf("Connection closed: %s\n", base.address)
 			return
 		} else if err != nil {
+			if nerr, ok := err.(net.Error); ok {
+				if nerr.Timeout() {
+					// Timeout is expected for bases that end up not being used.
+					log.Printf("Connection timed out: %s\n", base.address)
+					return
+				}
+			}
 			log.Fatal(err)
 		}
 		data := buf[0:n]
