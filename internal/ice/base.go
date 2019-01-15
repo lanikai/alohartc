@@ -1,11 +1,18 @@
 package ice
 
 import (
+	"flag"
 	"io"
 	"log"
 	"net"
 	"time"
 )
+
+var flagEnableIPv6 bool
+
+func init() {
+	flag.BoolVar(&flagEnableIPv6, "6", false, "Allow use of IPv6")
+}
 
 // [RFC8445] defines a base to be "The transport address that an ICE agent sends from for a
 // particular candidate." It is represented here by a UDP connection, listening on a single port.
@@ -44,11 +51,19 @@ func establishBases(component int) (bases []Base, err error) {
 			if !ok {
 				log.Panicf("Unexpected address type: %T", addr)
 			}
-			base, err := createBase(ipnet.IP, component)
+
+			ip := ipnet.IP
+			if !flagEnableIPv6 {
+				if ip4 := ip.To4(); ip4 == nil {
+					// Must be an IPv6 address. Skip it.
+					continue
+				}
+			}
+
+			base, err := createBase(ip, component)
 			if err != nil {
-				log.Printf("Failed to create base for %s\n", ipnet.IP)
-				// This can happen for link-local IPv6 addresses. Just skip it and try
-				// something else.
+				log.Printf("Failed to create base for %s\n", ip)
+				// This can happen for link-local IPv6 addresses. Just skip it.
 				continue
 			}
 			bases = append(bases, base)

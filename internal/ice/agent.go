@@ -23,8 +23,9 @@ type Agent struct {
 	checklist Checklist
 
 	// Connection for the data stream.
-	dataConn *ChannelConn
-	ready    chan *ChannelConn
+	dataConn  *ChannelConn
+	ready     chan *ChannelConn
+	readyOnce sync.Once
 }
 
 // Create a new ICE agent with the given username and passwords.
@@ -181,11 +182,14 @@ func (a *Agent) loop(base Base) {
 			trace("Checklist state: %d", a.checklist.state)
 			switch a.checklist.state {
 			case checklistCompleted:
-				// Use selected candidate.
 				if a.dataConn == nil {
-					Ta.Stop()
-					a.dataConn = createDataConn(a.checklist.selected, dataIn)
-					a.ready <- a.dataConn
+					// Use selected candidate.
+					a.readyOnce.Do(func() {
+						Ta.Stop()
+						log.Println("Selected candidate pair:", a.checklist.selected)
+						a.dataConn = createDataConn(a.checklist.selected, dataIn)
+						a.ready <- a.dataConn
+					})
 				}
 			case checklistFailed:
 				log.Fatalf("Failed to connect to remote peer")
