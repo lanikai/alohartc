@@ -45,10 +45,9 @@ func makeHostCandidate(base Base) Candidate {
 	}
 }
 
-// TODO: Take 'mapped TransportAddress' instead
-func makeServerReflexiveCandidate(addr net.Addr, base Base, stunServer string) Candidate {
+func makeServerReflexiveCandidate(mapped TransportAddress, base Base, stunServer string) Candidate {
 	c := Candidate{
-		address:    makeTransportAddress(addr),
+		address:    mapped,
 		typ:        srflxType,
 		priority:   computePriority(srflxType, base.component),
 		foundation: computeFoundation(srflxType, base.address, stunServer),

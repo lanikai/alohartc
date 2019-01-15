@@ -3,7 +3,6 @@ package ice
 import (
 	"fmt"
 	"net"
-	"strings"
 )
 
 type TransportProtocol string
@@ -12,7 +11,7 @@ type IPAddress [16]byte
 
 const (
 	TCP TransportProtocol = "tcp"
-	UDP                   = "udp"
+	UDP TransportProtocol = "udp"
 
 	IPv4 IPAddressFamily = 4
 	IPv6                 = 6
@@ -23,15 +22,8 @@ type TransportAddress struct {
 	family    IPAddressFamily
 	ip        IPAddress
 	port      int
+	zone      string
 	linkLocal bool
-}
-
-func (ip IPAddress) netIP() net.IP {
-	return net.IP(ip[:])
-}
-
-func (ip IPAddress) String() string {
-	return ip.netIP().String()
 }
 
 func makeTransportAddress(addr net.Addr) (ta TransportAddress) {
@@ -76,4 +68,12 @@ func (ta TransportAddress) String() string {
 	} else {
 		return fmt.Sprintf("%s/%s:%d", ta.protocol, ta.ip, ta.port)
 	}
+}
+
+func (ip IPAddress) netIP() net.IP {
+	return net.IP(ip[:])
+}
+
+func (ip IPAddress) String() string {
+	return ip.netIP().String()
 }

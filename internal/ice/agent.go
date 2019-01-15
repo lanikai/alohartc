@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"sync"
 	"time"
 )
 
@@ -38,24 +39,27 @@ func NewAgent(username, localPassword, remotePassword string) *Agent {
 
 // On success, returns a net.Conn object from which data can be read/written.
 func (a *Agent) EstablishConnection(lcand chan<- string) (net.Conn, error) {
-	// TODO: Handle multiple components
+	// TODO: Support multiple components
+	//components := []int{1}
 	component := 1
-	base, err := createBase(component)
+
+	bases, err := establishBases(component)
 	if err != nil {
 		return nil, err
 	}
-	log.Printf("Listening on %s\n", base.address)
 
 	// Start gathering condidates, trickling them to the remote agent via 'lcand'.
 	go func() {
-		err := a.gatherLocalCandidates(base, lcand)
+		err := a.gatherLocalCandidates(bases, lcand)
 		if err != nil {
 			log.Fatal(err)
 		}
 	}()
 
 	// Begin connectivity checks.
-	go a.loop(base)
+	for _, base := range bases {
+		go a.loop(base)
+	}
 
 	// Wait for a candidate to be selected.
 	select {
@@ -89,32 +93,47 @@ func (a *Agent) addLocalCandidate(c Candidate) {
 }
 
 // Gather local candidates. Pass candidate strings to lcand as they become known.
-func (a *Agent) gatherLocalCandidates(base Base, lcand chan<- string) error {
-	// Host candidate for peers on the same LAN.
-	hc := makeHostCandidate(base)
-	a.addLocalCandidate(hc)
-	lcand <- hc.String()
+func (a *Agent) gatherLocalCandidates(bases []Base, lcand chan<- string) error {
+	var wg sync.WaitGroup
+	wg.Add(len(bases))
+	for _, base := range bases {
+		go func(base Base) {
+			log.Printf("Gathering local candidates for base %s\n", base.address)
+			// Host candidate for peers on the same LAN.
+			hc := makeHostCandidate(base)
+			a.addLocalCandidate(hc)
+			lcand <- hc.String()
 
-	// Query STUN server to get a server reflexive candidate.
-	stunServer := "stun2.l.google.com:19302"
-	mappedAddress, err := a.queryStunServer(base, stunServer)
-	if err != nil {
-		log.Printf("Failed to create STUN server candidate for base %s\n", base.address)
-	} else {
-		c := makeServerReflexiveCandidate(mappedAddress, base, stunServer)
-		a.addLocalCandidate(c)
-		lcand <- c.String()
+			if base.address.protocol == UDP && !base.address.linkLocal {
+				// Query STUN server to get a server reflexive candidate.
+				stunServer := "stun2.l.google.com:19302"
+				mappedAddress, err := a.queryStunServer(base, stunServer)
+				if err != nil {
+					log.Printf("Failed to create STUN server candidate for base %s: %s\n", base.address, err)
+				} else if mappedAddress == base.address {
+					log.Printf("Server-reflexive address for %s is same as base\n", base.address)
+				} else {
+					c := makeServerReflexiveCandidate(mappedAddress, base, stunServer)
+					a.addLocalCandidate(c)
+					lcand <- c.String()
+				}
+
+				// TODO: TURN
+			}
+
+			wg.Done()
+		}(base)
 	}
 
-	// TODO: IPv6, TURN, TCP, multiple local interfaces
-
+	wg.Wait()
 	close(lcand)
 	return nil
 }
 
 // Return the mapped address of the given base.
-func (a *Agent) queryStunServer(base Base, stunServer string) (mappedAddr net.Addr, err error) {
-	stunServerAddr, err := net.ResolveUDPAddr("udp4", stunServer)
+func (a *Agent) queryStunServer(base Base, stunServer string) (mapped TransportAddress, err error) {
+	network := fmt.Sprintf("udp%d", base.address.family)
+	stunServerAddr, err := net.ResolveUDPAddr(network, stunServer)
 	if err != nil {
 		return
 	}
@@ -125,7 +144,7 @@ func (a *Agent) queryStunServer(base Base, stunServer string) (mappedAddr net.Ad
 	done := make(chan error, 1)
 	err = base.sendStun(req, stunServerAddr, func(resp *stunMessage, raddr net.Addr, base Base) {
 		if resp.class == stunSuccessResponse {
-			mappedAddr = resp.getMappedAddress()
+			mapped = makeTransportAddress(resp.getMappedAddress())
 			done <- nil
 		} else {
 			done <- fmt.Errorf("STUN server query failed: %s", resp)
@@ -191,7 +210,6 @@ func (a *Agent) loop(base Base) {
 				p.local.base.sendStun(newStunBindingIndication(), p.remote.address.netAddr(), nil)
 			}
 		}
-
 	}
 }
 
