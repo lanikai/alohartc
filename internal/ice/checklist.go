@@ -82,11 +82,12 @@ func (cl *Checklist) addCandidatePairs(locals, remotes []Candidate) {
 
 }
 
-// Only pair candidates with the same protocol and for the same component.
+// Only pair candidates for the same component. Their transport addresses must be compatible.
 func canBePaired(local, remote Candidate) bool {
-	return (local.address.protocol == remote.address.protocol) &&
-		(local.address.family == remote.address.family) &&
-		local.component == remote.component
+	return local.component == remote.component &&
+		local.address.protocol == remote.address.protocol &&
+		local.address.family == remote.address.family &&
+		local.address.linkLocal == remote.address.linkLocal
 }
 
 // [RFC8445 §6.1.2.4] Two candidates are redundant if they have the same remote candidate and same
