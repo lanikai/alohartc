@@ -36,7 +36,7 @@ func (state CandidatePairState) String() string {
 	case InProgress:
 		return "In Progress"
 	case Succeeded:
-		return "Succedeed"
+		return "Succeeded"
 	case Failed:
 		return "Failed"
 	default:
