@@ -142,16 +142,18 @@ func (c Candidate) String() string {
 // See [draft-ietf-mmusic-ice-sip-sdp-16] Section 5.1
 func parseCandidateSDP(desc string) (c Candidate, err error) {
 	r := strings.NewReader(desc)
+
+	var protocol, ip string
+	var port int
 	_, err = fmt.Fscanf(r, "candidate:%s %d %s %d %s %d typ %s",
-		&c.foundation, &c.component, &c.address.protocol, &c.priority, &c.address.ip, &c.address.port, &c.typ)
+		&c.foundation, &c.component, &protocol, &c.priority, &ip, &port, &c.typ)
 	if err != nil {
 		return
 	}
-
-	c.address.normalize()
 	if c.component < 1 || c.component > 256 {
 		return c, fmt.Errorf("Component ID out of range: %d", c.component)
 	}
+	c.address = newTransportAddress(protocol, ip, port)
 
 	// The rest of the candidate line consists of "name value" pairs.
 	scanner := bufio.NewScanner(r)

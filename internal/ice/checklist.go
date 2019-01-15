@@ -84,7 +84,9 @@ func (cl *Checklist) addCandidatePairs(locals, remotes []Candidate) {
 
 // Only pair candidates with the same protocol and for the same component.
 func canBePaired(local, remote Candidate) bool {
-	return local.address.protocol == remote.address.protocol && local.component == remote.component
+	return (local.address.protocol == remote.address.protocol) &&
+		(local.address.family == remote.address.family) &&
+		local.component == remote.component
 }
 
 // [RFC8445 §6.1.2.4] Two candidates are redundant if they have the same remote candidate and same
@@ -126,7 +128,7 @@ func (cl *Checklist) sendCheck(p *CandidatePair, username, password string) erro
 	req.addMessageIntegrity(password)
 	req.addFingerprint()
 	p.state = InProgress
-	trace("%s: Sending to %s: %s\n", p.id, p.remote.address, req)
+	trace("%s: Sending to %s from %s: %s\n", p.id, p.remote.address, p.local.address, req)
 	return p.local.base.sendStun(req, p.remote.address.netAddr(), func(resp *stunMessage, raddr net.Addr, base Base) {
 		cl.processResponse(p, resp, raddr)
 	})
