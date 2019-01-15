@@ -8,6 +8,7 @@ import (
 
 type TransportProtocol string
 type IPAddressFamily int
+type IPAddress [16]byte
 
 const (
 	TCP TransportProtocol = "tcp"
@@ -18,68 +19,54 @@ const (
 )
 
 type TransportAddress struct {
-	protocol TransportProtocol
-	ip       string
-	port     int
-	family   IPAddressFamily
+	protocol  TransportProtocol
+	family    IPAddressFamily
+	ip        IPAddress
+	port      int
+	linkLocal bool
 }
 
-// @param network  Network string as in the "net" package, e.g. "tcp" or "udp4"
-// @param ip       IPv4 or IPv6 address in standard printed format
-// @param port     Port
-func newTransportAddress(network string, ip string, port int) TransportAddress {
-	return TransportAddress{
-		protocol: getTransportProtocol(network),
-		ip: ip,
-		port: port,
-		family: getIPAddressFamily(ip),
-	}
+func (ip IPAddress) netIP() net.IP {
+	return net.IP(ip[:])
 }
 
-func makeTransportAddress(addr net.Addr) TransportAddress {
+func (ip IPAddress) String() string {
+	return ip.netIP().String()
+}
+
+func makeTransportAddress(addr net.Addr) (ta TransportAddress) {
+	var ip net.IP
 	switch a := addr.(type) {
 	case *net.TCPAddr:
-		ip := a.IP.String()
-		return TransportAddress{TCP, ip, a.Port, getIPAddressFamily(ip)}
+		ta.protocol = TCP
+		ip = a.IP
+		ta.port = a.Port
 	case *net.UDPAddr:
-		ip := a.IP.String()
-		return TransportAddress{UDP, ip, a.Port, getIPAddressFamily(ip)}
+		ta.protocol = UDP
+		ip = a.IP
+		ta.port = a.Port
 	default:
-		panic("Unsupported net.Addr type: " + a.String())
+		panic("Unsupported net.Addr: " + a.String())
 	}
+
+	if ip4 := ip.To4(); ip4 != nil {
+		ta.family = IPv4
+	} else {
+		ta.family = IPv6
+	}
+	copy(ta.ip[:], ip.To16())
+	ta.linkLocal = ip.IsLinkLocalUnicast()
+	return
 }
 
 func (ta *TransportAddress) netAddr() net.Addr {
-	network := fmt.Sprintf("%s%d", ta.protocol, ta.family)
-	hostport := fmt.Sprintf("%s:%d", ta.ip, ta.port)
 	switch ta.protocol {
-	case "tcp":
-		addr, _ := net.ResolveTCPAddr(network, hostport)
-		return addr
-	case "udp":
-		addr, _ := net.ResolveUDPAddr(network, hostport)
-		return addr
+	case TCP:
+		return &net.TCPAddr{ta.ip.netIP(), ta.port, ""}
+	case UDP:
+		return &net.UDPAddr{ta.ip.netIP(), ta.port, ""}
 	default:
 		panic("Unsupported transport protocol: " + ta.protocol)
-	}
-}
-
-func getTransportProtocol(network string) TransportProtocol {
-	switch strings.ToLower(network) {
-	case "tcp", "tcp4", "tcp6":
-		return TCP
-	case "udp", "udp4", "udp6":
-		return UDP
-	default:
-		panic("Unsupported network: " + network)
-	}
-}
-
-func getIPAddressFamily(ip string) IPAddressFamily {
-	if strings.ContainsRune(ip, ':') {
-		return IPv6
-	} else {
-		return IPv4
 	}
 }
 
