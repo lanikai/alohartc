@@ -15,8 +15,8 @@ func TestParseCandidate(t *testing.T) {
 
 	assert.Equal(t, c.foundation, "0")
 	assert.Equal(t, c.component, 1)
-	assert.Equal(t, c.address.protocol, "udp")
-	assert.Equal(t, c.address.ip, "192.168.1.1")
+	assert.Equal(t, c.address.protocol, UDP)
+	assert.Equal(t, c.address.ip.String(), "192.168.1.1")
 	assert.Equal(t, c.address.port, 12345)
 	assert.EqualValues(t, c.priority, 123456789)
 	assert.Equal(t, c.typ, "host")

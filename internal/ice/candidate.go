@@ -143,9 +143,8 @@ func (c Candidate) String() string {
 func parseCandidateSDP(desc string) (c Candidate, err error) {
 	r := strings.NewReader(desc)
 
-	var protocol, ip string
-	var port int
-	_, err = fmt.Fscanf(r, "candidate:%s %d %s %d %s %d typ %s",
+	var protocol, ip, port string
+	_, err = fmt.Fscanf(r, "candidate:%s %d %s %d %s %s typ %s",
 		&c.foundation, &c.component, &protocol, &c.priority, &ip, &port, &c.typ)
 	if err != nil {
 		return
@@ -153,7 +152,19 @@ func parseCandidateSDP(desc string) (c Candidate, err error) {
 	if c.component < 1 || c.component > 256 {
 		return c, fmt.Errorf("Component ID out of range: %d", c.component)
 	}
-	c.address = newTransportAddress(protocol, ip, port)
+
+	ipPort := net.JoinHostPort(ip, port)
+	var addr net.Addr
+	switch strings.ToLower(protocol) {
+	case "tcp":
+		addr, err = net.ResolveTCPAddr("tcp", ipPort)
+	case "udp":
+		addr, err = net.ResolveUDPAddr("udp", ipPort)
+	}
+	if err != nil {
+		return
+	}
+	c.address = makeTransportAddress(addr)
 
 	// The rest of the candidate line consists of "name value" pairs.
 	scanner := bufio.NewScanner(r)
