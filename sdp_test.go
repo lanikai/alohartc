@@ -7,10 +7,12 @@ import (
 )
 
 func TestParseOrigin(t *testing.T) {
-	o, err := parseOrigin("o=username id 123 IN IP4 0.0.0.0")
+	// TODO is parseOrigin still used?
+	o, err := parseOrigin("username id 123 IN IP4 0.0.0.0")
 	if err != nil {
 		t.Fatal(err)
 	}
+	// TODO looks like order is inverted, first argument should be expected value, second argument should be actual value
 	assert.Equal(t, o.username, "username")
 	assert.Equal(t, o.sessionId, "id")
 	assert.EqualValues(t, o.sessionVersion, 123)
@@ -20,8 +22,8 @@ func TestParseOrigin(t *testing.T) {
 }
 
 func TestWriteOrigin(t *testing.T) {
-	o, _ := parseOrigin("o=username id 123 IN IP4 0.0.0.0")
-	assert.Equal(t, o.String(), "o=username id 123 IN IP4 0.0.0.0")
+	o, _ := parseOrigin("username id 123 IN IP4 0.0.0.0")
+	assert.Equal(t, o.String(), "username id 123 IN IP4 0.0.0.0")
 }
 
 func TestParseSession(t *testing.T) {
