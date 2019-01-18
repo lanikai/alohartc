@@ -11,9 +11,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/thinkski/webrtc/internal/dtls"
-	"github.com/thinkski/webrtc/internal/ice"
-	"github.com/thinkski/webrtc/internal/srtp"
+	"github.com/lanikailabs/webrtc/internal/dtls"
+	"github.com/lanikailabs/webrtc/internal/ice"
+	"github.com/lanikailabs/webrtc/internal/srtp"
 )
 
 const (
