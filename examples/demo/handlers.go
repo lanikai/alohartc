@@ -1,7 +1,7 @@
 package main
 
-//go:generate go run util/generate_statics.go -o statics.go data/static
-//go:generate go run util/generate_templates.go -o templates.go data/templates
+//go:generate go run util/generate_statics/main.go -o statics.go data/static
+//go:generate go run util/generate_templates/main.go -o templates.go data/templates
 
 import (
 	"html/template"
