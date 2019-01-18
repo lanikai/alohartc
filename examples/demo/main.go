@@ -11,8 +11,8 @@ import (
 
 	"github.com/gorilla/websocket"
 
-	"github.com/thinkski/webrtc"
-	"github.com/thinkski/webrtc/internal/v4l2"
+	"github.com/lanikailabs/webrtc"
+	"github.com/lanikailabs/webrtc/internal/v4l2"
 )
 
 // Flags
