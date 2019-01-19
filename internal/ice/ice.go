@@ -1,15 +1,30 @@
 package ice
 
 import (
+	"flag"
 	"fmt"
 	"log"
 	"os"
 	"strings"
 )
 
-var traceEnabled = false
+
+const defaultStunServer = "stun2.l.google.com:19302"
+
+var (
+	// Whether or not to allow IPv6 ICE candidates
+	flagEnableIPv6 bool
+
+	// Host:port of STUN server
+	flagStunServer string
+
+	traceEnabled = false
+)
 
 func init() {
+	flag.BoolVar(&flagEnableIPv6, "6", false, "Allow use of IPv6")
+	flag.StringVar(&flagStunServer, "stunServer", defaultStunServer, "STUN server address")
+
 	for _, tag := range strings.Split(os.Getenv("TRACE"), ",") {
 		if tag == "ice" {
 			traceEnabled = true
