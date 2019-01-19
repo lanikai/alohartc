@@ -107,14 +107,13 @@ func (a *Agent) gatherLocalCandidates(bases []Base, lcand chan<- string) error {
 
 			if base.address.protocol == UDP && !base.address.linkLocal {
 				// Query STUN server to get a server reflexive candidate.
-				stunServer := "stun2.l.google.com:19302"
-				mappedAddress, err := a.queryStunServer(base, stunServer)
+				mappedAddress, err := a.queryStunServer(base, flagStunServer)
 				if err != nil {
 					log.Printf("Failed to create STUN server candidate for base %s: %s\n", base.address, err)
 				} else if mappedAddress == base.address {
 					log.Printf("Server-reflexive address for %s is same as base\n", base.address)
 				} else {
-					c := makeServerReflexiveCandidate(mappedAddress, base, stunServer)
+					c := makeServerReflexiveCandidate(mappedAddress, base, flagStunServer)
 					a.addLocalCandidate(c)
 					lcand <- c.String()
 				}

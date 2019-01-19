@@ -1,18 +1,11 @@
 package ice
 
 import (
-	"flag"
 	"io"
 	"log"
 	"net"
 	"time"
 )
-
-var flagEnableIPv6 bool
-
-func init() {
-	flag.BoolVar(&flagEnableIPv6, "6", false, "Allow use of IPv6")
-}
 
 // [RFC8445] defines a base to be "The transport address that an ICE agent sends from for a
 // particular candidate." It is represented here by a UDP connection, listening on a single port.
