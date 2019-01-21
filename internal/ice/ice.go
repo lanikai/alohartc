@@ -8,7 +8,6 @@ import (
 	"strings"
 )
 
-
 const defaultStunServer = "stun2.l.google.com:19302"
 
 var (
