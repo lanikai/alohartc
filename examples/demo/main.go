@@ -58,8 +58,7 @@ func websocketHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	defer ws.Close()
 
-	// Remote ICE candidates, sent to us over the Websocket connection.
-	rcand := make(chan string, 16)
+	pc := webrtc.NewPeerConnection()
 	// Local ICE candidates, produced by the local ICE agent.
 	lcand := make(chan string, 16)
 
@@ -74,12 +73,14 @@ func websocketHandler(w http.ResponseWriter, r *http.Request) {
 
 		switch msg.Type {
 		case "offer":
-			pc := webrtc.NewPeerConnection()
-			pc.SetRemoteDescription(msg.Text)
-			ws.WriteJSON(message{Type: "answer", Text: pc.CreateAnswer()})
+			answer, err := pc.SetRemoteDescription(msg.Text)
+			if err != nil {
+				log.Fatal(err)
+			}
+			ws.WriteJSON(message{Type: "answer", Text: answer})
 			go sendIceCandidates(ws, lcand, pc.SdpMid())
 			go func() {
-				if err := pc.Connect(lcand, rcand); err != nil {
+				if err := pc.Connect(lcand); err != nil {
 					log.Fatal(err)
 				}
 				defer pc.Close()
@@ -89,11 +90,10 @@ func websocketHandler(w http.ResponseWriter, r *http.Request) {
 		case "iceCandidate":
 			if msg.Text == "" {
 				log.Println("End of remote ICE candidates")
-				close(rcand)
 			} else {
 				log.Println("Remote ICE", msg.Text)
-				rcand <- msg.Text
 			}
+			pc.AddRemoteCandidate(msg.Text)
 		}
 	}
 }

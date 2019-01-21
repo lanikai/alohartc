@@ -1,4 +1,4 @@
-package webrtc
+package sdp
 
 import (
 	"fmt"
@@ -12,85 +12,81 @@ import (
 // - RFC 3264 (https://tools.ietf.org/html/rfc3264)
 // - https://tools.ietf.org/html/draft-ietf-mmusic-ice-sip-sdp-21
 
-type SessionDesc struct {
-	version    int
-	origin     OriginDesc
-	name       string
-	info       string          // Optional
-	uri        string          // Optional
-	email      string          // Optional
-	phone      string          // Optional
-	connection *ConnectionDesc // Optional
+type Session struct {
+	Version    int
+	Origin     Origin
+	Name       string
+	Info       string      // Optional
+	Uri        string      // Optional
+	Email      string      // Optional
+	Phone      string      // Optional
+	Connection *Connection // Optional
 	//	bandwidth []string
-	time []TimeDesc
+	Time []Time
 	//	timezone string  // Optional
 	//	encryptionKey string  // Optional
-	attributes []AttributeDesc
-	media      []MediaDesc
+	Attributes []Attribute
+	Media      []Media
 
 	// Initialized on first call to GetAttr()
 	attributeCache map[string]string
 }
 
-type OriginDesc struct {
-	username       string
-	sessionId      string
-	sessionVersion uint64
-	networkType    string
-	addressType    string
-	address        string
+type Origin struct {
+	Username       string
+	SessionId      string
+	SessionVersion uint64
+	NetworkType    string
+	AddressType    string
+	Address        string
 }
 
-type ConnectionDesc struct {
-	networkType string
-	addressType string
-	address     string
+type Connection struct {
+	NetworkType string
+	AddressType string
+	Address     string
 }
 
-type TimeDesc struct {
-	start *time.Time
-	stop  *time.Time // Optional
+type Time struct {
+	Start *time.Time
+	Stop  *time.Time // Optional
 	//	repeat []string
 }
 
-type AttributeDesc struct {
-	key   string
-	value string
+type Attribute struct {
+	Key   string
+	Value string
 }
 
-type MediaDesc struct {
-	typ    string
-	port   int
-	proto  string
-	format []string
+type Media struct {
+	Type   string
+	Port   int
+	Proto  string
+	Format []string
 
-	info       string          // Optional
-	connection *ConnectionDesc // Optional
+	Info       string      // Optional
+	Connection *Connection // Optional
 	//	bandwidth []string
 	//	encryptionKey string  // Optional
-	attributes []AttributeDesc
+	Attributes []Attribute
 
 	// Initialized on first call to GetAttr()
 	attributeCache map[string]string
 }
 
-type Desc interface {
-	String() string
-}
+type writer strings.Builder
 
-type SdpWriter strings.Builder
-
-func (w *SdpWriter) Write(fragments ...string) {
+func (w *writer) Write(fragments ...string) {
 	for _, s := range fragments {
 		(*strings.Builder)(w).WriteString(s)
 	}
 }
 
-func (w *SdpWriter) Writef(format string, args ...interface{}) {
+func (w *writer) Writef(format string, args ...interface{}) {
 	fmt.Fprintf((*strings.Builder)(w), format, args...)
 }
 
-func (w *SdpWriter) String() string {
+func (w *writer) String() string {
 	return (*strings.Builder)(w).String()
 }
 
@@ -108,41 +104,41 @@ func (e *sdpParseError) Error() (msg string) {
 	return
 }
 
-func (o *OriginDesc) String() string {
+func (o *Origin) String() string {
 	return fmt.Sprintf("%s %s %d %s %s %s",
-		o.username, o.sessionId, o.sessionVersion, o.networkType, o.addressType, o.address)
+		o.Username, o.SessionId, o.SessionVersion, o.NetworkType, o.AddressType, o.Address)
 }
 
-func parseOrigin(s string) (o OriginDesc, err error) {
+func parseOrigin(s string) (o Origin, err error) {
 	_, err = fmt.Sscanf(s, "%s %s %d %s %s %s",
-		&o.username, &o.sessionId, &o.sessionVersion, &o.networkType, &o.addressType, &o.address)
+		&o.Username, &o.SessionId, &o.SessionVersion, &o.NetworkType, &o.AddressType, &o.Address)
 	if err != nil {
 		err = &sdpParseError{"origin", s, err}
 	}
 	return
 }
 
-func (c *ConnectionDesc) String() string {
-	return fmt.Sprintf("%s %s %s", c.networkType, c.addressType, c.address)
+func (c *Connection) String() string {
+	return fmt.Sprintf("%s %s %s", c.NetworkType, c.AddressType, c.Address)
 }
 
-func parseConnection(s string) (c ConnectionDesc, err error) {
-	_, err = fmt.Sscanf(s, "%s %s %s", &c.networkType, &c.addressType, &c.address)
+func parseConnection(s string) (c Connection, err error) {
+	_, err = fmt.Sscanf(s, "%s %s %s", &c.NetworkType, &c.AddressType, &c.Address)
 	if err != nil {
 		err = &sdpParseError{"connection", s, err}
 	}
 	return
 }
 
-func (t TimeDesc) String() string {
-	return fmt.Sprintf("%d %d", toNtp(t.start), toNtp(t.stop))
+func (t Time) String() string {
+	return fmt.Sprintf("%d %d", toNtp(t.Start), toNtp(t.Stop))
 }
 
-func parseTime(s string) (t TimeDesc, err error) {
+func parseTime(s string) (t Time, err error) {
 	var start, stop int64
 	_, err = fmt.Sscanf(s, "%d %d", &start, &stop)
-	t.start = fromNtp(start)
-	t.stop = fromNtp(stop)
+	t.Start = fromNtp(start)
+	t.Stop = fromNtp(stop)
 	if err != nil {
 		err = &sdpParseError{"time", s, err}
 	}
@@ -167,51 +163,51 @@ func fromNtp(ntp int64) *time.Time {
 	return &t
 }
 
-func (a AttributeDesc) String() string {
-	if a.value == "" {
-		return a.key
+func (a Attribute) String() string {
+	if a.Value == "" {
+		return a.Key
 	}
-	return fmt.Sprintf("%s:%s", a.key, a.value)
+	return fmt.Sprintf("%s:%s", a.Key, a.Value)
 }
 
-func parseAttribute(s string) (a AttributeDesc, err error) {
+func parseAttribute(s string) (a Attribute, err error) {
 	f := strings.SplitN(s, ":", 2)
-	a.key = f[0]
+	a.Key = f[0]
 	if len(f) == 2 {
-		a.value = f[1]
+		a.Value = f[1]
 	} else {
-		a.value = ""
+		a.Value = ""
 	}
 	return
 }
 
-func (m *MediaDesc) GetAttr(key string) string {
+func (m *Media) GetAttr(key string) string {
 	if m.attributeCache == nil {
 		m.attributeCache = make(map[string]string)
-		for _, a := range m.attributes {
-			m.attributeCache[a.key] = a.value
+		for _, a := range m.Attributes {
+			m.attributeCache[a.Key] = a.Value
 		}
 	}
 	return m.attributeCache[key]
 }
 
-func (m *MediaDesc) String() string {
-	var w SdpWriter
-	w.Writef("m=%s %d %s %s\r\n", m.typ, m.port, m.proto, strings.Join(m.format, " "))
-	if m.info != "" {
-		w.Write("i=", m.info, "\r\n")
+func (m *Media) String() string {
+	var w writer
+	w.Writef("m=%s %d %s %s\r\n", m.Type, m.Port, m.Proto, strings.Join(m.Format, " "))
+	if m.Info != "" {
+		w.Write("i=", m.Info, "\r\n")
 	}
-	if m.connection != nil {
-		w.Write("c=", m.connection.String(), "\r\n")
+	if m.Connection != nil {
+		w.Write("c=", m.Connection.String(), "\r\n")
 	}
-	for _, a := range m.attributes {
+	for _, a := range m.Attributes {
 		w.Write("a=", a.String(), "\r\n")
 	}
 	return w.String()
 }
 
 // Returns the remaining unparsed SDP text as 'rtext'.
-func parseMedia(text string) (m MediaDesc, rtext string, err error) {
+func parseMedia(text string) (m Media, rtext string, err error) {
 	line, more := nextLine(text)
 	if line[0:2] != "m=" {
 		return m, text, fmt.Errorf("Invalid media line: %s", line)
@@ -221,10 +217,10 @@ func parseMedia(text string) (m MediaDesc, rtext string, err error) {
 	if len(fields) < 3 {
 		return m, text, fmt.Errorf("Invalid media line: %s", line)
 	}
-	m.typ = fields[0]
-	m.port, err = strconv.Atoi(fields[1])
-	m.proto = fields[2]
-	m.format = fields[3:]
+	m.Type = fields[0]
+	m.Port, err = strconv.Atoi(fields[1])
+	m.Proto = fields[2]
+	m.Format = fields[3:]
 
 	var typecode byte
 	var value string
@@ -235,15 +231,15 @@ func parseMedia(text string) (m MediaDesc, rtext string, err error) {
 		case 'm':
 			break
 		case 'i':
-			m.info = value
+			m.Info = value
 		case 'c':
-			var c ConnectionDesc
+			var c Connection
 			c, err = parseConnection(value)
-			m.connection = &c
+			m.Connection = &c
 		case 'a':
-			var a AttributeDesc
+			var a Attribute
 			a, err = parseAttribute(value)
-			m.attributes = append(m.attributes, a)
+			m.Attributes = append(m.Attributes, a)
 		}
 
 		if err != nil {
@@ -254,56 +250,49 @@ func parseMedia(text string) (m MediaDesc, rtext string, err error) {
 	return m, text, err
 }
 
-func (s *SessionDesc) GetAttr(key string) string {
+func (s *Session) GetAttr(key string) string {
 	if s.attributeCache == nil {
 		s.attributeCache = make(map[string]string)
-		for _, a := range s.attributes {
-			s.attributeCache[a.key] = a.value
+		for _, a := range s.Attributes {
+			s.attributeCache[a.Key] = a.Value
 		}
 	}
 	return s.attributeCache[key]
 }
 
-func (s *SessionDesc) GetMedia() *MediaDesc {
-	if len(s.media) != 1 {
-		return nil // TODO: should be an error
+func (s *Session) String() string {
+	var w writer
+	w.Writef("v=%d\r\n", s.Version)
+	w.Write("o=", s.Origin.String(), "\r\n")
+	w.Write("s=", s.Name, "\r\n")
+	if s.Info != "" {
+		w.Write("i=", s.Info, "\r\n")
 	}
-	return &s.media[0]
-}
-
-func (s *SessionDesc) String() string {
-	var w SdpWriter
-	w.Writef("v=%d\r\n", s.version)
-	w.Write("o=", s.origin.String(), "\r\n")
-	w.Write("s=", s.name, "\r\n")
-	if s.info != "" {
-		w.Write("i=", s.info, "\r\n")
+	if s.Uri != "" {
+		w.Write("u=", s.Uri, "\r\n")
 	}
-	if s.uri != "" {
-		w.Write("u=", s.uri, "\r\n")
+	if s.Email != "" {
+		w.Write("e=", s.Email, "\r\n")
 	}
-	if s.email != "" {
-		w.Write("e=", s.email, "\r\n")
+	if s.Phone != "" {
+		w.Write("p=", s.Phone, "\r\n")
 	}
-	if s.phone != "" {
-		w.Write("p=", s.phone, "\r\n")
+	if s.Connection != nil {
+		w.Write("c=", s.Connection.String(), "\r\n")
 	}
-	if s.connection != nil {
-		w.Write("c=", s.connection.String(), "\r\n")
-	}
-	for _, t := range s.time {
+	for _, t := range s.Time {
 		w.Write("t=", t.String(), "\r\n")
 	}
-	for _, a := range s.attributes {
+	for _, a := range s.Attributes {
 		w.Write("a=", a.String(), "\r\n")
 	}
-	for _, m := range s.media {
+	for _, m := range s.Media {
 		w.Write(m.String())
 	}
 	return w.String()
 }
 
-func parseSession(text string) (s SessionDesc, err error) {
+func ParseSession(text string) (s Session, err error) {
 	var typecode byte
 	var line, more, value string
 	for ; text != ""; text = more {
@@ -311,35 +300,35 @@ func parseSession(text string) (s SessionDesc, err error) {
 		typecode, value, err = splitTypeValue(line)
 		switch typecode {
 		case 'v':
-			s.version, err = strconv.Atoi(value)
+			s.Version, err = strconv.Atoi(value)
 		case 'o':
-			s.origin, err = parseOrigin(value)
+			s.Origin, err = parseOrigin(value)
 		case 's':
-			s.name = value
+			s.Name = value
 		case 'i':
-			s.info = value
+			s.Info = value
 		case 'u':
-			s.uri = value
+			s.Uri = value
 		case 'e':
-			s.email = value
+			s.Email = value
 		case 'p':
-			s.phone = value
+			s.Phone = value
 		case 'c':
-			var c ConnectionDesc
+			var c Connection
 			c, err = parseConnection(value)
-			s.connection = &c
+			s.Connection = &c
 		case 't':
-			var t TimeDesc
+			var t Time
 			t, err = parseTime(value)
-			s.time = append(s.time, t)
+			s.Time = append(s.Time, t)
 		case 'a':
-			var a AttributeDesc
+			var a Attribute
 			a, err = parseAttribute(value)
-			s.attributes = append(s.attributes, a)
+			s.Attributes = append(s.Attributes, a)
 		case 'm':
-			var m MediaDesc
+			var m Media
 			m, more, err = parseMedia(text)
-			s.media = append(s.media, m)
+			s.Media = append(s.Media, m)
 		}
 
 		if err != nil {

@@ -1,4 +1,4 @@
-package webrtc
+package sdp
 
 import (
 	"testing"
@@ -7,18 +7,16 @@ import (
 )
 
 func TestParseOrigin(t *testing.T) {
-	// TODO is parseOrigin still used?
 	o, err := parseOrigin("username id 123 IN IP4 0.0.0.0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	// TODO looks like order is inverted, first argument should be expected value, second argument should be actual value
-	assert.Equal(t, o.username, "username")
-	assert.Equal(t, o.sessionId, "id")
-	assert.EqualValues(t, o.sessionVersion, 123)
-	assert.Equal(t, o.networkType, "IN")
-	assert.Equal(t, o.addressType, "IP4")
-	assert.Equal(t, o.address, "0.0.0.0")
+	assert.Equal(t, "username", o.Username, "username")
+	assert.Equal(t, "id", o.SessionId)
+	assert.EqualValues(t, 123, o.SessionVersion)
+	assert.Equal(t, "IN", o.NetworkType)
+	assert.Equal(t, "IP4", o.AddressType)
+	assert.Equal(t, "0.0.0.0", o.Address)
 }
 
 func TestWriteOrigin(t *testing.T) {
@@ -95,44 +93,46 @@ a=ssrc:3215547008 msid:SdWLKyaNRoUSWQ7BzkKGcbCWcuV7rScYxCAv e9b60276-a415-4a66-8
 a=ssrc:3215547008 mslabel:SdWLKyaNRoUSWQ7BzkKGcbCWcuV7rScYxCAv
 a=ssrc:3215547008 label:e9b60276-a415-4a66-8395-28a893918d4c
 `
-	s, err := parseSession(sdp)
+	s, err := ParseSession(sdp)
 	if err != nil {
 		t.Fatal(err)
 	}
-	assert.EqualValues(t, s.version, 0)
-	assert.Equal(t, s.name, "-")
+	assert.EqualValues(t, 0, s.Version)
+	assert.Equal(t, "-", s.Name)
 
-	o := s.origin
-	assert.Equal(t, o.username, "-")
-	assert.Equal(t, o.sessionId, "6830938501909068252")
-	assert.EqualValues(t, o.sessionVersion, 2)
-	assert.EqualValues(t, o.networkType, "IN")
-	assert.EqualValues(t, o.addressType, "IP4")
-	assert.EqualValues(t, o.address, "127.0.0.1")
+	o := s.Origin
+	assert.Equal(t, "-", o.Username)
+	assert.Equal(t, "6830938501909068252", o.SessionId)
+	assert.EqualValues(t, 2, o.SessionVersion)
+	assert.EqualValues(t, "IN", o.NetworkType)
+	assert.EqualValues(t, "IP4", o.AddressType)
+	assert.EqualValues(t, "127.0.0.1", o.Address)
 
-	assert.Len(t, s.media, 1)
-	m := s.media[0]
+	assert.Len(t, s.Media, 1)
+	m := s.Media[0]
 
-	c := m.connection
+	c := m.Connection
 	assert.NotNil(t, c)
-	assert.Equal(t, c.networkType, "IN")
-	assert.Equal(t, c.addressType, "IP4")
-	assert.Equal(t, c.address, "0.0.0.0")
+	assert.Equal(t, "IN", c.NetworkType)
+	assert.Equal(t, "IP4", c.AddressType)
+	assert.Equal(t, "0.0.0.0", c.Address)
 }
 
 func TestWriteSession(t *testing.T) {
-	s := SessionDesc{
-		version: 0,
-		origin: OriginDesc{
-			username:       "fred",
-			sessionId:      "123",
-			sessionVersion: 9,
-			networkType:    "IN",
-			addressType:    "IP4",
-			address:        "127.0.0.1",
+	s := Session{
+		Version: 0,
+		Origin: Origin{
+			Username:       "fred",
+			SessionId:      "123",
+			SessionVersion: 9,
+			NetworkType:    "IN",
+			AddressType:    "IP4",
+			Address:        "127.0.0.1",
 		},
-		name: "mysession",
+		Name: "mysession",
 	}
 
-	assert.Equal(t, s.String(), "v=0\r\no=fred 123 9 IN IP4 127.0.0.1\r\ns=mysession\r\n")
+	assert.Equal(t,
+		"v=0\r\no=fred 123 9 IN IP4 127.0.0.1\r\ns=mysession\r\n",
+		s.String())
 }
