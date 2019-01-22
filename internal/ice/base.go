@@ -4,6 +4,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"sync"
 	"time"
 )
 
@@ -16,6 +17,8 @@ type Base struct {
 
 	// STUN response handlers for transactions sent from this base, keyed by transaction ID.
 	transactions map[string]stunHandler
+
+	transactionsLock sync.Mutex
 }
 
 type stunHandler func(msg *stunMessage, addr net.Addr, base Base)
@@ -77,7 +80,7 @@ func createBase(ip net.IP, component int) (base Base, err error) {
 	log.Printf("Listening on %s\n", address)
 
 	transactions := make(map[string]stunHandler)
-	base = Base{conn, address, component, transactions}
+	base = Base{conn, address, component, transactions, sync.Mutex{}}
 	return
 }
 
@@ -86,7 +89,9 @@ func createBase(ip net.IP, component int) (base Base, err error) {
 func (base *Base) sendStun(msg *stunMessage, raddr net.Addr, handler stunHandler) error {
 	_, err := base.WriteTo(msg.Bytes(), raddr)
 	if err == nil && handler != nil {
+		base.transactionsLock.Lock()
 		base.transactions[msg.transactionID] = handler
+		base.transactionsLock.Unlock()
 	}
 	return err
 }
@@ -121,12 +126,16 @@ func (base *Base) demuxStun(defaultHandler stunHandler, dataIn chan<- []byte) {
 			trace("Received from %s: %s\n", raddr, msg)
 
 			// Pass incoming STUN message to the appropriate handler.
-			if handler, found := base.transactions[msg.transactionID]; found {
+			var handler stunHandler
+			base.transactionsLock.Lock()
+			handler, found := base.transactions[msg.transactionID]
+			if found {
 				delete(base.transactions, msg.transactionID)
-				handler(msg, raddr, *base)
 			} else {
-				defaultHandler(msg, raddr, *base)
+				handler = defaultHandler
 			}
+			base.transactionsLock.Unlock()
+			handler(msg, raddr, *base)
 		} else {
 			select {
 			case dataIn <- data:
