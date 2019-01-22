@@ -1,6 +1,6 @@
 all: examples
 
-examples: demo
+examples: demo iot
 
 demo:
 	cd examples/demo && go generate
@@ -10,4 +10,10 @@ demo:
 				examples/demo/statics.go \
 				examples/demo/templates.go
 
-.PHONY: demo examples
+iot:
+	cd examples/demo && go generate
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 \
+		    go build -ldflags "-s -w" -o examples/iot/iot -v \
+		    github.com/lanikailabs/webrtc/examples/iot
+
+.PHONY: demo examples iot
