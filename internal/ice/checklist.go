@@ -5,6 +5,7 @@ import (
 	"net"
 	"sort"
 	"sync"
+	"time"
 )
 
 type Checklist struct {
@@ -22,8 +23,8 @@ type Checklist struct {
 	// Mutex to prevent reading from pairs while they're being modified.
 	mutex sync.RWMutex
 
-	// Index of the last candidate pair to be checked
-	lastChecked int
+	// Index of the next candidate pair to be checked
+	nextToCheck int
 }
 
 type checklistState int
@@ -111,11 +112,11 @@ func (cl *Checklist) nextPair() *CandidatePair {
 	}
 
 	// Find the next pair in the Waiting state.
-	for i := 1; i <= n; i++ {
-		k := (cl.lastChecked + i) % n
+	for i := 0; i < n; i++ {
+		k := (cl.nextToCheck + i) % n
 		p := cl.pairs[k]
 		if p.state == Waiting {
-			cl.lastChecked = k
+			cl.nextToCheck = (k + 1) % n
 			return p
 		}
 	}
@@ -132,10 +133,28 @@ func (cl *Checklist) sendCheck(p *CandidatePair, username, password string) erro
 	req.addMessageIntegrity(password)
 	req.addFingerprint()
 	p.state = InProgress
+	retransmit := time.AfterFunc(cl.rto(), func() {
+		// If we don't get a response within the RTO, then move the pair back to Waiting.
+		p.state = Waiting
+	})
 	trace("%s: Sending to %s from %s: %s\n", p.id, p.remote.address, p.local.address, req)
 	return p.local.base.sendStun(req, p.remote.address.netAddr(), func(resp *stunMessage, raddr net.Addr, base Base) {
+		retransmit.Stop()
 		cl.processResponse(p, resp, raddr)
 	})
+}
+
+// Compute retransmission time.
+// https://tools.ietf.org/html/rfc8445#section-14.3
+func (cl *Checklist) rto() time.Duration {
+	n := 0
+	for _, p := range cl.pairs {
+		if p.state == Waiting || p.state == InProgress {
+			n++
+		}
+	}
+	// TODO: Base this off Ta, which may be less than 50ms.
+	return time.Duration(n) * 50 * time.Millisecond
 }
 
 func (cl *Checklist) processResponse(p *CandidatePair, resp *stunMessage, raddr net.Addr) {
