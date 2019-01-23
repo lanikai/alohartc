@@ -11,6 +11,8 @@ type Checklist struct {
 	state checklistState
 	pairs []*CandidatePair
 
+	nextPairID int
+
 	valid    []*CandidatePair
 	selected *CandidatePair
 
@@ -41,7 +43,8 @@ func (cl *Checklist) addCandidatePairs(locals, remotes []Candidate) {
 	for _, local := range locals {
 		for _, remote := range remotes {
 			if canBePaired(local, remote) {
-				p := newCandidatePair(len(cl.pairs), local, remote)
+				p := newCandidatePair(cl.nextPairID, local, remote)
+				cl.nextPairID++
 				trace("Adding candidate pair %s", p)
 				// TODO: Check that this is a new foundation, otherwise it should stay Frozen.
 				p.state = Waiting
@@ -52,7 +55,7 @@ func (cl *Checklist) addCandidatePairs(locals, remotes []Candidate) {
 
 	// [RFC8445 §6.1.2.3] Order pairs by priority.
 	sort.Slice(cl.pairs, func(i, j int) bool {
-		return cl.pairs[i].Priority() < cl.pairs[j].Priority()
+		return cl.pairs[i].Priority() > cl.pairs[j].Priority()
 	})
 
 	// [RFC8445 §6.1.2.4] Prune redundant pairs.
@@ -66,7 +69,7 @@ func (cl *Checklist) addCandidatePairs(locals, remotes []Candidate) {
 		// Remove this pair if it is redundant with a higher priority pair.
 		for j := 0; j < i; j++ {
 			if isRedundant(p, cl.pairs[j]) {
-				trace("Pruning %s", p.id)
+				trace("Pruning %s in favor of %s", p.id, cl.pairs[j].id)
 				cl.pairs = append(cl.pairs[:i], cl.pairs[i+1:]...)
 				break
 			}
