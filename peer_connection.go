@@ -6,17 +6,20 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/lanikailabs/webrtc/internal/dtls"
 	"github.com/lanikailabs/webrtc/internal/ice"
+	"github.com/lanikailabs/webrtc/internal/sdp"
 	"github.com/lanikailabs/webrtc/internal/srtp"
 )
 
 const (
+	sdpUsername = "lanikai"
+
 	nalTypeSingleTimeAggregationPacketA = 24
 	nalReferenceIndicatorPriority1      = 1 << 5
 	nalReferenceIndicatorPriority2      = 2 << 5
@@ -27,13 +30,15 @@ const (
 
 type PeerConnection struct {
 	// Local session description
-	localDescription SessionDesc
+	localDescription sdp.Session
 
 	// Remote peer session description
-	remoteDescription SessionDesc
+	remoteDescription sdp.Session
 
 	// RTP payload type (negotiated via SDP)
 	DynamicType uint8
+
+	iceAgent *ice.Agent
 
 	// SRTP session, established after successful call to Connect()
 	srtpSession *srtp.Conn
@@ -61,47 +66,47 @@ func NewPeerConnection() *PeerConnection {
 }
 
 // Create SDP answer. Only needs SDP offer, no ICE candidates.
-func (pc *PeerConnection) CreateAnswer() string {
-	s := SessionDesc{
-		version: 0,
-		origin: OriginDesc{
-			username:       "golang",
-			sessionId:      "123456",
-			sessionVersion: 2,
-			networkType:    "IN",
-			addressType:    "IP4",
-			address:        "127.0.0.1",
+func (pc *PeerConnection) createAnswer() sdp.Session {
+	s := sdp.Session{
+		Version: 0,
+		Origin: sdp.Origin{
+			Username:       sdpUsername,
+			SessionId:      strconv.FormatInt(time.Now().UnixNano(), 10),
+			SessionVersion: 2,
+			NetworkType:    "IN",
+			AddressType:    "IP4",
+			Address:        "127.0.0.1",
 		},
-		name: "-",
-		time: []TimeDesc{
+		Name: "-",
+		Time: []sdp.Time{
 			{nil, nil},
 		},
-		attributes: []AttributeDesc{
+		Attributes: []sdp.Attribute{
 			{"group", pc.remoteDescription.GetAttr("group")},
 		},
 	}
 
-	for _, remoteMedia := range pc.remoteDescription.media {
-		for _, attr := range remoteMedia.attributes {
-			if attr.key == "rtpmap" && strings.Contains(attr.value, "H264/90000") {
+	for _, remoteMedia := range pc.remoteDescription.Media {
+		for _, attr := range remoteMedia.Attributes {
+			if attr.Key == "rtpmap" && strings.Contains(attr.Value, "H264/90000") {
 				// Choose smallest rtpmap entry
-				n, _ := strconv.Atoi(strings.Fields(attr.value)[0])
+				n, _ := strconv.Atoi(strings.Fields(attr.Value)[0])
 				if pc.DynamicType == 0 || uint8(n) < pc.DynamicType {
 					pc.DynamicType = uint8(n)
 				}
 			}
 		}
-		m := MediaDesc{
-			typ:    "video",
-			port:   9,
-			proto:  "UDP/TLS/RTP/SAVPF",
-			format: []string{strconv.Itoa(int(pc.DynamicType))},
-			connection: &ConnectionDesc{
-				networkType: "IN",
-				addressType: "IP4",
-				address:     "0.0.0.0",
+		m := sdp.Media{
+			Type:   "video",
+			Port:   9,
+			Proto:  "UDP/TLS/RTP/SAVPF",
+			Format: []string{strconv.Itoa(int(pc.DynamicType))},
+			Connection: &sdp.Connection{
+				NetworkType: "IN",
+				AddressType: "IP4",
+				Address:     "0.0.0.0",
 			},
-			attributes: []AttributeDesc{
+			Attributes: []sdp.Attribute{
 				{"mid", remoteMedia.GetAttr("mid")},
 				{"rtcp", "9 IN IP4 0.0.0.0"},
 				{"ice-ufrag", "n3E3"},
@@ -125,49 +130,53 @@ func (pc *PeerConnection) CreateAnswer() string {
 				{"ssrc", "2541098696 label:e9b60276-a415-4a66-8395-28a893918d4c"},
 			},
 		}
-		s.media = append(s.media, m)
+		s.Media = append(s.Media, m)
 	}
 
 	pc.localDescription = s
-	return s.String()
-
+	return s
 }
 
-// Set remote SDP offer
-func (pc *PeerConnection) SetRemoteDescription(sdp string) error {
-	session, err := parseSession(sdp)
-	if err != nil {
-		return err
+// Set remote SDP offer. Return SDP answer.
+func (pc *PeerConnection) SetRemoteDescription(sdpOffer string) (sdpAnswer string, err error) {
+	if pc.iceAgent != nil {
+		panic("SetRemoteDescription must only be called once")
 	}
 
-	pc.remoteDescription = session
-	return nil
+	offer, err := sdp.ParseSession(sdpOffer)
+	if err != nil {
+		return
+	}
+	pc.remoteDescription = offer
+
+	answer := pc.createAnswer()
+
+	remoteUfrag := offer.Media[0].GetAttr("ice-ufrag")
+	localUfrag := answer.Media[0].GetAttr("ice-ufrag")
+	username := remoteUfrag + ":" + localUfrag
+	localPassword := answer.Media[0].GetAttr("ice-pwd")
+	remotePassword := offer.Media[0].GetAttr("ice-pwd")
+	pc.iceAgent = ice.NewAgent(username, localPassword, remotePassword)
+
+	return answer.String(), nil
+}
+
+// Add remote ICE candidate from an SDP candidate string. An empty string denotes the end of
+// remote candidates.
+func (pc *PeerConnection) AddRemoteCandidate(desc string) error {
+	if pc.iceAgent == nil {
+		panic("Must call SetRemoteDescription before AddRemoteCandidate")
+	}
+	return pc.iceAgent.AddRemoteCandidate(desc)
 }
 
 func (pc *PeerConnection) SdpMid() string {
-	return pc.remoteDescription.GetMedia().GetAttr("mid")
+	return pc.remoteDescription.Media[0].GetAttr("mid")
 }
 
-// Receive remote ICE candidates from rcand. Send local ICE candidates to lcand.
-func (pc *PeerConnection) Connect(lcand chan<- string, rcand <-chan string) error {
-	remoteUfrag := pc.remoteDescription.GetMedia().GetAttr("ice-ufrag")
-	localUfrag := pc.localDescription.GetMedia().GetAttr("ice-ufrag")
-	username := remoteUfrag + ":" + localUfrag
-	localPassword := pc.localDescription.GetMedia().GetAttr("ice-pwd")
-	remotePassword := pc.remoteDescription.GetMedia().GetAttr("ice-pwd")
-	ia := ice.NewAgent(username, localPassword, remotePassword)
-
-	// Process incoming remote ICE candidates.
-	go func() {
-		for c := range rcand {
-			err := ia.AddRemoteCandidate(c)
-			if err != nil {
-				log.Printf("Failed to add remote candidate \"%s\": %s\n", c, err)
-			}
-		}
-		// Signal end of remote candidates.
-		ia.AddRemoteCandidate("")
-	}()
+// Attempt to connect to remote peer. Send local ICE candidates to lcand.
+func (pc *PeerConnection) Connect(lcand chan<- string) error {
+	ia := pc.iceAgent
 
 	conn, err := ia.EstablishConnection(lcand)
 	if err != nil {
