@@ -61,7 +61,10 @@ func doSession(session *signaling.Session) {
 		t, p := session.ReceiveMessage()
 		switch t {
 		case "status":
-			log.Printf("Status update: %v\n", p)
+			log.Printf("Client status: %v\n", p)
+			session.SendMessage("status", map[string]string{
+				"status": "Connected",
+			})
 			// TODO: Detect disconnect
 		case "offer":
 			offer := p.(string)
