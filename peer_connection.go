@@ -9,6 +9,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/lanikailabs/webrtc/internal/dtls"
 	"github.com/lanikailabs/webrtc/internal/ice"
@@ -17,6 +18,8 @@ import (
 )
 
 const (
+	sdpUsername = "lanikai"
+
 	nalTypeSingleTimeAggregationPacketA = 24
 	nalReferenceIndicatorPriority1      = 1 << 5
 	nalReferenceIndicatorPriority2      = 2 << 5
@@ -67,8 +70,8 @@ func (pc *PeerConnection) createAnswer() sdp.Session {
 	s := sdp.Session{
 		Version: 0,
 		Origin: sdp.Origin{
-			Username:       "golang",
-			SessionId:      "123456",
+			Username:       sdpUsername,
+			SessionId:      strconv.FormatInt(time.Now().UnixNano(), 10),
 			SessionVersion: 2,
 			NetworkType:    "IN",
 			AddressType:    "IP4",
