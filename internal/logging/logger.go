@@ -43,7 +43,7 @@ func (log *Logger) SetDestination(out io.Writer) {
 // Derive a new logger with the given tag. Look up the level based on the tag.
 func (log *Logger) WithTag(tag string) *Logger {
 	// TODO: Make sure tag doesn't contain special characters.
-	return &Logger{determineLevel(tag, defaultLevel), tag, log.out, log.mu}
+	return &Logger{determineLevel(tag, log.Level), tag, log.out, log.mu}
 }
 
 // Derive a new logger with the given default level. This can still be overridden at
@@ -68,7 +68,6 @@ func (log *Logger) Log(level Level, calldepth int, format string, a ...interface
 	_, file, line, ok := runtime.Caller(calldepth + 1)
 	if !ok {
 		file = "?"
-		line = 0
 	}
 	// Truncate full path to just the filename.
 	finalSlash := strings.LastIndexByte(file, os.PathSeparator)
@@ -78,9 +77,8 @@ func (log *Logger) Log(level Level, calldepth int, format string, a ...interface
 	log.mu.Lock()
 	defer log.mu.Unlock()
 
-	// TODO: Add colors.
-
 	// Write timestamp, e.g. "2019-01-25 04:14:10.523"
+	log.Write(ansiWhite)
 	if ts, err := now.Round(time.Millisecond).MarshalText(); err != nil {
 		panic("Invalid time conversion: " + err.Error())
 	} else {
@@ -90,7 +88,7 @@ func (log *Logger) Log(level Level, calldepth int, format string, a ...interface
 	}
 
 	// Write level, tag, file, and line number.
-	fmt.Fprintf(log, " %c/%s[%s:%d] ", level.Letter(), log.Tag, file, line)
+	fmt.Fprintf(log, " %s%c/%s[%s:%d] ", level.color(), level.letter(), log.Tag, file, line)
 
 	// Write formatted log message.
 	fmt.Fprintf(log, format, a...)
@@ -100,6 +98,8 @@ func (log *Logger) Log(level Level, calldepth int, format string, a ...interface
 	if lf == 0 || format[lf-1] != '\n' {
 		log.Write(newline)
 	}
+
+	log.Write(ansiReset)
 }
 
 // Implement io.Writer but panic on error, because if we're unable to log then

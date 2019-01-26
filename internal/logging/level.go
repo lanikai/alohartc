@@ -2,7 +2,6 @@ package logging
 
 import (
 	"errors"
-	"fmt"
 	"strconv"
 	"strings"
 )
@@ -19,6 +18,9 @@ const (
 	// Allow numeric logging levels up to 9.
 	MaxLevel Level = 9
 )
+
+// Default level can be changed by environment variable.
+var defaultLevel = Info
 
 func parseLevel(s string) (level Level, err error) {
 	// First check for well-known level names or abbreviations.
@@ -47,26 +49,41 @@ func parseLevel(s string) (level Level, err error) {
 	return
 }
 
-var levelToName = map[Level]string{
-	Error: "Error",
-	Warn:  "Warn",
-	Info:  "Info",
-	Debug: "Debug",
-}
-
 func (l Level) String() string {
-	if name, ok := levelToName[l]; ok {
-		return name
-	} else {
-		return fmt.Sprintf("Trace(%d)", l)
+	switch l {
+	case Error:
+		return "Error"
+	case Warn:
+		return "Warn"
+	case Info:
+		return "Info"
+	case Debug:
+		return "Debug"
+	default:
+		return strconv.Itoa(int(l))
 	}
 }
 
-func (l Level) Letter() byte {
+func (l Level) letter() byte {
 	if l <= Debug {
 		return "EWID"[l-Error]
 	} else {
-		// Allow numeric values up to 9
+		// Numeric values up to 9 are allowed.
 		return byte('0' + l)
+	}
+}
+
+func (l Level) color() []byte {
+	switch l {
+	case Error:
+		return ansiBoldRed
+	case Warn:
+		return ansiRed
+	case Info:
+		return ansiReset
+	case Debug:
+		return ansiGreen
+	default:
+		return ansiWhite
 	}
 }

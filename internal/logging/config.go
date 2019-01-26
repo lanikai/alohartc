@@ -8,7 +8,6 @@ import (
 
 const envVar = "LOGLEVEL"
 
-var defaultLevel = Info
 var tagLevels []struct {
 	tag   string
 	level Level
