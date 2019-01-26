@@ -2,7 +2,6 @@ package ice
 
 import (
 	"bytes"
-	"log"
 	"net"
 	"testing"
 )

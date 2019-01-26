@@ -2,7 +2,6 @@ package ice
 
 import (
 	"fmt"
-	"log"
 )
 
 type CandidatePair struct {
