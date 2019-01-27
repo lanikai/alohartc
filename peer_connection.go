@@ -57,6 +57,7 @@ func NewPeerConnection() *PeerConnection {
 	}
 
 	pc := &PeerConnection{
+		iceAgent:     ice.NewAgent(),
 		certPEMBlock: cert,
 		keyPEMBlock:  key,
 		fingerprint:  fp,
@@ -139,10 +140,6 @@ func (pc *PeerConnection) createAnswer() sdp.Session {
 
 // Set remote SDP offer. Return SDP answer.
 func (pc *PeerConnection) SetRemoteDescription(sdpOffer string) (sdpAnswer string, err error) {
-	if pc.iceAgent != nil {
-		panic("SetRemoteDescription must only be called once")
-	}
-
 	offer, err := sdp.ParseSession(sdpOffer)
 	if err != nil {
 		return
@@ -156,7 +153,7 @@ func (pc *PeerConnection) SetRemoteDescription(sdpOffer string) (sdpAnswer strin
 	username := remoteUfrag + ":" + localUfrag
 	localPassword := answer.Media[0].GetAttr("ice-pwd")
 	remotePassword := offer.Media[0].GetAttr("ice-pwd")
-	pc.iceAgent = ice.NewAgent(username, localPassword, remotePassword)
+	pc.iceAgent.Configure(username, localPassword, remotePassword)
 
 	return answer.String(), nil
 }
@@ -164,9 +161,6 @@ func (pc *PeerConnection) SetRemoteDescription(sdpOffer string) (sdpAnswer strin
 // Add remote ICE candidate from an SDP candidate string. An empty string denotes the end of
 // remote candidates.
 func (pc *PeerConnection) AddRemoteCandidate(desc string) error {
-	if pc.iceAgent == nil {
-		panic("Must call SetRemoteDescription before AddRemoteCandidate")
-	}
 	return pc.iceAgent.AddRemoteCandidate(desc)
 }
 

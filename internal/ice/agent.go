@@ -1,6 +1,7 @@
 package ice
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -29,17 +30,24 @@ type Agent struct {
 }
 
 // Create a new ICE agent with the given username and passwords.
-func NewAgent(username, localPassword, remotePassword string) *Agent {
-	a := &Agent{}
+func NewAgent() *Agent {
+	return &Agent{
+		ready: make(chan *ChannelConn, 1),
+	}
+}
+
+func (a *Agent) Configure(username, localPassword, remotePassword string) {
 	a.username = username
 	a.localPassword = localPassword
 	a.remotePassword = remotePassword
-	a.ready = make(chan *ChannelConn, 1)
-	return a
 }
 
 // On success, returns a net.Conn object from which data can be read/written.
 func (a *Agent) EstablishConnection(lcand chan<- string) (net.Conn, error) {
+	if a.username == "" {
+		return nil, errors.New("ICE agent not configured")
+	}
+
 	// TODO: Support multiple components
 	//components := []int{1}
 	component := 1
