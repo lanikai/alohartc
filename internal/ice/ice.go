@@ -2,10 +2,8 @@ package ice
 
 import (
 	"flag"
-	"fmt"
-	"log"
-	"os"
-	"strings"
+
+	"github.com/lanikailabs/webrtc/internal/logging"
 )
 
 const defaultStunServer = "stun2.l.google.com:19302"
@@ -16,30 +14,11 @@ var (
 
 	// Host:port of STUN server
 	flagStunServer string
-
-	traceEnabled = false
 )
+
+var log = logging.DefaultLogger.WithTag("ice")
 
 func init() {
 	flag.BoolVar(&flagEnableIPv6, "6", false, "Allow use of IPv6")
 	flag.StringVar(&flagStunServer, "stunServer", defaultStunServer, "STUN server address")
-
-	for _, tag := range strings.Split(os.Getenv("TRACE"), ",") {
-		if tag == "ice" {
-			traceEnabled = true
-			break
-		}
-	}
-}
-
-func trace(format string, a ...interface{}) {
-	if !traceEnabled {
-		return
-	}
-
-	format = "[ice] " + format
-	if !strings.HasSuffix(format, "\n") {
-		format += "\n"
-	}
-	log.Output(2, fmt.Sprintf(format, a...))
 }

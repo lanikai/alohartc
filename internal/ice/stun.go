@@ -9,7 +9,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"hash/crc32"
-	"log"
 	"net"
 	"strings"
 )

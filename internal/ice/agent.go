@@ -3,7 +3,6 @@ package ice
 import (
 	"errors"
 	"fmt"
-	"log"
 	"net"
 	"sync"
 	"time"
@@ -107,7 +106,7 @@ func (a *Agent) gatherLocalCandidates(bases []Base, lcand chan<- string) error {
 	wg.Add(len(bases))
 	for _, base := range bases {
 		go func(base Base) {
-			log.Printf("Gathering local candidates for base %s\n", base.address)
+			log.Info("Gathering local candidates for base %s\n", base.address)
 			// Host candidate for peers on the same LAN.
 			hc := makeHostCandidate(base)
 			a.addLocalCandidate(hc)
@@ -117,9 +116,9 @@ func (a *Agent) gatherLocalCandidates(bases []Base, lcand chan<- string) error {
 				// Query STUN server to get a server reflexive candidate.
 				mappedAddress, err := a.queryStunServer(base, flagStunServer)
 				if err != nil {
-					log.Printf("Failed to create STUN server candidate for base %s: %s\n", base.address, err)
+					log.Warn("Failed to create STUN server candidate for base %s: %s\n", base.address, err)
 				} else if mappedAddress == base.address {
-					log.Printf("Server-reflexive address for %s is same as base\n", base.address)
+					log.Warn("Server-reflexive address for %s is same as base\n", base.address)
 				} else {
 					c := makeServerReflexiveCandidate(mappedAddress, base, flagStunServer)
 					a.addLocalCandidate(c)
@@ -147,7 +146,7 @@ func (a *Agent) queryStunServer(base Base, stunServer string) (mapped TransportA
 	}
 
 	req := newStunBindingRequest("")
-	trace("Sending to %s: %s\n", stunServer, req)
+	log.Debug("Sending to %s: %s\n", stunServer, req)
 
 	done := make(chan error, 1)
 	err = base.sendStun(req, stunServerAddr, func(resp *stunMessage, raddr net.Addr, base Base) {
@@ -186,29 +185,29 @@ func (a *Agent) loop(base Base) {
 	for {
 		select {
 		case <-checklistUpdate:
-			trace("Checklist state: %d", a.checklist.state)
+			log.Debug("Checklist state: %d", a.checklist.state)
 			switch a.checklist.state {
 			case checklistCompleted:
 				if a.dataConn == nil {
 					// Use selected candidate.
 					a.readyOnce.Do(func() {
 						Ta.Stop()
-						log.Println("Selected candidate pair:", a.checklist.selected)
+						log.Info("Selected candidate pair: %s", a.checklist.selected)
 						a.dataConn = createDataConn(a.checklist.selected, dataIn)
 						a.ready <- a.dataConn
 					})
 				}
 			case checklistFailed:
-				log.Fatalf("Failed to connect to remote peer")
+				log.Fatal("Failed to connect to remote peer")
 			}
 
 		case <-Ta.C: // Periodic check.
 			p := a.checklist.nextPair()
 			if p != nil {
-				trace("Next candidate to check: %s\n", p)
+				log.Debug("Next candidate to check: %s\n", p)
 				err := a.checklist.sendCheck(p, a.username, a.remotePassword)
 				if err != nil {
-					log.Printf("Failed to send connectivity check: %s", err)
+					log.Warn("Failed to send connectivity check: %s", err)
 				}
 			}
 
@@ -235,7 +234,7 @@ func (a *Agent) handleStun(msg *stunMessage, raddr net.Addr, base Base) {
 	case stunIndication:
 		// No-op
 	case stunSuccessResponse, stunErrorResponse:
-		trace("Received unexpected STUN response: %s\n", msg)
+		log.Debug("Received unexpected STUN response: %s\n", msg)
 	}
 }
 
@@ -246,12 +245,12 @@ func (a *Agent) handleStunRequest(req *stunMessage, raddr net.Addr, base Base) {
 		p = a.adoptPeerReflexiveCandidate(raddr, base, req.getPriority())
 	}
 	if req.hasUseCandidate() && !p.nominated {
-		trace("Nominating %s\n", p.id)
+		log.Debug("Nominating %s\n", p.id)
 		a.checklist.nominate(p)
 	}
 
 	resp := newStunBindingResponse(req.transactionID, raddr, a.localPassword)
-	trace("Response %s -> %s: %s\n", base.LocalAddr(), raddr, resp)
+	log.Debug("Response %s -> %s: %s\n", base.LocalAddr(), raddr, resp)
 	if err := base.sendStun(resp, raddr, nil); err != nil {
 		log.Fatalf("Failed to send STUN response: %s", err)
 	}
@@ -286,11 +285,11 @@ func createDataConn(p *CandidatePair, dataIn chan []byte) *ChannelConn {
 		for {
 			data := <-dataOut
 			if data == nil {
-				trace("%s: Channel closed\n", p.id)
+				log.Debug("%s: Channel closed\n", p.id)
 				return
 			}
 			if _, err := base.WriteTo(data, remoteAddr); err != nil {
-				log.Println(err)
+				log.Warn("%v", err)
 				dataConn.Close()
 			}
 		}
