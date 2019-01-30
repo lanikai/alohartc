@@ -137,7 +137,7 @@ func (cl *Checklist) sendCheck(p *CandidatePair, username, password string) erro
 		p.state = Waiting
 	})
 	log.Debug("%s: Sending to %s from %s: %s\n", p.id, p.remote.address, p.local.address, req)
-	return p.local.base.sendStun(req, p.remote.address.netAddr(), func(resp *stunMessage, raddr net.Addr, base Base) {
+	return p.local.base.sendStun(req, p.remote.address.netAddr(), func(resp *stunMessage, raddr net.Addr, base *Base) {
 		retransmit.Stop()
 		cl.processResponse(p, resp, raddr)
 	})
@@ -222,7 +222,7 @@ func (cl *Checklist) addListener(listener chan struct{}) {
 	cl.listeners = append(cl.listeners, listener)
 }
 
-func (cl *Checklist) findPair(base Base, raddr net.Addr) *CandidatePair {
+func (cl *Checklist) findPair(base *Base, raddr net.Addr) *CandidatePair {
 	remoteAddress := makeTransportAddress(raddr)
 	for _, p := range cl.pairs {
 		if p.local.address == base.address && p.remote.address == remoteAddress {

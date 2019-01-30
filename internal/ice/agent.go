@@ -101,11 +101,11 @@ func (a *Agent) addLocalCandidate(c Candidate) {
 }
 
 // Gather local candidates. Pass candidate strings to lcand as they become known.
-func (a *Agent) gatherLocalCandidates(bases []Base, lcand chan<- string) error {
+func (a *Agent) gatherLocalCandidates(bases []*Base, lcand chan<- string) error {
 	var wg sync.WaitGroup
 	wg.Add(len(bases))
 	for _, base := range bases {
-		go func(base Base) {
+		go func(base *Base) {
 			log.Info("Gathering local candidates for base %s\n", base.address)
 			// Host candidate for peers on the same LAN.
 			hc := makeHostCandidate(base)
@@ -138,7 +138,7 @@ func (a *Agent) gatherLocalCandidates(bases []Base, lcand chan<- string) error {
 }
 
 // Return the mapped address of the given base.
-func (a *Agent) queryStunServer(base Base, stunServer string) (mapped TransportAddress, err error) {
+func (a *Agent) queryStunServer(base *Base, stunServer string) (mapped TransportAddress, err error) {
 	network := fmt.Sprintf("udp%d", base.address.family)
 	stunServerAddr, err := net.ResolveUDPAddr(network, stunServer)
 	if err != nil {
@@ -149,7 +149,7 @@ func (a *Agent) queryStunServer(base Base, stunServer string) (mapped TransportA
 	log.Debug("Sending to %s: %s\n", stunServer, req)
 
 	done := make(chan error, 1)
-	err = base.sendStun(req, stunServerAddr, func(resp *stunMessage, raddr net.Addr, base Base) {
+	err = base.sendStun(req, stunServerAddr, func(resp *stunMessage, raddr net.Addr, base *Base) {
 		if resp.class == stunSuccessResponse {
 			mapped = makeTransportAddress(resp.getMappedAddress())
 			done <- nil
@@ -169,7 +169,7 @@ func (a *Agent) queryStunServer(base Base, stunServer string) (mapped TransportA
 	return
 }
 
-func (a *Agent) loop(base Base) {
+func (a *Agent) loop(base *Base) {
 	dataIn := make(chan []byte, 64)
 	go base.demuxStun(a.handleStun, dataIn)
 
@@ -223,7 +223,7 @@ func (a *Agent) loop(base Base) {
 	}
 }
 
-func (a *Agent) handleStun(msg *stunMessage, raddr net.Addr, base Base) {
+func (a *Agent) handleStun(msg *stunMessage, raddr net.Addr, base *Base) {
 	if msg.method != stunBindingMethod {
 		log.Fatalf("Unexpected STUN message: %s", msg)
 	}
@@ -239,7 +239,7 @@ func (a *Agent) handleStun(msg *stunMessage, raddr net.Addr, base Base) {
 }
 
 // [RFC8445 §7.3] Respond to STUN binding request by sending a success response.
-func (a *Agent) handleStunRequest(req *stunMessage, raddr net.Addr, base Base) {
+func (a *Agent) handleStunRequest(req *stunMessage, raddr net.Addr, base *Base) {
 	p := a.checklist.findPair(base, raddr)
 	if p == nil {
 		p = a.adoptPeerReflexiveCandidate(raddr, base, req.getPriority())
@@ -259,7 +259,7 @@ func (a *Agent) handleStunRequest(req *stunMessage, raddr net.Addr, base Base) {
 }
 
 // [RFC8445 §7.3.1.3-4]
-func (a *Agent) adoptPeerReflexiveCandidate(raddr net.Addr, base Base, priority uint32) *CandidatePair {
+func (a *Agent) adoptPeerReflexiveCandidate(raddr net.Addr, base *Base, priority uint32) *CandidatePair {
 	c := makePeerReflexiveCandidate(raddr, base, priority)
 	a.remoteCandidates = append(a.remoteCandidates, c)
 
