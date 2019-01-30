@@ -19,7 +19,7 @@ type Candidate struct {
 	component  int
 	attrs      []Attribute // Extension attributes
 
-	base Base // nil for remote candidates
+	base *Base // nil for remote candidates
 }
 
 type Attribute struct {
@@ -34,7 +34,7 @@ const (
 	relayType = "relay"
 )
 
-func makeHostCandidate(base Base) Candidate {
+func makeHostCandidate(base *Base) Candidate {
 	return Candidate{
 		address:    base.address,
 		typ:        hostType,
@@ -45,7 +45,7 @@ func makeHostCandidate(base Base) Candidate {
 	}
 }
 
-func makeServerReflexiveCandidate(mapped TransportAddress, base Base, stunServer string) Candidate {
+func makeServerReflexiveCandidate(mapped TransportAddress, base *Base, stunServer string) Candidate {
 	c := Candidate{
 		address:    mapped,
 		typ:        srflxType,
@@ -60,7 +60,7 @@ func makeServerReflexiveCandidate(mapped TransportAddress, base Base, stunServer
 	return c
 }
 
-func makePeerReflexiveCandidate(addr net.Addr, base Base, priority uint32) Candidate {
+func makePeerReflexiveCandidate(addr net.Addr, base *Base, priority uint32) Candidate {
 	ta := makeTransportAddress(addr)
 	c := Candidate{
 		address:    ta,
