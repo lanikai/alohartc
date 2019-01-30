@@ -22,10 +22,10 @@ type Base struct {
 	transactionsLock sync.Mutex
 }
 
-type stunHandler func(msg *stunMessage, addr net.Addr, base Base)
+type stunHandler func(msg *stunMessage, addr net.Addr, base *Base)
 
 // Create a base for each local IP address.
-func establishBases(component int) (bases []Base, err error) {
+func establishBases(component int) (bases []*Base, err error) {
 	ifaces, err := net.Interfaces()
 	if err != nil {
 		return
@@ -69,7 +69,7 @@ func establishBases(component int) (bases []Base, err error) {
 	return
 }
 
-func createBase(ip net.IP, component int) (base Base, err error) {
+func createBase(ip net.IP, component int) (base *Base, err error) {
 	// Listen on an arbitrary UDP port.
 	listenAddr := &net.UDPAddr{IP: ip, Port: 0}
 	conn, err := net.ListenUDP("udp", listenAddr)
@@ -81,7 +81,7 @@ func createBase(ip net.IP, component int) (base Base, err error) {
 	log.Info("Listening on %s\n", address)
 
 	transactions := make(map[string]stunHandler)
-	base = Base{conn, address, component, transactions, sync.Mutex{}}
+	base = &Base{conn, address, component, transactions, sync.Mutex{}}
 	return
 }
 
@@ -139,7 +139,7 @@ func (base *Base) demuxStun(defaultHandler stunHandler, dataIn chan<- []byte) {
 					handler = defaultHandler
 				}
 				base.transactionsLock.Unlock()
-				handler(msg, raddr, *base)
+				handler(msg, raddr, base)
 			}
 		} else {
 			// Not a STUN packet, forward it on
