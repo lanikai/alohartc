@@ -118,7 +118,7 @@ func (a *Agent) gatherLocalCandidates(bases []*Base, lcand chan<- string) error 
 
 			if base.address.protocol == UDP && !base.address.linkLocal {
 				// Query STUN server to get a server reflexive candidate.
-				mappedAddress, err := a.queryStunServer(base, flagStunServer)
+				mappedAddress, err := base.queryStunServer(flagStunServer)
 				if err != nil {
 					log.Warn("Failed to create STUN server candidate for base %s: %s\n", base.address, err)
 				} else if mappedAddress == base.address {
@@ -139,38 +139,6 @@ func (a *Agent) gatherLocalCandidates(bases []*Base, lcand chan<- string) error 
 	wg.Wait()
 	close(lcand)
 	return nil
-}
-
-// Return the mapped address of the given base.
-func (a *Agent) queryStunServer(base *Base, stunServer string) (mapped TransportAddress, err error) {
-	network := fmt.Sprintf("udp%d", base.address.family)
-	stunServerAddr, err := net.ResolveUDPAddr(network, stunServer)
-	if err != nil {
-		return
-	}
-
-	req := newStunBindingRequest("")
-	log.Debug("Sending to %s: %s\n", stunServer, req)
-
-	done := make(chan error, 1)
-	err = base.sendStun(req, stunServerAddr, func(resp *stunMessage, raddr net.Addr, base *Base) {
-		if resp.class == stunSuccessResponse {
-			mapped = makeTransportAddress(resp.getMappedAddress())
-			done <- nil
-		} else {
-			done <- fmt.Errorf("STUN server query failed: %s", resp)
-		}
-	})
-	if err != nil {
-		return
-	}
-
-	select {
-	case err = <-done:
-	case <-time.After(3 * time.Second):
-		err = fmt.Errorf("Timed out waiting for response from %s", stunServer)
-	}
-	return
 }
 
 func (a *Agent) loop(base *Base) {
