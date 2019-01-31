@@ -1,6 +1,7 @@
 package ice
 
 import (
+	"fmt"
 	"io"
 	"net"
 	"sync"
@@ -82,6 +83,38 @@ func createBase(ip net.IP, component int) (base *Base, err error) {
 
 	transactions := make(map[string]stunHandler)
 	base = &Base{conn, address, component, transactions, sync.Mutex{}}
+	return
+}
+
+// Return the server-reflexive address of this base.
+func (base *Base) queryStunServer(stunServer string) (mapped TransportAddress, err error) {
+	network := fmt.Sprintf("udp%d", base.address.family)
+	stunServerAddr, err := net.ResolveUDPAddr(network, stunServer)
+	if err != nil {
+		return
+	}
+
+	req := newStunBindingRequest("")
+	log.Debug("Sending to %s: %s\n", stunServer, req)
+
+	done := make(chan error, 1)
+	err = base.sendStun(req, stunServerAddr, func(resp *stunMessage, raddr net.Addr, base *Base) {
+		if resp.class == stunSuccessResponse {
+			mapped = makeTransportAddress(resp.getMappedAddress())
+			done <- nil
+		} else {
+			done <- fmt.Errorf("STUN server query failed: %s", resp)
+		}
+	})
+	if err != nil {
+		return
+	}
+
+	select {
+	case err = <-done:
+	case <-time.After(3 * time.Second):
+		err = fmt.Errorf("Timed out waiting for response from %s", stunServer)
+	}
 	return
 }
 
