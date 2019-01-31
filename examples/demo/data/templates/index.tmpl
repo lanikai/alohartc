@@ -84,10 +84,13 @@
         }
 
         // Inform the remote ICE agent.
-        ws.send(JSON.stringify({
-          type: "iceCandidate",
-          text: event.candidate ? event.candidate.candidate : ""
-        }));
+        let msg = {type: "iceCandidate"};
+        let c = event.candidate;
+        if (c) {
+          msg.text = c.candidate;
+          msg.params = {sdpMid: c.sdpMid};
+        }
+        ws.send(JSON.stringify(msg));
       };
 
       pc.onicegatheringstatechange = function() {

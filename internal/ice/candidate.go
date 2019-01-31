@@ -12,6 +12,9 @@ import (
 // An ICE candidate (either local or remote).
 // See [RFC8445 §5.3] for a definition of fields.
 type Candidate struct {
+	// The data stream that this candidate belongs to, identified by its SDP "mid" field.
+	mid string
+
 	address    TransportAddress
 	typ        string
 	priority   uint32
@@ -132,38 +135,37 @@ func (c *Candidate) sdpString() string {
 	return b.String()
 }
 
+func (c *Candidate) Mid() string {
+	return c.mid
+}
+
 func (c Candidate) String() string {
 	return c.sdpString()
 }
 
 // An ICE candidate line is a string of the form
 //   candidate:{foundation} {component-id} {protocol} {priority} {address} {port} typ {type} ...
-// See [draft-ietf-mmusic-ice-sip-sdp-16] Section 5.1
-func parseCandidateSDP(desc string) (c Candidate, err error) {
+// See https://tools.ietf.org/html/draft-ietf-mmusic-ice-sip-sdp-24#section-4.1
+func parseCandidateSDP(desc string, c *Candidate) error {
 	r := strings.NewReader(desc)
 
 	var protocol, ip, port string
-	_, err = fmt.Fscanf(r, "candidate:%s %d %s %d %s %s typ %s",
+	_, err := fmt.Fscanf(r, "candidate:%s %d %s %d %s %s typ %s",
 		&c.foundation, &c.component, &protocol, &c.priority, &ip, &port, &c.typ)
 	if err != nil {
-		return
+		return err
 	}
 	if c.component < 1 || c.component > 256 {
-		return c, fmt.Errorf("Component ID out of range: %d", c.component)
+		return fmt.Errorf("Component ID out of range: %d", c.component)
 	}
 
 	ipPort := net.JoinHostPort(ip, port)
-	var addr net.Addr
-	switch strings.ToLower(protocol) {
-	case "tcp":
-		addr, err = net.ResolveTCPAddr("tcp", ipPort)
-	case "udp":
-		addr, err = net.ResolveUDPAddr("udp", ipPort)
+	network := strings.ToLower(protocol)
+	if addr, err := resolveAddr(network, ipPort); err != nil {
+		return err
+	} else {
+		c.address = makeTransportAddress(addr)
 	}
-	if err != nil {
-		return
-	}
-	c.address = makeTransportAddress(addr)
 
 	// The rest of the candidate line consists of "name value" pairs.
 	scanner := bufio.NewScanner(r)
@@ -184,8 +186,19 @@ func parseCandidateSDP(desc string) (c Candidate, err error) {
 		name = ""
 	}
 	if name != "" {
-		return c, fmt.Errorf("Unmatched attribute name: %s", name)
+		return fmt.Errorf("Unmatched attribute name: %s", name)
 	}
 
-	return
+	return nil
+}
+
+func resolveAddr(network, address string) (net.Addr, error) {
+	switch strings.ToLower(network) {
+	case "tcp":
+		return net.ResolveTCPAddr(network, address)
+	case "udp":
+		return net.ResolveUDPAddr(network, address)
+	default:
+		return nil, fmt.Errorf("Invalid network type: %s", network)
+	}
 }
