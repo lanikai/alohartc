@@ -8,7 +8,8 @@ import (
 
 func TestParseCandidate(t *testing.T) {
 	desc := "candidate:0 1 UDP 123456789 192.168.1.1 12345 typ host"
-	c, err := parseCandidateSDP(desc)
+	var c Candidate
+	err := parseCandidateSDP(desc, &c)
 	if err != nil {
 		t.Error(err)
 	}
@@ -24,7 +25,8 @@ func TestParseCandidate(t *testing.T) {
 
 func TestCandidateString(t *testing.T) {
 	desc := "candidate:0 1 udp 123456789 192.168.1.1 12345 typ host"
-	c, _ := parseCandidateSDP(desc)
+	var c Candidate
+	parseCandidateSDP(desc, &c)
 
 	assert.Equal(t, c.String(), desc)
 }

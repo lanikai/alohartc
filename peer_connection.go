@@ -166,28 +166,25 @@ func (pc *PeerConnection) SetRemoteDescription(sdpOffer string) (sdpAnswer strin
 
 	answer := pc.createAnswer()
 
+	mid := offer.Media[0].GetAttr("mid")
 	remoteUfrag := offer.Media[0].GetAttr("ice-ufrag")
 	localUfrag := answer.Media[0].GetAttr("ice-ufrag")
 	username := remoteUfrag + ":" + localUfrag
 	localPassword := answer.Media[0].GetAttr("ice-pwd")
 	remotePassword := offer.Media[0].GetAttr("ice-pwd")
-	pc.iceAgent.Configure(username, localPassword, remotePassword)
+	pc.iceAgent.Configure(mid, username, localPassword, remotePassword)
 
 	return answer.String(), nil
 }
 
-// Add remote ICE candidate from an SDP candidate string. An empty string denotes the end of
-// remote candidates.
-func (pc *PeerConnection) AddRemoteCandidate(desc string) error {
-	return pc.iceAgent.AddRemoteCandidate(desc)
-}
-
-func (pc *PeerConnection) SdpMid() string {
-	return pc.remoteDescription.Media[0].GetAttr("mid")
+// Add remote ICE candidate from an SDP candidate string. An empty string for `desc` denotes
+// the end of remote candidates.
+func (pc *PeerConnection) AddIceCandidate(desc, mid string) error {
+	return pc.iceAgent.AddRemoteCandidate(desc, mid)
 }
 
 // Attempt to connect to remote peer. Send local ICE candidates to lcand.
-func (pc *PeerConnection) Connect(lcand chan<- string) error {
+func (pc *PeerConnection) Connect(lcand chan<- ice.Candidate) error {
 	ia := pc.iceAgent
 
 	iceConn, err := ia.EstablishConnection(lcand)
