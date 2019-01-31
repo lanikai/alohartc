@@ -13,6 +13,7 @@ import (
 // In the language of the above specification, this is a Full implementation of a Controlled ICE
 // agent, supporting a single component of a single data stream.
 type Agent struct {
+	mid            string
 	username       string
 	localPassword  string
 	remotePassword string
@@ -35,14 +36,15 @@ func NewAgent() *Agent {
 	}
 }
 
-func (a *Agent) Configure(username, localPassword, remotePassword string) {
+func (a *Agent) Configure(mid, username, localPassword, remotePassword string) {
+	a.mid = mid
 	a.username = username
 	a.localPassword = localPassword
 	a.remotePassword = remotePassword
 }
 
 // On success, returns a net.Conn object from which data can be read/written.
-func (a *Agent) EstablishConnection(lcand chan<- string) (net.Conn, error) {
+func (a *Agent) EstablishConnection(lcand chan<- Candidate) (net.Conn, error) {
 	if a.username == "" {
 		return nil, errors.New("ICE agent not configured")
 	}
@@ -78,13 +80,14 @@ func (a *Agent) EstablishConnection(lcand chan<- string) (net.Conn, error) {
 	}
 }
 
-func (a *Agent) AddRemoteCandidate(desc string) error {
+func (a *Agent) AddRemoteCandidate(desc, mid string) error {
 	if desc == "" {
+		// TODO: This should signal end of trickling.
 		return nil
 	}
 
-	c, err := parseCandidateSDP(desc)
-	if err != nil {
+	c := Candidate{mid: mid}
+	if err := parseCandidateSDP(desc, &c); err != nil {
 		return err
 	}
 
@@ -100,8 +103,8 @@ func (a *Agent) addLocalCandidate(c Candidate) {
 	a.checklist.addCandidatePairs([]Candidate{c}, a.remoteCandidates)
 }
 
-// Gather local candidates. Pass candidate strings to lcand as they become known.
-func (a *Agent) gatherLocalCandidates(bases []*Base, lcand chan<- string) error {
+// Gather local candidates. Pass candidates to lcand as they become known.
+func (a *Agent) gatherLocalCandidates(bases []*Base, lcand chan<- Candidate) error {
 	var wg sync.WaitGroup
 	wg.Add(len(bases))
 	for _, base := range bases {
@@ -110,7 +113,7 @@ func (a *Agent) gatherLocalCandidates(bases []*Base, lcand chan<- string) error 
 			// Host candidate for peers on the same LAN.
 			hc := makeHostCandidate(base)
 			a.addLocalCandidate(hc)
-			lcand <- hc.String()
+			lcand <- hc
 
 			if base.address.protocol == UDP && !base.address.linkLocal {
 				// Query STUN server to get a server reflexive candidate.
@@ -122,7 +125,7 @@ func (a *Agent) gatherLocalCandidates(bases []*Base, lcand chan<- string) error 
 				} else {
 					c := makeServerReflexiveCandidate(mappedAddress, base, flagStunServer)
 					a.addLocalCandidate(c)
-					lcand <- c.String()
+					lcand <- c
 				}
 
 				// TODO: TURN

@@ -12,6 +12,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/lanikailabs/webrtc"
+	"github.com/lanikailabs/webrtc/internal/ice"
 	"github.com/lanikailabs/webrtc/internal/v4l2"
 )
 
@@ -65,7 +66,7 @@ func websocketHandler(w http.ResponseWriter, r *http.Request) {
 
 	pc := webrtc.NewPeerConnection()
 	// Local ICE candidates, produced by the local ICE agent.
-	lcand := make(chan string, 16)
+	lcand := make(chan ice.Candidate, 16)
 
 	// Handle incoming websocket messages
 	for {
@@ -83,7 +84,7 @@ func websocketHandler(w http.ResponseWriter, r *http.Request) {
 				log.Fatal(err)
 			}
 			ws.WriteJSON(message{Type: "answer", Text: answer})
-			go sendIceCandidates(ws, lcand, pc.SdpMid())
+			go sendIceCandidates(ws, lcand)
 			go func() {
 				if err := pc.Connect(lcand); err != nil {
 					log.Fatal(err)
@@ -95,20 +96,24 @@ func websocketHandler(w http.ResponseWriter, r *http.Request) {
 		case "iceCandidate":
 			if msg.Text == "" {
 				log.Println("End of remote ICE candidates")
+				pc.AddIceCandidate("", "")
 			} else {
 				log.Println("Remote ICE", msg.Text)
+				pc.AddIceCandidate(msg.Text, msg.Params["sdpMid"])
 			}
-			pc.AddRemoteCandidate(msg.Text)
 		}
 	}
 }
 
 // Relay local ICE candidates to the remote ICE agent as soon as they become available.
-func sendIceCandidates(ws *websocket.Conn, lcand <-chan string, sdpMid string) {
-	iceParams := map[string]string{"sdpMid": sdpMid}
+func sendIceCandidates(ws *websocket.Conn, lcand <-chan ice.Candidate) {
 	for c := range lcand {
 		log.Println("Local ICE", c)
-		ws.WriteJSON(message{Type: "iceCandidate", Text: c, Params: iceParams})
+		ws.WriteJSON(message{
+			Type: "iceCandidate",
+			Text: c.String(),
+			Params: map[string]string{"sdpMid": c.Mid()},
+		})
 	}
 	log.Println("End of local ICE candidates")
 	// Plus an empty candidate to indicate the end of the list.
