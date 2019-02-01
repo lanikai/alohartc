@@ -30,6 +30,7 @@ const (
 	VIDIOC_S_FMT       = 0xc0cc5605
 	VIDIOC_STREAMON    = 0x40045612
 	VIDIOC_STREAMOFF   = 0x40045613
+	VIDIOC_S_CTRL      = 0xc008561c
 )
 
 // Controls (from linux/v4l2-controls.h)

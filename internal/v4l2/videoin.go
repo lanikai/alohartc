@@ -282,6 +282,36 @@ func (r *VideoReader) setPixelFormat(width, height, format uint32) error {
 	return nil
 }
 
+// Flip video horizontally
+func (r *VideoReader) FlipHorizontal() error {
+	ctrl := v4l2_control{V4L2_CID_HFLIP, 1}
+	_, _, errno := unix.Syscall(
+		unix.SYS_IOCTL,
+		uintptr(r.fd),
+		uintptr(VIDIOC_S_CTRL),
+		uintptr(unsafe.Pointer(&ctrl)),
+	)
+	if errno != 0 {
+		return errors.New(errno.Error())
+	}
+	return nil
+}
+
+// Flip video vertically
+func (r *VideoReader) FlipVertical() error {
+	ctrl := v4l2_control{V4L2_CID_VFLIP, 1}
+	_, _, errno := unix.Syscall(
+		unix.SYS_IOCTL,
+		uintptr(r.fd),
+		uintptr(VIDIOC_S_CTRL),
+		uintptr(unsafe.Pointer(&ctrl)),
+	)
+	if errno != 0 {
+		return errors.New(errno.Error())
+	}
+	return nil
+}
+
 // Start video capture
 func (r *VideoReader) Start() error {
 	typ := V4L2_BUF_TYPE_VIDEO_CAPTURE
