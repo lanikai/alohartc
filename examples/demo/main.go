@@ -109,6 +109,7 @@ func websocketHandler(w http.ResponseWriter, r *http.Request) {
 func sendIceCandidates(ws *websocket.Conn, lcand <-chan ice.Candidate) {
 	for c := range lcand {
 		log.Println("Local ICE", c)
+		log.Printf("mid: '%s'\n", c.Mid())
 		ws.WriteJSON(message{
 			Type: "iceCandidate",
 			Text: c.String(),

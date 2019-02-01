@@ -23,6 +23,7 @@
   </style>
 </head>
 <body>
+  <!-- <video id="localVideo" autoplay controls muted playsinline></video> -->
   <video id="remoteVideo" autoplay controls muted playsinline></video>
 
   <script src="/static/js/adapter-latest.js"></script>
@@ -34,11 +35,13 @@
     // Create a websocket connection for exchanging SDP data
     const ws = new WebSocket('ws://' + location.host + '/ws');
 
+    ws.onclose = function() {
+      console.log("WebSocket closed");
+    };
+
     ws.addEventListener("message", function (event) {
       var msg = JSON.parse(event.data);
-      console.log("websocket message received")
-      console.log("type:", msg.type)
-      console.log("text:", msg.text);
+      console.log("websocket message received:", msg)
       switch(msg.type) {
         case "answer":
           pc.setRemoteDescription({ "type": "answer", "sdp": msg.text })
@@ -46,6 +49,7 @@
             console.log("setRemoteDescription success");
           }).catch(function(error) {
             console.log("setRemoteDescription error: " + error);
+            ws.close();
           });
           break;
         case "iceCandidate":
@@ -70,6 +74,7 @@
       console.log("websocket opened");
       // Create WebRTC peer-to-peer connection
       pc = new RTCPeerConnection({
+        bundlePolicy: "max-bundle",
         iceServers: [{
           urls: ["stun:stun3.l.google.com:19302"]
         }]
@@ -122,12 +127,30 @@
         }));
       }
 
-      // Create offer and send to callee
-      pc.createOffer({ offerToReceiveAudio: false, offerToReceiveVideo: true })
-        .then(onCreateOfferSuccess)
-        .catch(function(error) {
-          console.log("createOffer failure:", error);
-        });
+//      channel = pc.createDataChannel("Test data channel");
+//      channel.onopen = function() {
+//        console.log("Data channel opened");
+//      };
+
+//      pc.onnegotiationneeded = function() {
+        // Create offer and send to callee
+        pc.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: true })
+          .then(onCreateOfferSuccess)
+          .catch(function(error) {
+            console.log("createOffer failure:", error);
+          });
+//      };
+
+//      navigator.mediaDevices.getUserMedia({
+//          audio: false,
+//          video: true
+//        }).then(function(localStream) {
+//          console.log("New localStream:", localStream);
+//          //document.getElementById("localVideo").srcObject = localStream;
+//          localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+//        }).catch(function(error) {
+//          console.log("getUserMedia failure:", error);
+//        });
     });
   </script>
 </body>

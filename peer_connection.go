@@ -44,7 +44,9 @@ type PeerConnection struct {
 	// RTP payload type (negotiated via SDP)
 	DynamicType uint8
 
-	iceAgent *ice.Agent
+	iceAgent   *ice.Agent
+	iceSession *ice.Session
+//	videoStream *ice.DataStream
 
 	// SRTP session, established after successful call to Connect()
 	srtpSession *srtp.Conn
@@ -73,6 +75,7 @@ func NewPeerConnection() *PeerConnection {
 	// Instantiate a peer connection object
 	pc := &PeerConnection{
 		iceAgent:    ice.NewAgent(),
+		iceSession:   ice.NewSession(),
 		certificate: certificate,
 		privateKey:  privateKey,
 		fingerprint: "sha-256 " + strings.ToUpper(fingerprint),
@@ -99,19 +102,21 @@ func (pc *PeerConnection) createAnswer() sdp.Session {
 		},
 		Attributes: []sdp.Attribute{
 			{"group", pc.remoteDescription.GetAttr("group")},
+			{"ice-options", "trickle"},
 		},
 	}
 
+	pc.DynamicType = 120
 	for _, remoteMedia := range pc.remoteDescription.Media {
-		for _, attr := range remoteMedia.Attributes {
-			if attr.Key == "rtpmap" && strings.Contains(attr.Value, "H264/90000") {
-				// Choose smallest rtpmap entry
-				n, _ := strconv.Atoi(strings.Fields(attr.Value)[0])
-				if pc.DynamicType == 0 || uint8(n) < pc.DynamicType {
-					pc.DynamicType = uint8(n)
-				}
-			}
-		}
+//		for _, attr := range remoteMedia.Attributes {
+//			if attr.Key == "rtpmap" && strings.Contains(attr.Value, "H264/90000") {
+//				// Choose smallest rtpmap entry
+//				n, _ := strconv.Atoi(strings.Fields(attr.Value)[0])
+//				if pc.DynamicType == 0 || uint8(n) < pc.DynamicType {
+//					pc.DynamicType = uint8(n)
+//				}
+//			}
+//		}
 		m := sdp.Media{
 			Type:   "video",
 			Port:   9,
@@ -127,7 +132,6 @@ func (pc *PeerConnection) createAnswer() sdp.Session {
 				{"rtcp", "9 IN IP4 0.0.0.0"},
 				{"ice-ufrag", "n3E3"},
 				{"ice-pwd", "auh7I7RsuhlZQgS2XYLStR05"},
-				{"ice-options", "trickle"},
 				{"fingerprint", pc.fingerprint},
 				{"setup", "active"},
 				{"sendonly", ""},
@@ -177,7 +181,7 @@ func (pc *PeerConnection) SetRemoteDescription(sdpOffer string) (sdpAnswer strin
 // Add remote ICE candidate from an SDP candidate string. An empty string for `desc` denotes
 // the end of remote candidates.
 func (pc *PeerConnection) AddIceCandidate(desc, mid string) error {
-	return pc.iceAgent.AddRemoteCandidate(desc, mid)
+	return pc.iceSession.AddRemoteCandidate(desc, mid)
 }
 
 func (pc *PeerConnection) SdpMid() string {

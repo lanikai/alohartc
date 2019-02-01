@@ -9,6 +9,7 @@ import (
 
 type Checklist struct {
 	state checklistState
+
 	pairs []*CandidatePair
 
 	nextPairID int

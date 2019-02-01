@@ -50,7 +50,6 @@ func (a *Agent) EstablishConnection(lcand chan<- Candidate) (net.Conn, error) {
 	}
 
 	// TODO: Support multiple components
-	//components := []int{1}
 	component := 1
 
 	bases, err := establishBases(component)
