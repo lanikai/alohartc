@@ -48,6 +48,11 @@ type v4l2_format struct {
 	fmt [maxSizeFormatDotFmt]byte // union
 }
 
+type v4l2_control struct {
+	id    uint32
+	value int32
+};
+
 type v4l2_requestbuffers struct {
 	count    uint32
 	typ      uint32

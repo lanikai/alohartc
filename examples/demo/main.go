@@ -27,6 +27,9 @@ var (
 	flagVideoBitrate int
 	flagVideoWidth   uint
 	flagVideoHeight  uint
+
+	flagVideoHflip bool
+	flagVideoVflip bool
 )
 
 func init() {
@@ -35,6 +38,8 @@ func init() {
 	flag.IntVar(&flagVideoBitrate, "b", 2e6, "Bitrate for v4l2 video")
 	flag.UintVar(&flagVideoWidth, "w", 1280, "Width for v4l2 video")
 	flag.UintVar(&flagVideoHeight, "h", 720, "Height for v4l2 video")
+	flag.BoolVar(&flagVideoHflip, "hflip", false, "Flip video horizontally")
+	flag.BoolVar(&flagVideoVflip, "vflip", false, "Flip video vertically")
 }
 
 var upgrader = websocket.Upgrader{
@@ -124,6 +129,18 @@ func streamVideo(pc *webrtc.PeerConnection) {
 
 		if err := v.SetBitrate(flagVideoBitrate); err != nil {
 			log.Fatal(err)
+		}
+
+		if flagVideoHflip {
+			if err := v.FlipHorizontal(); err != nil {
+				log.Fatal(err)
+			}
+		}
+
+		if flagVideoVflip {
+			if err := v.FlipVertical(); err != nil {
+				log.Fatal(err)
+			}
 		}
 
 		// Start video
