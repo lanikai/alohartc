@@ -75,7 +75,7 @@ func NewPeerConnection() *PeerConnection {
 		iceAgent:    ice.NewAgent(),
 		certificate: certificate,
 		privateKey:  privateKey,
-		fingerprint: "sha-256 " + fingerprint,
+		fingerprint: "sha-256 " + strings.ToUpper(fingerprint),
 	}
 
 	return pc
