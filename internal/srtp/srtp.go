@@ -112,14 +112,13 @@ func (c *Conn) Stap(b []byte) {
 }
 
 func (c *Conn) Send(b []byte) {
-
 	maxSize := 1280
 
 	if len(b) < maxSize {
 		m := rtpMsg{
 			payloadType:    c.typ,
 			timestamp:      c.time,
-			marker:         false,
+			marker:         true,
 			csrc:           []uint32{},
 			ssrc:           c.ssrc,
 			sequenceNumber: c.seq,
@@ -129,6 +128,8 @@ func (c *Conn) Send(b []byte) {
 		c.conn.Write(m.marshal())
 		c.seq += 1
 	} else {
+		// FU-A fragmentation unit. Split the NALU over multiple RTP packets.
+		// https://tools.ietf.org/html/rfc6184#section-5.8
 		indicator := byte((0 & 0x80) | (b[0] & 0x60) | 28)
 		start := byte(0x80)
 		end := byte(0)
@@ -139,13 +140,10 @@ func (c *Conn) Send(b []byte) {
 			if tail > len(b) {
 				end = 0x40
 				tail = len(b)
+				mark = true
 			}
 			header := byte(start | end | typ)
 			data := append([]byte{indicator, header}, b[i:tail]...)
-
-			if end != 0 {
-				mark = true
-			}
 
 			m := rtpMsg{
 				payloadType:    c.typ,

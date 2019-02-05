@@ -11,5 +11,5 @@ if ! [ -p $DEST ]; then
 fi
 
 ffmpeg -re -stream_loop -1 -i $SOURCE \
-    -f h264 -profile:v baseline -level 4.0 \
+    -f h264 -profile:v baseline -level 4.0 -preset ultrafast \
     -y $DEST

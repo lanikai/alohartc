@@ -35,6 +35,8 @@ func init() {
 			}
 		}
 	}
+
+	DefaultLogger.Level = defaultLevel
 }
 
 func determineLevel(tag string, fallback Level) Level {

@@ -55,6 +55,14 @@ func Open(name string, config *Config) (*VideoReader, error) {
 		return r, err
 	}
 
+	// Flip video, if requested
+	if err = r.SetHorizontalFlip(config.HFlip); err != nil {
+		return r, err
+	}
+	if err = r.SetVerticalFlip(config.VFlip); err != nil {
+		return r, err
+	}
+
 	// Set repeat sequence headers
 	var repeatSequenceHeader int32
 	if config.RepeatSequenceHeader {
@@ -281,9 +289,9 @@ func (r *VideoReader) setPixelFormat(width, height, format uint32) error {
 	return nil
 }
 
-// Flip video horizontally
-func (r *VideoReader) FlipHorizontal() error {
-	ctrl := v4l2_control{V4L2_CID_HFLIP, 1}
+// Toggle horizontal flip
+func (r *VideoReader) SetHorizontalFlip(b bool) error {
+	ctrl := v4l2_control{V4L2_CID_HFLIP, boolToInt32(b)}
 	_, _, errno := unix.Syscall(
 		unix.SYS_IOCTL,
 		uintptr(r.fd),
@@ -296,9 +304,9 @@ func (r *VideoReader) FlipHorizontal() error {
 	return nil
 }
 
-// Flip video vertically
-func (r *VideoReader) FlipVertical() error {
-	ctrl := v4l2_control{V4L2_CID_VFLIP, 1}
+// Toggle vertical flip
+func (r *VideoReader) SetVerticalFlip(b bool) error {
+	ctrl := v4l2_control{V4L2_CID_VFLIP, boolToInt32(b)}
 	_, _, errno := unix.Syscall(
 		unix.SYS_IOCTL,
 		uintptr(r.fd),

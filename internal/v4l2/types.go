@@ -114,3 +114,11 @@ func (pfmt *v4l2_pix_format) marshal() [maxSizeFormatDotFmt]byte {
 
 	return b
 }
+
+func boolToInt32(b bool) int32 {
+	var i int32
+	if b {
+		i = 1
+	}
+	return i
+}

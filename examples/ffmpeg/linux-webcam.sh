@@ -11,5 +11,5 @@ if ! [ -p $DEST ]; then
 fi
 
 ffmpeg -i $SOURCE \
-    -f h264 -profile:v baseline -level 4.0 -pix_fmt yuv420p -preset ultrafast -tune zerolatency \
+    -f h264 -profile:v baseline -level 4.0 -pix_fmt yuv420p -preset ultrafast \
     -y $DEST

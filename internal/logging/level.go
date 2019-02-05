@@ -84,6 +84,6 @@ func (l Level) color() []byte {
 	case Debug:
 		return ansiGreen
 	default:
-		return ansiWhite
+		return ansiYellow
 	}
 }
