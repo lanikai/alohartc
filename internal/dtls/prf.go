@@ -1,364 +1,209 @@
-// Copyright 2009 The Go Authors. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
-
 package dtls
 
 import (
-	"crypto"
+	"crypto/elliptic"
 	"crypto/hmac"
-	"crypto/md5"
-	"crypto/sha1"
-	"crypto/sha256"
-	"crypto/sha512"
-	"errors"
+	"crypto/sha1" // #nosec
+	"encoding/binary"
 	"fmt"
 	"hash"
+	"math"
+
+	"golang.org/x/crypto/curve25519"
 )
-
-// Split a premaster secret in two as specified in RFC 4346, section 5.
-func splitPreMasterSecret(secret []byte) (s1, s2 []byte) {
-	s1 = secret[0 : (len(secret)+1)/2]
-	s2 = secret[len(secret)/2:]
-	return
-}
-
-// pHash implements the P_hash function, as defined in RFC 4346, section 5.
-func pHash(result, secret, seed []byte, hash func() hash.Hash) {
-	h := hmac.New(hash, secret)
-	h.Write(seed)
-	a := h.Sum(nil)
-
-	j := 0
-	for j < len(result) {
-		h.Reset()
-		h.Write(a)
-		h.Write(seed)
-		b := h.Sum(nil)
-		copy(result[j:], b)
-		j += len(b)
-
-		h.Reset()
-		h.Write(a)
-		a = h.Sum(nil)
-	}
-}
-
-// prf10 implements the TLS 1.0 pseudo-random function, as defined in RFC 2246, section 5.
-func prf10(result, secret, label, seed []byte) {
-	hashSHA1 := sha1.New
-	hashMD5 := md5.New
-
-	labelAndSeed := make([]byte, len(label)+len(seed))
-	copy(labelAndSeed, label)
-	copy(labelAndSeed[len(label):], seed)
-
-	s1, s2 := splitPreMasterSecret(secret)
-	pHash(result, s1, labelAndSeed, hashMD5)
-	result2 := make([]byte, len(result))
-	pHash(result2, s2, labelAndSeed, hashSHA1)
-
-	for i, b := range result2 {
-		result[i] ^= b
-	}
-}
-
-// prf12 implements the TLS 1.2 pseudo-random function, as defined in RFC 5246, section 5.
-func prf12(hashFunc func() hash.Hash) func(result, secret, label, seed []byte) {
-	return func(result, secret, label, seed []byte) {
-		labelAndSeed := make([]byte, len(label)+len(seed))
-		copy(labelAndSeed, label)
-		copy(labelAndSeed[len(label):], seed)
-
-		pHash(result, secret, labelAndSeed, hashFunc)
-	}
-}
-
-// prf30 implements the SSL 3.0 pseudo-random function, as defined in
-// www.mozilla.org/projects/security/pki/nss/ssl/draft302.txt section 6.
-func prf30(result, secret, label, seed []byte) {
-	hashSHA1 := sha1.New()
-	hashMD5 := md5.New()
-
-	done := 0
-	i := 0
-	// RFC 5246 section 6.3 says that the largest PRF output needed is 128
-	// bytes. Since no more ciphersuites will be added to SSLv3, this will
-	// remain true. Each iteration gives us 16 bytes so 10 iterations will
-	// be sufficient.
-	var b [11]byte
-	for done < len(result) {
-		for j := 0; j <= i; j++ {
-			b[j] = 'A' + byte(i)
-		}
-
-		hashSHA1.Reset()
-		hashSHA1.Write(b[:i+1])
-		hashSHA1.Write(secret)
-		hashSHA1.Write(seed)
-		digest := hashSHA1.Sum(nil)
-
-		hashMD5.Reset()
-		hashMD5.Write(secret)
-		hashMD5.Write(digest)
-
-		done += copy(result[done:], hashMD5.Sum(nil))
-		i++
-	}
-}
 
 const (
-	tlsRandomLength      = 32 // Length of a random nonce in TLS 1.1.
-	masterSecretLength   = 48 // Length of a master secret in TLS 1.1.
-	finishedVerifyLength = 12 // Length of verify_data in a Finished message.
+	prfMasterSecretLabel     = "master secret"
+	prfKeyExpansionLabel     = "key expansion"
+	prfVerifyDataClientLabel = "client finished"
+	prfVerifyDataServerLabel = "server finished"
 )
 
-var masterSecretLabel = []byte("master secret")
-var keyExpansionLabel = []byte("key expansion")
-var clientFinishedLabel = []byte("client finished")
-var serverFinishedLabel = []byte("server finished")
-var srtpExporterLabel = []byte("EXTRACTOR-dtls_srtp")
+type hashFunc func() hash.Hash
 
-func prfAndHashForVersion(version uint16, suite *cipherSuite) (func(result, secret, label, seed []byte), crypto.Hash) {
-	switch version {
-	case VersionDTLS10:
-		return prf10, crypto.Hash(0)
-	case VersionDTLS12:
-		if suite.flags&suiteSHA384 != 0 {
-			return prf12(sha512.New384), crypto.SHA384
+type encryptionKeys struct {
+	masterSecret   []byte
+	clientMACKey   []byte
+	serverMACKey   []byte
+	clientWriteKey []byte
+	serverWriteKey []byte
+	clientWriteIV  []byte
+	serverWriteIV  []byte
+}
+
+func (e *encryptionKeys) String() string {
+	return fmt.Sprintf(`encryptionKeys:
+- masterSecret: %#v
+- clientMACKey: %#v
+- serverMACKey: %#v
+- clientWriteKey: %#v
+- serverWriteKey: %#v
+- clientWriteIV: %#v
+- serverWriteIV: %#v
+`,
+		e.masterSecret,
+		e.clientMACKey,
+		e.serverMACKey,
+		e.clientWriteKey,
+		e.serverWriteKey,
+		e.clientWriteIV,
+		e.serverWriteIV)
+}
+
+func prfPreMasterSecret(publicKey, privateKey []byte, curve namedCurve) ([]byte, error) {
+	switch curve {
+	case namedCurveX25519:
+		var preMasterSecret, fixedWidthPrivateKey, fixedWidthPublicKey [32]byte
+		copy(fixedWidthPrivateKey[:], privateKey)
+		copy(fixedWidthPublicKey[:], publicKey)
+
+		curve25519.ScalarMult(&preMasterSecret, &fixedWidthPrivateKey, &fixedWidthPublicKey)
+		return preMasterSecret[:], nil
+	case namedCurveP256:
+		x, y := elliptic.Unmarshal(elliptic.P256(), publicKey)
+		if x == nil || y == nil {
+			return nil, errInvalidNamedCurve
 		}
-		return prf12(sha256.New), crypto.SHA256
-	default:
-		panic("unknown version")
-	}
-}
 
-func prfForVersion(version uint16, suite *cipherSuite) func(result, secret, label, seed []byte) {
-	prf, _ := prfAndHashForVersion(version, suite)
-	return prf
-}
-
-// masterFromPreMasterSecret generates the master secret from the pre-master
-// secret. See http://tools.ietf.org/html/rfc5246#section-8.1
-func masterFromPreMasterSecret(version uint16, suite *cipherSuite, preMasterSecret, clientRandom, serverRandom []byte) []byte {
-	seed := make([]byte, 0, len(clientRandom)+len(serverRandom))
-	seed = append(seed, clientRandom...)
-	seed = append(seed, serverRandom...)
-
-	masterSecret := make([]byte, masterSecretLength)
-	prfForVersion(version, suite)(masterSecret, preMasterSecret, masterSecretLabel, seed)
-	return masterSecret
-}
-
-// keysFromMasterSecret generates the connection keys from the master
-// secret, given the lengths of the MAC key, cipher key and IV, as defined in
-// RFC 2246, section 6.3.
-func keysFromMasterSecret(version uint16, suite *cipherSuite, masterSecret, clientRandom, serverRandom []byte, macLen, keyLen, ivLen int) (clientMAC, serverMAC, clientKey, serverKey, clientIV, serverIV []byte) {
-	seed := make([]byte, 0, len(serverRandom)+len(clientRandom))
-	seed = append(seed, serverRandom...)
-	seed = append(seed, clientRandom...)
-
-	n := 2*macLen + 2*keyLen + 2*ivLen
-	keyMaterial := make([]byte, n)
-	prfForVersion(version, suite)(keyMaterial, masterSecret, keyExpansionLabel, seed)
-	clientMAC = keyMaterial[:macLen]
-	keyMaterial = keyMaterial[macLen:]
-	serverMAC = keyMaterial[:macLen]
-	keyMaterial = keyMaterial[macLen:]
-	clientKey = keyMaterial[:keyLen]
-	keyMaterial = keyMaterial[keyLen:]
-	serverKey = keyMaterial[:keyLen]
-	keyMaterial = keyMaterial[keyLen:]
-	clientIV = keyMaterial[:ivLen]
-	keyMaterial = keyMaterial[ivLen:]
-	serverIV = keyMaterial[:ivLen]
-	return
-}
-
-// srtpKeysFromMasterSecret generates SRTP keys from the master
-// secret, given the lengths of the cipher key and IV, as defined in
-// RFC 5764, section 4.2
-func srtpKeysFromMasterSecret(version uint16, suite *cipherSuite, masterSecret, clientRandom, serverRandom []byte, keyLen, ivLen int) (clientKey, serverKey, clientIV, serverIV []byte) {
-	seed := make([]byte, 0, len(serverRandom)+len(clientRandom))
-	// NOTE: client and server order is swapped from keysFromMasterSecret
-	seed = append(seed, clientRandom...)
-	seed = append(seed, serverRandom...)
-
-	n := 2*keyLen + 2*ivLen
-	keyMaterial := make([]byte, n)
-	prfForVersion(version, suite)(keyMaterial, masterSecret, srtpExporterLabel, seed)
-	clientKey = keyMaterial[:keyLen]
-	keyMaterial = keyMaterial[keyLen:]
-	serverKey = keyMaterial[:keyLen]
-	keyMaterial = keyMaterial[keyLen:]
-	clientIV = keyMaterial[:ivLen]
-	keyMaterial = keyMaterial[ivLen:]
-	serverIV = keyMaterial[:ivLen]
-	return
-}
-
-// lookupTLSHash looks up the corresponding crypto.Hash for a given
-// hash from a TLS SignatureScheme.
-func lookupTLSHash(signatureAlgorithm SignatureScheme) (crypto.Hash, error) {
-	switch signatureAlgorithm {
-	case PKCS1WithSHA1, ECDSAWithSHA1:
-		return crypto.SHA1, nil
-	case PKCS1WithSHA256, PSSWithSHA256, ECDSAWithP256AndSHA256:
-		return crypto.SHA256, nil
-	case PKCS1WithSHA384, PSSWithSHA384, ECDSAWithP384AndSHA384:
-		return crypto.SHA384, nil
-	case PKCS1WithSHA512, PSSWithSHA512, ECDSAWithP521AndSHA512:
-		return crypto.SHA512, nil
-	default:
-		return 0, fmt.Errorf("tls: unsupported signature algorithm: %#04x", signatureAlgorithm)
-	}
-}
-
-func newFinishedHash(version uint16, cipherSuite *cipherSuite) finishedHash {
-	var buffer []byte
-	if version >= VersionDTLS12 {
-		buffer = []byte{}
+		curve := elliptic.P256()
+		result, _ := curve.ScalarMult(x, y, privateKey)
+		preMasterSecret := make([]byte, (curve.Params().BitSize+7)>>3)
+		resultBytes := result.Bytes()
+		copy(preMasterSecret[len(preMasterSecret)-len(resultBytes):], resultBytes)
+		return preMasterSecret, nil
 	}
 
-	prf, hash := prfAndHashForVersion(version, cipherSuite)
-	if hash != 0 {
-		return finishedHash{hash.New(), hash.New(), nil, nil, buffer, version, prf}
-	}
-
-	return finishedHash{sha1.New(), sha1.New(), md5.New(), md5.New(), buffer, version, prf}
+	return nil, errInvalidNamedCurve
 }
 
-// A finishedHash calculates the hash of a set of handshake messages suitable
-// for including in a Finished message.
-type finishedHash struct {
-	client hash.Hash
-	server hash.Hash
-
-	// Prior to TLS 1.2, an additional MD5 hash is required.
-	clientMD5 hash.Hash
-	serverMD5 hash.Hash
-
-	// In TLS 1.2, a full buffer is sadly required.
-	buffer []byte
-
-	version uint16
-	prf     func(result, secret, label, seed []byte)
-}
-
-func (h *finishedHash) Write(msg []byte) (n int, err error) {
-	h.client.Write(msg)
-	h.server.Write(msg)
-
-	if h.version < VersionDTLS12 {
-		h.clientMD5.Write(msg)
-		h.serverMD5.Write(msg)
-	}
-
-	if h.buffer != nil {
-		h.buffer = append(h.buffer, msg...)
-	}
-
-	return len(msg), nil
-}
-
-func (h finishedHash) Sum() []byte {
-	if h.version >= VersionDTLS12 {
-		return h.client.Sum(nil)
-	}
-
-	out := make([]byte, 0, md5.Size+sha1.Size)
-	out = h.clientMD5.Sum(out)
-	return h.client.Sum(out)
-}
-
-// finishedSum30 calculates the contents of the verify_data member of a SSLv3
-// Finished message given the MD5 and SHA1 hashes of a set of handshake
-// messages.
-func finishedSum30(md5, sha1 hash.Hash, masterSecret []byte, magic []byte) []byte {
-	md5.Write(magic)
-	md5.Write(masterSecret)
-	md5.Write(ssl30Pad1[:])
-	md5Digest := md5.Sum(nil)
-
-	md5.Reset()
-	md5.Write(masterSecret)
-	md5.Write(ssl30Pad2[:])
-	md5.Write(md5Digest)
-	md5Digest = md5.Sum(nil)
-
-	sha1.Write(magic)
-	sha1.Write(masterSecret)
-	sha1.Write(ssl30Pad1[:40])
-	sha1Digest := sha1.Sum(nil)
-
-	sha1.Reset()
-	sha1.Write(masterSecret)
-	sha1.Write(ssl30Pad2[:40])
-	sha1.Write(sha1Digest)
-	sha1Digest = sha1.Sum(nil)
-
-	ret := make([]byte, len(md5Digest)+len(sha1Digest))
-	copy(ret, md5Digest)
-	copy(ret[len(md5Digest):], sha1Digest)
-	return ret
-}
-
-var ssl3ClientFinishedMagic = [4]byte{0x43, 0x4c, 0x4e, 0x54}
-var ssl3ServerFinishedMagic = [4]byte{0x53, 0x52, 0x56, 0x52}
-
-// clientSum returns the contents of the verify_data member of a client's
-// Finished message.
-func (h finishedHash) clientSum(masterSecret []byte) []byte {
-	out := make([]byte, finishedVerifyLength)
-	h.prf(out, masterSecret, clientFinishedLabel, h.Sum())
-	return out
-}
-
-// serverSum returns the contents of the verify_data member of a server's
-// Finished message.
-func (h finishedHash) serverSum(masterSecret []byte) []byte {
-	out := make([]byte, finishedVerifyLength)
-	h.prf(out, masterSecret, serverFinishedLabel, h.Sum())
-	return out
-}
-
-// selectClientCertSignatureAlgorithm returns a SignatureScheme to sign a
-// client's CertificateVerify with, or an error if none can be found.
-func (h finishedHash) selectClientCertSignatureAlgorithm(serverList []SignatureScheme, sigType uint8) (SignatureScheme, error) {
-	for _, v := range serverList {
-		if signatureFromSignatureScheme(v) == sigType && isSupportedSignatureAlgorithm(v, supportedSignatureAlgorithms) {
-			return v, nil
+//  This PRF with the SHA-256 hash function is used for all cipher suites
+//  defined in this document and in TLS documents published prior to this
+//  document when TLS 1.2 is negotiated.  New cipher suites MUST explicitly
+//  specify a PRF and, in general, SHOULD use the TLS PRF with SHA-256 or a
+//  stronger standard hash function.
+//
+//     P_hash(secret, seed) = HMAC_hash(secret, A(1) + seed) +
+//                            HMAC_hash(secret, A(2) + seed) +
+//                            HMAC_hash(secret, A(3) + seed) + ...
+//
+//  A() is defined as:
+//
+//     A(0) = seed
+//     A(i) = HMAC_hash(secret, A(i-1))
+//
+//  P_hash can be iterated as many times as necessary to produce the
+//  required quantity of data.  For example, if P_SHA256 is being used to
+//  create 80 bytes of data, it will have to be iterated three times
+//  (through A(3)), creating 96 bytes of output data; the last 16 bytes
+//  of the final iteration will then be discarded, leaving 80 bytes of
+//  output data.
+//
+// https://tools.ietf.org/html/rfc4346w
+func prfPHash(secret, seed []byte, requestedLength int, h hashFunc) ([]byte, error) {
+	hmacSHA256 := func(key, data []byte) ([]byte, error) {
+		mac := hmac.New(h, key)
+		if _, err := mac.Write(data); err != nil {
+			return nil, err
 		}
-	}
-	return 0, errors.New("tls: no supported signature algorithm found for signing client certificate")
-}
-
-// hashForClientCertificate returns a digest, hash function, and TLS 1.2 hash
-// id suitable for signing by a TLS client certificate.
-func (h finishedHash) hashForClientCertificate(sigType uint8, signatureAlgorithm SignatureScheme, masterSecret []byte) ([]byte, crypto.Hash, error) {
-	if (h.version >= VersionDTLS12) && h.buffer == nil {
-		panic("a handshake hash for a client-certificate was requested after discarding the handshake buffer")
+		return mac.Sum(nil), nil
 	}
 
-	if h.version >= VersionDTLS12 {
-		hashAlg, err := lookupTLSHash(signatureAlgorithm)
+	var err error
+	lastRound := seed
+	out := []byte{}
+
+	iterations := int(math.Ceil(float64(requestedLength) / float64(h().Size())))
+	for i := 0; i < iterations; i++ {
+		lastRound, err = hmacSHA256(secret, lastRound)
 		if err != nil {
-			return nil, 0, err
+			return nil, err
 		}
-		hash := hashAlg.New()
-		hash.Write(h.buffer)
-		return hash.Sum(nil), hashAlg, nil
+		withSecret, err := hmacSHA256(secret, append(lastRound, seed...))
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, withSecret...)
 	}
 
-	if sigType == signatureECDSA {
-		return h.server.Sum(nil), crypto.SHA1, nil
-	}
-
-	return h.Sum(), crypto.MD5SHA1, nil
+	return out[:requestedLength], nil
 }
 
-// discardHandshakeBuffer is called when there is no more need to
-// buffer the entirety of the handshake messages.
-func (h *finishedHash) discardHandshakeBuffer() {
-	h.buffer = nil
+func prfMasterSecret(preMasterSecret, clientRandom, serverRandom []byte, h hashFunc) ([]byte, error) {
+	seed := append(append([]byte(prfMasterSecretLabel), clientRandom...), serverRandom...)
+	return prfPHash(preMasterSecret, seed, 48, h)
+}
+
+func prfEncryptionKeys(masterSecret, clientRandom, serverRandom []byte, prfMacLen, prfKeyLen, prfIvLen int, h hashFunc) (*encryptionKeys, error) {
+	seed := append(append([]byte(prfKeyExpansionLabel), serverRandom...), clientRandom...)
+	keyMaterial, err := prfPHash(masterSecret, seed, (2*prfMacLen)+(2*prfKeyLen)+(2*prfIvLen), h)
+	if err != nil {
+		return nil, err
+	}
+
+	clientMACKey := keyMaterial[:prfMacLen]
+	keyMaterial = keyMaterial[prfMacLen:]
+
+	serverMACKey := keyMaterial[:prfMacLen]
+	keyMaterial = keyMaterial[prfMacLen:]
+
+	clientWriteKey := keyMaterial[:prfKeyLen]
+	keyMaterial = keyMaterial[prfKeyLen:]
+
+	serverWriteKey := keyMaterial[:prfKeyLen]
+	keyMaterial = keyMaterial[prfKeyLen:]
+
+	clientWriteIV := keyMaterial[:prfIvLen]
+	keyMaterial = keyMaterial[prfIvLen:]
+
+	serverWriteIV := keyMaterial[:prfIvLen]
+
+	return &encryptionKeys{
+		masterSecret:   masterSecret,
+		clientMACKey:   clientMACKey,
+		serverMACKey:   serverMACKey,
+		clientWriteKey: clientWriteKey,
+		serverWriteKey: serverWriteKey,
+		clientWriteIV:  clientWriteIV,
+		serverWriteIV:  serverWriteIV,
+	}, nil
+}
+
+func prfVerifyData(masterSecret, handshakeBodies []byte, label string, hashFunc hashFunc) ([]byte, error) {
+	h := hashFunc()
+	if _, err := h.Write(handshakeBodies); err != nil {
+		return nil, err
+	}
+
+	seed := append([]byte(label), h.Sum(nil)...)
+	return prfPHash(masterSecret, seed, 12, hashFunc)
+}
+
+func prfVerifyDataClient(masterSecret, handshakeBodies []byte, h hashFunc) ([]byte, error) {
+	return prfVerifyData(masterSecret, handshakeBodies, prfVerifyDataClientLabel, h)
+}
+
+func prfVerifyDataServer(masterSecret, handshakeBodies []byte, h hashFunc) ([]byte, error) {
+	return prfVerifyData(masterSecret, handshakeBodies, prfVerifyDataServerLabel, h)
+}
+
+// compute the MAC using HMAC-SHA1
+func prfMac(epoch uint16, sequenceNumber uint64, contentType contentType, protocolVersion protocolVersion, payload []byte, key []byte) ([]byte, error) {
+	h := hmac.New(sha1.New, key)
+
+	msg := make([]byte, 13)
+
+	binary.BigEndian.PutUint16(msg, epoch)
+	putBigEndianUint48(msg[2:], sequenceNumber)
+	msg[8] = byte(contentType)
+	msg[9] = protocolVersion.major
+	msg[10] = protocolVersion.minor
+	binary.BigEndian.PutUint16(msg[11:], uint16(len(payload)))
+
+	if _, err := h.Write(msg); err != nil {
+		return nil, err
+	} else if _, err := h.Write(payload); err != nil {
+		return nil, err
+	}
+
+	return h.Sum(nil), nil
 }

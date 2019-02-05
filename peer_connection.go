@@ -3,16 +3,19 @@ package webrtc
 import (
 	"bufio"
 	"bytes"
+	"crypto"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"io"
-	"os"
+	"log"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/lanikailabs/webrtc/internal/dtls"
+	"github.com/lanikailabs/webrtc/internal/dtls" // subtree merged pions/dtls
 	"github.com/lanikailabs/webrtc/internal/ice"
+	"github.com/lanikailabs/webrtc/internal/mux"
 	"github.com/lanikailabs/webrtc/internal/sdp"
 	"github.com/lanikailabs/webrtc/internal/srtp"
 )
@@ -26,6 +29,9 @@ const (
 	nalReferenceIndicatorPriority3      = 3 << 5
 
 	naluBufferSize = 2 * 1024 * 1024
+
+	srtpMasterKeyLen     = 16
+	srtpMasterKeySaltLen = 14
 )
 
 type PeerConnection struct {
@@ -44,23 +50,32 @@ type PeerConnection struct {
 	srtpSession *srtp.Conn
 
 	// Local certificate
-	certPEMBlock []byte // Public key
-	keyPEMBlock  []byte // Private key
-	fingerprint  string
+	certificate *x509.Certificate // Public key
+	privateKey  crypto.PrivateKey // Private key
+	fingerprint string
+
+	mux *mux.Mux
 }
 
 func NewPeerConnection() *PeerConnection {
 	// Dynamically generate a certificate for the peer connection
-	cert, key, fp, err := generateCertificate()
+	certificate, privateKey, err := dtls.GenerateSelfSigned()
 	if err != nil {
 		panic(err)
 	}
 
+	// Compute certificate fingerprint for later inclusion in SDP offer/answer
+	fingerprint, err := dtls.Fingerprint(certificate, dtls.HashAlgorithmSHA256)
+	if err != nil {
+		panic(err)
+	}
+
+	// Instantiate a peer connection object
 	pc := &PeerConnection{
-		iceAgent:     ice.NewAgent(),
-		certPEMBlock: cert,
-		keyPEMBlock:  key,
-		fingerprint:  fp,
+		iceAgent:    ice.NewAgent(),
+		certificate: certificate,
+		privateKey:  privateKey,
+		fingerprint: "sha-256 " + strings.ToUpper(fingerprint),
 	}
 
 	return pc
@@ -172,39 +187,51 @@ func (pc *PeerConnection) SdpMid() string {
 func (pc *PeerConnection) Connect(lcand chan<- string) error {
 	ia := pc.iceAgent
 
-	conn, err := ia.EstablishConnection(lcand)
+	iceConn, err := ia.EstablishConnection(lcand)
 	if err != nil {
 		return err
 	}
 
-	// Load dynamically generated certificate
-	cert, err := dtls.X509KeyPair(pc.certPEMBlock, pc.keyPEMBlock)
+	// Instantiate a new net.Conn multiplexer
+	pc.mux = mux.NewMux(iceConn, 4096)
+
+	// Instantiate a new endpoint for DTLS from multiplexer
+	dtlsEndpoint := pc.mux.NewEndpoint(mux.MatchDTLS)
+
+	// Instantiate a new endpoint for SRTP from multiplexer
+	srtpEndpoint := pc.mux.NewEndpoint(mux.MatchSRTP)
+
+	// Configuration for DTLS handshake, namely certificate and private key
+	config := &dtls.Config{Certificate: pc.certificate, PrivateKey: pc.privateKey}
+
+	// Initiate a DTLS handshake as a client
+	dtlsConn, err := dtls.Client(dtlsEndpoint, config)
 	if err != nil {
 		return err
 	}
 
-	// Send DTLS client hello
-	dc, err := dtls.NewSession(
-		conn,
-		&dtls.Config{
-			Certificates:           []dtls.Certificate{cert},
-			InsecureSkipVerify:     true,
-			Renegotiation:          dtls.RenegotiateFreelyAsClient,
-			SessionTicketsDisabled: false,
-			ClientSessionCache:     dtls.NewLRUClientSessionCache(-1),
-			ProtectionProfiles:     []uint16{dtls.SRTP_AES128_CM_HMAC_SHA1_80},
-			KeyLogWriter:           os.Stdout,
-		},
-	)
+	// Create SRTP keys from DTLS handshake (see RFC5764 Section 4.2)
+	material, err := dtlsConn.ExportKeyingMaterial("EXTRACTOR-dtls_srtp", nil, (srtpMasterKeyLen*2)+(srtpMasterKeySaltLen*2))
 	if err != nil {
 		return err
 	}
 
-	pc.srtpSession, err = srtp.NewSession(conn, pc.DynamicType, dc.ClientKey, dc.ClientIV)
+	// Keying material consists of:
+	//   0                    ..     keylen               - 1: write key
+	//       keylen           .. 2 * keylen               - 1: read key (unused)
+	//   2 * keylen           .. 2 * keylen +     saltlen - 1: write salt
+	//   2 * keylen + saltlen .. 2 * keylen + 2 * saltlen - 1: read salt (unused)
+	key := append([]byte{}, material[0:srtpMasterKeyLen]...)
+	salt := append([]byte{}, material[2*srtpMasterKeyLen:2*srtpMasterKeyLen+srtpMasterKeySaltLen]...)
+
+	// Instantiate a new SRTP session
+	pc.srtpSession, err = srtp.NewSession(srtpEndpoint, pc.DynamicType, key, salt)
+
 	return err
 }
 
 func (pc *PeerConnection) Close() {
+	log.Println("PeerConnection.Close()")
 	if pc.srtpSession != nil {
 		pc.srtpSession.Close()
 	}
