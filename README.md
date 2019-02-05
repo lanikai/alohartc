@@ -1,5 +1,5 @@
 <h1 align="center">
-  WebRTC
+  AlohaRTC
   <br>
 </h1>
 <h4 align="center">Real-time communication with cameras, natively within the browser</h4>
