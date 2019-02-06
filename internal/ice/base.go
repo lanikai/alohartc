@@ -114,7 +114,8 @@ func (base *Base) demuxStun(defaultHandler stunHandler, dataIn chan<- []byte) {
 			}
 			log.Fatal(err)
 		}
-		data := buf[0:n]
+		data := make([]byte, n)
+		copy(data, buf[0:n])
 
 		msg, err := parseStunMessage(data)
 		if err != nil {
