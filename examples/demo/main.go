@@ -11,8 +11,8 @@ import (
 
 	"github.com/gorilla/websocket"
 
-	"github.com/lanikailabs/webrtc"
-	"github.com/lanikailabs/webrtc/internal/v4l2"
+	"github.com/lanikailabs/alohartc"
+	"github.com/lanikailabs/alohartc/internal/v4l2"
 )
 
 // Flags
@@ -63,7 +63,7 @@ func websocketHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	defer ws.Close()
 
-	pc := webrtc.NewPeerConnection()
+	pc := alohartc.NewPeerConnection()
 	// Local ICE candidates, produced by the local ICE agent.
 	lcand := make(chan string, 16)
 
@@ -115,7 +115,7 @@ func sendIceCandidates(ws *websocket.Conn, lcand <-chan string, sdpMid string) {
 	ws.WriteJSON(message{Type: "iceCandidate"})
 }
 
-func streamVideo(pc *webrtc.PeerConnection) {
+func streamVideo(pc *alohartc.PeerConnection) {
 	var source io.Reader
 	wholeNALUs := false
 

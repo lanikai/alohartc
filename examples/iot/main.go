@@ -7,9 +7,9 @@ import (
 	"os"
 	"strings"
 
-	"github.com/lanikailabs/webrtc"
-	"github.com/lanikailabs/webrtc/internal/signaling"
-	"github.com/lanikailabs/webrtc/internal/v4l2"
+	"github.com/lanikailabs/alohartc"
+	"github.com/lanikailabs/alohartc/internal/signaling"
+	"github.com/lanikailabs/alohartc/internal/v4l2"
 )
 
 // Flags
@@ -61,7 +61,7 @@ func main() {
 }
 
 func doSession(session *signaling.Session) {
-	pc := webrtc.NewPeerConnection()
+	pc := alohartc.NewPeerConnection()
 	for {
 		t, p := session.ReceiveMessage()
 		switch t {
@@ -118,7 +118,7 @@ func doSession(session *signaling.Session) {
 	}
 }
 
-func streamVideo(pc *webrtc.PeerConnection) {
+func streamVideo(pc *alohartc.PeerConnection) {
 	var source io.Reader
 	wholeNALUs := false
 

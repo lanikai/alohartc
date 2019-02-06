@@ -4,7 +4,7 @@
 </h1>
 <h4 align="center">Real-time communication with cameras, natively within the browser</h4>
 <p align="center">
-  <a href="https://circleci.com/gh/lanikailabs/webrtc" alt="CircleCI"><img src="https://circleci.com/gh/lanikailabs/webrtc.svg?style=shield&circle-token=0bcc086c4c5c77ab6cfbdc85cb810f522ef7b8bd"></a>
+  <a href="https://circleci.com/gh/lanikailabs/alohartc" alt="CircleCI"><img src="https://circleci.com/gh/lanikailabs/alohartc.svg?style=shield&circle-token=0bcc086c4c5c77ab6cfbdc85cb810f522ef7b8bd"></a>
 </p>
 
 ## Setup

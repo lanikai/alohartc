@@ -20,6 +20,6 @@ iot:
 	cd examples/demo && go generate
 	CGO_ENABLED=$(CGO_ENABLED) GOARM=$(GOARM) GOARCH=$(GOARCH) GOOS=$(GOOS) \
 		go build -ldflags "-s -w" -o examples/iot/iot -v \
-			github.com/lanikailabs/webrtc/examples/iot
+			github.com/lanikailabs/alohartc/examples/iot
 
 .PHONY: demo examples iot

@@ -3,7 +3,7 @@ package main
 import (
 	"log"
 
-	"github.com/lanikailabs/webrtc/internal/v4l2"
+	"github.com/lanikailabs/alohartc/internal/v4l2"
 )
 
 func main() {

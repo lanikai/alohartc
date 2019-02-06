@@ -1,4 +1,4 @@
-package webrtc
+package alohartc
 
 import (
 	"bufio"
@@ -13,11 +13,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lanikailabs/webrtc/internal/dtls" // subtree merged pions/dtls
-	"github.com/lanikailabs/webrtc/internal/ice"
-	"github.com/lanikailabs/webrtc/internal/mux"
-	"github.com/lanikailabs/webrtc/internal/sdp"
-	"github.com/lanikailabs/webrtc/internal/srtp"
+	"github.com/lanikailabs/alohartc/internal/dtls" // subtree merged pions/dtls
+	"github.com/lanikailabs/alohartc/internal/ice"
+	"github.com/lanikailabs/alohartc/internal/mux"
+	"github.com/lanikailabs/alohartc/internal/sdp"
+	"github.com/lanikailabs/alohartc/internal/srtp"
 )
 
 const (
