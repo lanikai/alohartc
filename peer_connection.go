@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"strconv"
 	"strings"
 	"time"
@@ -193,13 +192,16 @@ func (pc *PeerConnection) Connect(lcand chan<- string) error {
 	}
 
 	// Instantiate a new net.Conn multiplexer
-	pc.mux = mux.NewMux(iceConn, 4096)
+	pc.mux = mux.NewMux(iceConn, 8192)
 
 	// Instantiate a new endpoint for DTLS from multiplexer
 	dtlsEndpoint := pc.mux.NewEndpoint(mux.MatchDTLS)
 
 	// Instantiate a new endpoint for SRTP from multiplexer
 	srtpEndpoint := pc.mux.NewEndpoint(mux.MatchSRTP)
+
+	// Drop SRTCP
+	_ = pc.mux.NewEndpoint(mux.MatchSRTCP)
 
 	// Configuration for DTLS handshake, namely certificate and private key
 	config := &dtls.Config{Certificate: pc.certificate, PrivateKey: pc.privateKey}

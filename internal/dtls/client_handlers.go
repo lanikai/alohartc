@@ -87,7 +87,7 @@ func clientHandshakeHandler(c *Conn) error {
 				}
 
 				expectedHash := valueKeySignature(clientRandom, serverRandom, h.publicKey, c.namedCurve, h.hashAlgorithm)
-				if err := verifyKeySignature(expectedHash, h.signature, c.remoteCertificate); err != nil {
+				if err := verifyKeySignature(expectedHash, h.signature, c.remoteCertificate, h.hashAlgorithm); err != nil {
 					return err
 				}
 			}
@@ -157,6 +157,18 @@ func clientFlightHandler(c *Conn) (bool, error) {
 						},
 						&extensionSupportedPointFormats{
 							pointFormats: []ellipticCurvePointFormat{ellipticCurvePointFormatUncompressed},
+						},
+						&extensionSupportedSignatureAlgorithms{
+							signatureHashAlgorithms: []signatureHashAlgorithm{
+								signatureHashAlgorithm{HashAlgorithmSHA256, signatureAlgorithmRSA},
+								signatureHashAlgorithm{HashAlgorithmSHA256, signatureAlgorithmECDSA},
+								signatureHashAlgorithm{HashAlgorithmSHA384, signatureAlgorithmRSA},
+								signatureHashAlgorithm{HashAlgorithmSHA384, signatureAlgorithmECDSA},
+								signatureHashAlgorithm{HashAlgorithmSHA512, signatureAlgorithmRSA},
+								signatureHashAlgorithm{HashAlgorithmSHA512, signatureAlgorithmECDSA},
+								signatureHashAlgorithm{HashAlgorithmSHA1, signatureAlgorithmRSA},
+								signatureHashAlgorithm{HashAlgorithmSHA1, signatureAlgorithmECDSA},
+							},
 						},
 					},
 				}},

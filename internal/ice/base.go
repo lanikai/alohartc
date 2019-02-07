@@ -5,6 +5,8 @@ import (
 	"net"
 	"sync"
 	"time"
+
+	"github.com/lanikailabs/alohartc/internal/mux"
 )
 
 // [RFC8445] defines a base to be "The transport address that an ICE agent sends from for a
@@ -114,28 +116,33 @@ func (base *Base) demuxStun(defaultHandler stunHandler, dataIn chan<- []byte) {
 			}
 			log.Fatal(err)
 		}
-		data := buf[0:n]
+		data := make([]byte, n)
+		copy(data, buf[0:n])
 
-		msg, err := parseStunMessage(data)
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		if msg != nil {
-			log.Debug("Received from %s: %s\n", raddr, msg)
-
-			// Pass incoming STUN message to the appropriate handler.
-			var handler stunHandler
-			base.transactionsLock.Lock()
-			handler, found := base.transactions[msg.transactionID]
-			if found {
-				delete(base.transactions, msg.transactionID)
-			} else {
-				handler = defaultHandler
+		// Only process STUN messages
+		if mux.MatchSTUN(data) {
+			msg, err := parseStunMessage(data)
+			if err != nil {
+				log.Fatal(err)
 			}
-			base.transactionsLock.Unlock()
-			handler(msg, raddr, *base)
+
+			if msg != nil {
+				log.Debug("Received from %s: %s\n", raddr, msg)
+
+				// Pass incoming STUN message to the appropriate handler.
+				var handler stunHandler
+				base.transactionsLock.Lock()
+				handler, found := base.transactions[msg.transactionID]
+				if found {
+					delete(base.transactions, msg.transactionID)
+				} else {
+					handler = defaultHandler
+				}
+				base.transactionsLock.Unlock()
+				handler(msg, raddr, *base)
+			}
 		} else {
+			// Not a STUN packet, forward it on
 			select {
 			case dataIn <- data:
 			default:

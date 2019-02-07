@@ -47,7 +47,7 @@ func generateKeySignature(clientRandom, serverRandom, publicKey []byte, namedCur
 	return nil, errKeySignatureGenerateUnimplemented
 }
 
-func verifyKeySignature(hash, remoteKeySignature []byte, certificate *x509.Certificate) error {
+func verifyKeySignature(hash, remoteKeySignature []byte, certificate *x509.Certificate, hashAlgorithm HashAlgorithm) error {
 	switch p := certificate.PublicKey.(type) {
 	case *ecdsa.PublicKey:
 		ecdsaSig := &ecdsaSignature{}
@@ -62,6 +62,13 @@ func verifyKeySignature(hash, remoteKeySignature []byte, certificate *x509.Certi
 		}
 		return nil
 	case *rsa.PublicKey:
+		if hashFunction, ok := hashFunctions[hashAlgorithm]; ok {
+			if err := rsa.VerifyPKCS1v15(p, hashFunction, hash, remoteKeySignature); err != nil {
+				log.Error(err.Error())
+				return err
+			}
+			return nil
+		}
 		return errKeySignatureVerifyUnimplemented
 	}
 
