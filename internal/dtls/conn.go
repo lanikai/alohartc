@@ -11,6 +11,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/lanikailabs/alohartc/internal/logging"
 )
 
 const initialTickerInterval = time.Second
@@ -23,6 +25,8 @@ var invalidKeyingLabels = map[string]bool{
 	"master secret":   true,
 	"key expansion":   true,
 }
+
+var log *logging.Logger
 
 type handshakeMessageHandler func(*Conn) error
 type flightHandler func(*Conn) (bool, error)
@@ -60,6 +64,10 @@ type Conn struct {
 	handshakeCompleted      chan bool
 
 	connErr atomic.Value
+}
+
+func init() {
+	log = logging.DefaultLogger.WithTag("dtls")
 }
 
 func createConn(nextConn net.Conn, flightHandler flightHandler, handshakeMessageHandler handshakeMessageHandler, config *Config, isClient bool) (*Conn, error) {
@@ -275,6 +283,8 @@ func (c *Conn) internalSend(pkt *recordLayer, shouldEncrypt bool) {
 }
 
 func (c *Conn) handleIncoming(buf []byte) error {
+	log.Debug("handleIncoming")
+
 	pkts, err := unpackDatagram(buf)
 	if err != nil {
 		return err
@@ -296,20 +306,20 @@ func (c *Conn) handleIncomingPacket(buf []byte) error {
 		return err
 	}
 	if h.epoch < c.getRemoteEpoch() {
-		fmt.Println("handleIncoming: old epoch, dropping packet")
+		log.Info("handleIncoming: old epoch, dropping packet")
 		return nil
 	}
 
 	if c.getRemoteEpoch() != 0 {
 		if c.cipherSuite == nil {
-			fmt.Println("handleIncoming: Handshake not finished, dropping packet")
+			log.Info("handleIncoming: Handshake not finished, dropping packet")
 			return nil
 		}
 
 		var err error
 		buf, err = c.cipherSuite.decrypt(buf)
 		if err != nil {
-			fmt.Println(err)
+			log.Error(err.Error())
 			return nil
 		}
 	}

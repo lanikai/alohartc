@@ -1,6 +1,7 @@
 package dtls
 
 import (
+	"crypto"
 	"crypto/md5"  // #nosec
 	"crypto/sha1" // #nosec
 	"crypto/sha256"
@@ -94,4 +95,13 @@ var hashAlgorithms = map[HashAlgorithm]struct{}{
 	HashAlgorithmSHA256: {},
 	HashAlgorithmSHA384: {},
 	HashAlgorithmSHA512: {},
+}
+
+var hashFunctions = map[HashAlgorithm]crypto.Hash{
+	HashAlgorithmMD5:    crypto.MD5,
+	HashAlgorithmSHA1:   crypto.SHA1,
+	HashAlgorithmSHA224: crypto.SHA224,
+	HashAlgorithmSHA256: crypto.SHA256,
+	HashAlgorithmSHA384: crypto.SHA384,
+	HashAlgorithmSHA512: crypto.SHA512,
 }
