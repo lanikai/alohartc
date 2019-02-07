@@ -35,9 +35,13 @@ type stunMessage struct {
 
 // Returns (nil, nil) if the data is not a STUN message.
 func parseStunMessage(data []byte) (*stunMessage, error) {
+	if len(data) < stunHeaderLength {
+		return nil, errSTUNInvalidMessage
+	}
+
 	msg := parseStunHeader(data[0:stunHeaderLength])
 	if msg == nil {
-		return nil, nil
+		return nil, errSTUNInvalidMessage
 	}
 
 	// Parse attributes.
