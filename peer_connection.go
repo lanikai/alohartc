@@ -53,6 +53,9 @@ type PeerConnection struct {
 	privateKey  crypto.PrivateKey // Private key
 	fingerprint string
 
+	// channel for signalling teardown
+	teardown chan bool
+
 	mux *mux.Mux
 }
 
@@ -75,6 +78,7 @@ func NewPeerConnection() *PeerConnection {
 		certificate: certificate,
 		privateKey:  privateKey,
 		fingerprint: "sha-256 " + strings.ToUpper(fingerprint),
+		teardown:    make(chan bool),
 	}
 
 	return pc
@@ -233,7 +237,8 @@ func (pc *PeerConnection) Connect(lcand chan<- string) error {
 }
 
 func (pc *PeerConnection) Close() {
-	log.Println("PeerConnection.Close()")
+	log.Info("Closing peer connection")
+	pc.teardown <- true
 	if pc.srtpSession != nil {
 		pc.srtpSession.Close()
 	}
@@ -274,42 +279,49 @@ func (pc *PeerConnection) StreamH264(source io.Reader, wholeNALUs bool) error {
 	scanner.Split(ScanNALU)
 	var stap []byte
 	for scanner.Scan() {
-		b := scanner.Bytes()
 
-		// https://tools.ietf.org/html/rfc6184#section-1.3
-		fbit := (b[0] & 0x80) >> 7
-		nri := (b[0] & 0x60) >> 5
-		typ := b[0] & 0x1f
-		//log.Printf("F: %b, NRI: %02b, Type: %d, Length: %d\n", fbit, nri, typ, len(b))
+		select {
+		case <-pc.teardown:
+			return nil
 
-		if (typ == 6) || (typ == 7) || (typ == 8) {
-			// Wrap SPS/PPS/SEI in STAP-A packet
-			// https://tools.ietf.org/html/rfc6184#section-5.7
-			if stap == nil {
-				stap = []byte{nalTypeSingleTimeAggregationPacketA}
+		default:
+			b := scanner.Bytes()
+
+			// https://tools.ietf.org/html/rfc6184#section-1.3
+			fbit := (b[0] & 0x80) >> 7
+			nri := (b[0] & 0x60) >> 5
+			typ := b[0] & 0x1f
+			//log.Printf("F: %b, NRI: %02b, Type: %d, Length: %d\n", fbit, nri, typ, len(b))
+
+			if (typ == 6) || (typ == 7) || (typ == 8) {
+				// Wrap SPS/PPS/SEI in STAP-A packet
+				// https://tools.ietf.org/html/rfc6184#section-5.7
+				if stap == nil {
+					stap = []byte{nalTypeSingleTimeAggregationPacketA}
+				}
+				len := len(b)
+				stap = append(stap, byte(len>>8), byte(len))
+				stap = append(stap, b...)
+
+				// STAP-A F bit equals the bitwise OR of all aggregated F bits.
+				stap[0] |= fbit << 7
+
+				// STAP-A NRI value is the maximum of all aggregated NRI values.
+				stapnri := (stap[0] & 0x60) >> 5
+				if nri > stapnri {
+					stap[0] = (stap[0] &^ 0x60) | (nri << 5)
+				}
+			} else {
+				if stap != nil {
+					pc.srtpSession.Stap(stap)
+					stap = nil
+				}
+
+				// Make a copy of the NALU, since the RTP payload gets encrypted in place.
+				nalu := make([]byte, len(b))
+				copy(nalu, b)
+				pc.srtpSession.Send(nalu)
 			}
-			len := len(b)
-			stap = append(stap, byte(len>>8), byte(len))
-			stap = append(stap, b...)
-
-			// STAP-A F bit equals the bitwise OR of all aggregated F bits.
-			stap[0] |= fbit << 7
-
-			// STAP-A NRI value is the maximum of all aggregated NRI values.
-			stapnri := (stap[0] & 0x60) >> 5
-			if nri > stapnri {
-				stap[0] = (stap[0] &^ 0x60) | (nri << 5)
-			}
-		} else {
-			if stap != nil {
-				pc.srtpSession.Stap(stap)
-				stap = nil
-			}
-
-			// Make a copy of the NALU, since the RTP payload gets encrypted in place.
-			nalu := make([]byte, len(b))
-			copy(nalu, b)
-			pc.srtpSession.Send(nalu)
 		}
 	}
 

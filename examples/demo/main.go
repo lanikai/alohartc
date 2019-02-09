@@ -84,14 +84,14 @@ func websocketHandler(w http.ResponseWriter, r *http.Request) {
 			}
 			ws.WriteJSON(message{Type: "answer", Text: answer})
 			go sendIceCandidates(ws, lcand, pc.SdpMid())
-			go func() {
-				if err := pc.Connect(lcand); err != nil {
-					log.Fatal(err)
-				}
-				defer pc.Close()
 
-				streamVideo(pc)
-			}()
+			if err := pc.Connect(lcand); err != nil {
+				log.Fatal(err)
+			}
+			defer pc.Close()
+
+			go streamVideo(pc)
+
 		case "iceCandidate":
 			if msg.Text == "" {
 				log.Println("End of remote ICE candidates")
