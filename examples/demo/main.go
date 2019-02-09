@@ -80,18 +80,20 @@ func websocketHandler(w http.ResponseWriter, r *http.Request) {
 		case "offer":
 			answer, err := pc.SetRemoteDescription(msg.Text)
 			if err != nil {
-				log.Fatal(err)
+				log.Println(err)
+				return
 			}
 			ws.WriteJSON(message{Type: "answer", Text: answer})
 			go sendIceCandidates(ws, lcand, pc.SdpMid())
-			go func() {
-				if err := pc.Connect(lcand); err != nil {
-					log.Fatal(err)
-				}
-				defer pc.Close()
 
-				streamVideo(pc)
-			}()
+			if err := pc.Connect(lcand); err != nil {
+				log.Println(err)
+				return
+			}
+			defer pc.Close()
+
+			go streamVideo(pc)
+
 		case "iceCandidate":
 			if msg.Text == "" {
 				log.Println("End of remote ICE candidates")
@@ -123,29 +125,34 @@ func streamVideo(pc *alohartc.PeerConnection) {
 	if strings.HasPrefix(flagVideoSource, "/dev/video") {
 		v, err := v4l2.OpenH264(flagVideoSource, flagVideoWidth, flagVideoHeight)
 		if err != nil {
-			log.Fatal(err)
+			log.Println(err)
+			return
 		}
 		defer v.Close()
 
 		if err := v.SetBitrate(flagVideoBitrate); err != nil {
-			log.Fatal(err)
+			log.Println(err)
+			return
 		}
 
 		if flagVideoHflip {
 			if err := v.FlipHorizontal(); err != nil {
-				log.Fatal(err)
+				log.Println(err)
+				return
 			}
 		}
 
 		if flagVideoVflip {
 			if err := v.FlipVertical(); err != nil {
-				log.Fatal(err)
+				log.Println(err)
+				return
 			}
 		}
 
 		// Start video
 		if err := v.Start(); err != nil {
-			log.Fatal(err)
+			log.Println(err)
+			return
 		}
 		defer v.Stop()
 
@@ -156,13 +163,14 @@ func streamVideo(pc *alohartc.PeerConnection) {
 	} else {
 		f, err := os.Open(flagVideoSource)
 		if err != nil {
-			log.Fatal(err)
+			log.Println(err)
+			return
 		}
 		source = f
 	}
 
 	if err := pc.StreamH264(source, wholeNALUs); err != nil {
-		log.Fatal(err)
+		log.Println(err)
 	}
 }
 
