@@ -14,9 +14,13 @@ Set a pre-commit hook to `go fmt` code (see https://tip.golang.org/misc/git/pre-
 
 ## Building
 
-To cross-compile for an armv7-based architecture, such as the Raspberry Pi Model 3B+:
+To cross-compile for a Raspberry Pi Model 3B/3B+ (armv7-based architecture):
 
     make
+    
+To cross-compile for a Raspberry Pi Zero (armv6-based architecture):
+
+    GOARM=6 make
 
 
 ## Quickstart
