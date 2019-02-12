@@ -16,9 +16,6 @@ type VideoReader struct {
 	io.Closer
 	io.Reader
 
-	width  uint // Video width in pixels
-	height uint // Video height in pixels
-
 	numBuffers int // Number of requested kernel driver buffers
 
 	fd   int    // File descriptor
@@ -39,18 +36,11 @@ func (r *VideoReader) Close() error {
 	return unix.Close(r.fd)
 }
 
-// Open H.264 encoded bitstream from specified device
-func OpenH264(name string, width, height uint) (*VideoReader, error) {
-	return Open(name, width, height, V4L2_PIX_FMT_H264)
-}
-
 // Open specified video device
-func Open(name string, width, height, format uint) (*VideoReader, error) {
+func Open(name string, config *Config) (*VideoReader, error) {
 	var err error
 
 	r := &VideoReader{
-		width:      width,
-		height:     height,
 		numBuffers: 1,
 	}
 
@@ -61,7 +51,16 @@ func Open(name string, width, height, format uint) (*VideoReader, error) {
 	}
 
 	// Set pixel format
-	if err = r.setPixelFormat(uint32(width), uint32(height), uint32(format)); err != nil {
+	if err = r.setPixelFormat(uint32(config.Width), uint32(config.Height), uint32(config.Format)); err != nil {
+		return r, err
+	}
+
+	// Set repeat sequence headers
+	var repeatSequenceHeader int32
+	if config.RepeatSequenceHeader {
+		repeatSequenceHeader = 1
+	}
+	if err = r.SetCodecControl(V4L2_CID_MPEG_VIDEO_REPEAT_SEQ_HEADER, repeatSequenceHeader); err != nil {
 		return r, err
 	}
 

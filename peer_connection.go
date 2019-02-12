@@ -268,8 +268,15 @@ func (pc *PeerConnection) StreamH264(source io.Reader, wholeNALUs bool) error {
 			return 3, nil, nil
 		case 1:
 			return 4, nil, nil
+		// Found NAL unit boundary
 		default:
-			return i + 3, data[0:i], nil
+			if data[i-1] == 0 {
+				// 4 byte boundary
+				return i + 3, data[0 : i-1], nil
+			} else {
+				// 3 byte boundary
+				return i + 3, data[0:i], nil
+			}
 		}
 	}
 
@@ -288,10 +295,10 @@ func (pc *PeerConnection) StreamH264(source io.Reader, wholeNALUs bool) error {
 			b := scanner.Bytes()
 
 			// https://tools.ietf.org/html/rfc6184#section-1.3
-			fbit := (b[0] & 0x80) >> 7
+			forbiddenBit := (b[0] & 0x80) >> 7
 			nri := (b[0] & 0x60) >> 5
 			typ := b[0] & 0x1f
-			//log.Printf("F: %b, NRI: %02b, Type: %d, Length: %d\n", fbit, nri, typ, len(b))
+			//log.Printf("F: %b, NRI: %02b, Type: %d, Length: %d\n", forbiddenBit, nri, typ, len(b))
 
 			if (typ == 6) || (typ == 7) || (typ == 8) {
 				// Wrap SPS/PPS/SEI in STAP-A packet
@@ -303,8 +310,8 @@ func (pc *PeerConnection) StreamH264(source io.Reader, wholeNALUs bool) error {
 				stap = append(stap, byte(len>>8), byte(len))
 				stap = append(stap, b...)
 
-				// STAP-A F bit equals the bitwise OR of all aggregated F bits.
-				stap[0] |= fbit << 7
+				// STAP-A forbidden bit is bitwise-OR of all aggregated forbidden bits
+				stap[0] |= forbiddenBit << 7
 
 				// STAP-A NRI value is the maximum of all aggregated NRI values.
 				stapnri := (stap[0] & 0x60) >> 5

@@ -8,7 +8,11 @@ import (
 
 func main() {
 	// Open
-	dev, err := v4l2.OpenH264("/dev/video0", 1280, 720)
+	dev, err := v4l2.Open("/dev/video0", &v4l2.Config{
+		Width:  1280,
+		Height: 720,
+		Format: v4l2.V4L2_PIX_FMT_H264,
+	})
 	if err != nil {
 		panic(err)
 	}

@@ -21,6 +21,8 @@ package v4l2
 import (
 	"encoding/binary"
 	"unsafe"
+
+	"github.com/lanikailabs/alohartc/internal/logging"
 )
 
 // nativeEndian is the byte order for the local platform. Used to send back and
@@ -28,7 +30,11 @@ import (
 // some architectures can be booted into different endian modes.
 var nativeEndian binary.ByteOrder
 
+var log *logging.Logger
+
 func init() {
+	log = logging.DefaultLogger.WithTag("v4l2")
+
 	buf := [2]byte{}
 	*(*uint16)(unsafe.Pointer(&buf[0])) = uint16(0xABCD)
 
