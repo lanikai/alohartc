@@ -124,7 +124,12 @@ func streamVideo(pc *alohartc.PeerConnection) {
 
 	// Open the video source, either a v42l device, stdin, or a plain file.
 	if strings.HasPrefix(flagVideoSource, "/dev/video") {
-		v, err := v4l2.OpenH264(flagVideoSource, flagVideoWidth, flagVideoHeight)
+		v, err := v4l2.Open(flagVideoSource, &v4l2.Config{
+			Width:                flagVideoWidth,
+			Height:               flagVideoHeight,
+			Format:               v4l2.V4L2_PIX_FMT_H264,
+			RepeatSequenceHeader: true,
+		})
 		if err != nil {
 			log.Fatal(err)
 		}
