@@ -12,7 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/lanikailabs/alohartc/internal/logging"
+	"github.com/lanikai/alohartc/internal/logging"
 )
 
 const initialTickerInterval = time.Second

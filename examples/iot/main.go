@@ -7,9 +7,9 @@ import (
 	"os"
 	"strings"
 
-	"github.com/lanikailabs/alohartc"
-	"github.com/lanikailabs/alohartc/internal/signaling"
-	"github.com/lanikailabs/alohartc/internal/v4l2"
+	"github.com/lanikai/alohartc"
+	"github.com/lanikai/alohartc/internal/signaling"
+	"github.com/lanikai/alohartc/internal/v4l2"
 )
 
 // Flags

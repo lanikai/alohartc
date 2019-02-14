@@ -22,7 +22,7 @@ import (
 	"encoding/binary"
 	"unsafe"
 
-	"github.com/lanikailabs/alohartc/internal/logging"
+	"github.com/lanikai/alohartc/internal/logging"
 )
 
 // nativeEndian is the byte order for the local platform. Used to send back and

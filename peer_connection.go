@@ -12,11 +12,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lanikailabs/alohartc/internal/dtls" // subtree merged pions/dtls
-	"github.com/lanikailabs/alohartc/internal/ice"
-	"github.com/lanikailabs/alohartc/internal/mux"
-	"github.com/lanikailabs/alohartc/internal/sdp"
-	"github.com/lanikailabs/alohartc/internal/srtp"
+	"github.com/lanikai/alohartc/internal/dtls" // subtree merged pions/dtls
+	"github.com/lanikai/alohartc/internal/ice"
+	"github.com/lanikai/alohartc/internal/mux"
+	"github.com/lanikai/alohartc/internal/sdp"
+	"github.com/lanikai/alohartc/internal/srtp"
 )
 
 const (

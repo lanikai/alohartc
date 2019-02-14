@@ -11,8 +11,8 @@ import (
 
 	"github.com/gorilla/websocket"
 
-	"github.com/lanikailabs/alohartc"
-	"github.com/lanikailabs/alohartc/internal/v4l2"
+	"github.com/lanikai/alohartc"
+	"github.com/lanikai/alohartc/internal/v4l2"
 )
 
 // Flags

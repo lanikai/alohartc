@@ -4,7 +4,7 @@ import (
 	"errors"
 	"net"
 
-	"github.com/lanikailabs/alohartc/internal/dtls/internal/udp"
+	"github.com/lanikai/alohartc/internal/dtls/internal/udp"
 )
 
 // Listen creates a DTLS listener

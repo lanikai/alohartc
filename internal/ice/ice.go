@@ -3,7 +3,7 @@ package ice
 import (
 	"flag"
 
-	"github.com/lanikailabs/alohartc/internal/logging"
+	"github.com/lanikai/alohartc/internal/logging"
 )
 
 const defaultStunServer = "stun2.l.google.com:19302"

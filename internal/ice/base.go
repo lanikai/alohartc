@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/lanikailabs/alohartc/internal/mux"
+	"github.com/lanikai/alohartc/internal/mux"
 )
 
 // [RFC8445] defines a base to be "The transport address that an ICE agent sends from for a

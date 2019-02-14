@@ -1,6 +1,6 @@
 package alohartc
 
-import "github.com/lanikailabs/alohartc/internal/logging"
+import "github.com/lanikai/alohartc/internal/logging"
 
 var log *logging.Logger
 
