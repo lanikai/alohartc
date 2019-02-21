@@ -1,6 +1,7 @@
 package ice
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -26,12 +27,15 @@ type Agent struct {
 	dataConn  *ChannelConn
 	ready     chan *ChannelConn
 	readyOnce sync.Once
+
+	ctx context.Context
 }
 
 // Create a new ICE agent with the given username and passwords.
-func NewAgent() *Agent {
+func NewAgent(ctx context.Context) *Agent {
 	return &Agent{
 		ready: make(chan *ChannelConn, 1),
+		ctx:   ctx,
 	}
 }
 
@@ -184,6 +188,8 @@ func (a *Agent) loop(base Base) {
 
 	for {
 		select {
+		case <-a.ctx.Done():
+			return
 		case <-checklistUpdate:
 			log.Debug("Checklist state: %d", a.checklist.state)
 			switch a.checklist.state {
@@ -193,7 +199,7 @@ func (a *Agent) loop(base Base) {
 					a.readyOnce.Do(func() {
 						Ta.Stop()
 						log.Info("Selected candidate pair: %s", a.checklist.selected)
-						a.dataConn = createDataConn(a.checklist.selected, dataIn)
+						a.dataConn = createDataConn(a.ctx, a.checklist.selected, dataIn)
 						a.ready <- a.dataConn
 					})
 				}
@@ -274,7 +280,7 @@ func (a *Agent) adoptPeerReflexiveCandidate(raddr net.Addr, base Base, priority 
 	return p
 }
 
-func createDataConn(p *CandidatePair, dataIn chan []byte) *ChannelConn {
+func createDataConn(ctx context.Context, p *CandidatePair, dataIn chan []byte) *ChannelConn {
 	base := p.local.base
 	remoteAddr := p.remote.address.netAddr()
 	dataOut := make(chan []byte, 32)
@@ -283,14 +289,18 @@ func createDataConn(p *CandidatePair, dataIn chan []byte) *ChannelConn {
 	go func() {
 		// Read constantly from the 'dataOut' channel, and forward to the underlying connection.
 		for {
-			data := <-dataOut
-			if data == nil {
-				log.Debug("%s: Channel closed\n", p.id)
+			select {
+			case <-ctx.Done():
 				return
-			}
-			if _, err := base.WriteTo(data, remoteAddr); err != nil {
-				log.Warn("%v", err)
-				dataConn.Close()
+			case data := <-dataOut:
+				if data == nil {
+					log.Debug("%s: Channel closed\n", p.id)
+					return
+				}
+				if _, err := base.WriteTo(data, remoteAddr); err != nil {
+					log.Warn("%v", err)
+					dataConn.Close()
+				}
 			}
 		}
 	}()
