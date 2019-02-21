@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"io"
 	"log"
@@ -61,7 +62,9 @@ func main() {
 }
 
 func doSession(session *signaling.Session) {
-	pc := alohartc.NewPeerConnection()
+	// Create peer connection
+	pc := alohartc.NewPeerConnection(context.Background())
+
 	for {
 		t, p := session.ReceiveMessage()
 		switch t {
