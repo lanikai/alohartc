@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"io"
@@ -63,8 +64,10 @@ func websocketHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	defer ws.Close()
 
-	pc := alohartc.NewPeerConnection()
+	// Create peer connection
+	pc := alohartc.NewPeerConnection(context.Background())
 	defer pc.Close()
+
 	// Local ICE candidates, produced by the local ICE agent.
 	lcand := make(chan string, 16)
 

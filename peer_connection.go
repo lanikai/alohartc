@@ -3,6 +3,7 @@ package alohartc
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"crypto"
 	"crypto/x509"
 	"errors"
@@ -34,6 +35,10 @@ const (
 )
 
 type PeerConnection struct {
+	// Local context (for signaling)
+	localContext context.Context
+	teardown     context.CancelFunc
+
 	// Local session description
 	localDescription sdp.Session
 
@@ -53,32 +58,27 @@ type PeerConnection struct {
 	privateKey  crypto.PrivateKey // Private key
 	fingerprint string
 
-	// channel for signalling teardown
-	teardown chan bool
-
 	mux *mux.Mux
 }
 
-func NewPeerConnection() *PeerConnection {
+func NewPeerConnection(ctx context.Context) *PeerConnection {
+	var err error
+
+	pc := &PeerConnection{
+		iceAgent: ice.NewAgent(),
+	}
+
+	// Create cancelable context
+	pc.localContext, pc.teardown = context.WithCancel(ctx)
+
 	// Dynamically generate a certificate for the peer connection
-	certificate, privateKey, err := dtls.GenerateSelfSigned()
-	if err != nil {
+	if pc.certificate, pc.privateKey, err = dtls.GenerateSelfSigned(); err != nil {
 		panic(err)
 	}
 
 	// Compute certificate fingerprint for later inclusion in SDP offer/answer
-	fingerprint, err := dtls.Fingerprint(certificate, dtls.HashAlgorithmSHA256)
-	if err != nil {
+	if pc.fingerprint, err = dtls.Fingerprint(pc.certificate, dtls.HashAlgorithmSHA256); err != nil {
 		panic(err)
-	}
-
-	// Instantiate a peer connection object
-	pc := &PeerConnection{
-		iceAgent:    ice.NewAgent(),
-		certificate: certificate,
-		privateKey:  privateKey,
-		fingerprint: "sha-256 " + strings.ToUpper(fingerprint),
-		teardown:    make(chan bool),
 	}
 
 	return pc
@@ -131,7 +131,7 @@ func (pc *PeerConnection) createAnswer() sdp.Session {
 				{"ice-ufrag", "n3E3"},
 				{"ice-pwd", "auh7I7RsuhlZQgS2XYLStR05"},
 				{"ice-options", "trickle"},
-				{"fingerprint", pc.fingerprint},
+				{"fingerprint", "sha-256 " + strings.ToUpper(pc.fingerprint)},
 				{"setup", "active"},
 				{"sendonly", ""},
 				{"rtcp-mux", ""},
@@ -238,10 +238,15 @@ func (pc *PeerConnection) Connect(lcand chan<- string) error {
 
 func (pc *PeerConnection) Close() {
 	log.Info("Closing peer connection")
-	pc.teardown <- true
+
+	// Call context cancel function
+	pc.teardown()
+
 	if pc.srtpSession != nil {
 		pc.srtpSession.Close()
 	}
+
+	// TODO pc.mux.Close()
 }
 
 // Stream a raw H.264 video over the peer connection. If wholeNALUs is true, assume that each Read()
@@ -288,7 +293,7 @@ func (pc *PeerConnection) StreamH264(source io.Reader, wholeNALUs bool) error {
 	for scanner.Scan() {
 
 		select {
-		case <-pc.teardown:
+		case <-pc.localContext.Done():
 			return nil
 
 		default:
