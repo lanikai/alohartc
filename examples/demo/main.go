@@ -64,6 +64,7 @@ func websocketHandler(w http.ResponseWriter, r *http.Request) {
 	defer ws.Close()
 
 	pc := alohartc.NewPeerConnection()
+	defer pc.Close()
 	// Local ICE candidates, produced by the local ICE agent.
 	lcand := make(chan string, 16)
 
@@ -86,13 +87,13 @@ func websocketHandler(w http.ResponseWriter, r *http.Request) {
 			ws.WriteJSON(message{Type: "answer", Text: answer})
 			go sendIceCandidates(ws, lcand, pc.SdpMid())
 
-			if err := pc.Connect(lcand); err != nil {
-				log.Println(err)
-				return
-			}
-			defer pc.Close()
-
-			go streamVideo(pc)
+			go func() {
+				if err := pc.Connect(lcand); err != nil {
+					log.Println(err)
+					return
+				}
+				streamVideo(pc)
+			}()
 
 		case "iceCandidate":
 			if msg.Text == "" {
