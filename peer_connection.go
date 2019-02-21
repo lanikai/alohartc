@@ -64,12 +64,12 @@ type PeerConnection struct {
 func NewPeerConnection(ctx context.Context) *PeerConnection {
 	var err error
 
-	pc := &PeerConnection{
-		iceAgent: ice.NewAgent(),
-	}
+	pc := &PeerConnection{}
 
 	// Create cancelable context
 	pc.localContext, pc.teardown = context.WithCancel(ctx)
+
+	pc.iceAgent = ice.NewAgent(pc.localContext)
 
 	// Dynamically generate a certificate for the peer connection
 	if pc.certificate, pc.privateKey, err = dtls.GenerateSelfSigned(); err != nil {
