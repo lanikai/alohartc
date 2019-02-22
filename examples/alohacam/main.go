@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/gorilla/websocket"
 
@@ -17,8 +18,13 @@ import (
 	"github.com/lanikai/alohartc/internal/v4l2"
 )
 
+// Populated via -ldflags="-X ...". See Makefile.
+var BuildDate string
+var GitRevisionId string
+
 // Flags
 var (
+
 	// HTTP port on which to listen
 	flagPort int
 
@@ -116,8 +122,8 @@ func sendIceCandidates(ws *websocket.Conn, lcand <-chan ice.Candidate) {
 	for c := range lcand {
 		log.Println("Local ICE", c)
 		ws.WriteJSON(message{
-			Type: "iceCandidate",
-			Text: c.String(),
+			Type:   "iceCandidate",
+			Text:   c.String(),
 			Params: map[string]string{"sdpMid": c.Mid()},
 		})
 	}
@@ -188,7 +194,25 @@ func streamVideo(pc *alohartc.PeerConnection) {
 	}
 }
 
+func version() {
+	fmt.Println("🌈 Alohacam")
+
+	if GitRevisionId != "" {
+		fmt.Println("Git revision:\t", GitRevisionId)
+	}
+
+	if BuildDate != "" {
+		fmt.Println("Build Date:\t", BuildDate)
+	}
+
+	fmt.Println("Copyright", time.Now().Year(), "Lanikai Labs. All rights reserved.")
+
+	fmt.Println("")
+}
+
 func main() {
+	version()
+
 	flag.Parse()
 
 	log.SetFlags(log.LstdFlags | log.Lshortfile | log.Lmicroseconds)
@@ -199,13 +223,18 @@ func main() {
 	http.HandleFunc("/ws", websocketHandler)
 
 	// Get hostname
-	hostname, err := os.Hostname()
+	url, err := os.Hostname()
 	if err != nil {
-		hostname = "localhost"
+		url = "localhost"
+	} else if strings.IndexAny(url, ".") == -1 {
+		url += ".local"
+	}
+	if flagPort != 80 {
+		url += fmt.Sprintf(":%d", flagPort)
 	}
 
 	// Listen on port
-	fmt.Printf("Demo is running. Open http://%s:%d in a browser.\n", hostname, flagPort)
+	fmt.Printf("Open http://%s/ in a browser\n", url)
 	if err := http.ListenAndServe(fmt.Sprintf(":%d", flagPort), nil); err != nil {
 		log.Fatal("ListenAndServer: ", err)
 	}
