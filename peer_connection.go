@@ -1,3 +1,5 @@
+// Copyright (c) 2019 Lanikai Labs. All rights reserved.
+
 package alohartc
 
 import (
@@ -30,8 +32,10 @@ const (
 
 	naluBufferSize = 2 * 1024 * 1024
 
-	srtpMasterKeyLen     = 16
-	srtpMasterKeySaltLen = 14
+	keyLen  = 16
+	saltLen = 14
+
+	maxSRTCPSize = 65536
 )
 
 type PeerConnection struct {
@@ -201,9 +205,6 @@ func (pc *PeerConnection) Connect(lcand chan<- ice.Candidate) error {
 	// Instantiate a new endpoint for SRTP from multiplexer
 	srtpEndpoint := pc.mux.NewEndpoint(mux.MatchSRTP)
 
-	// Drop SRTCP
-	_ = pc.mux.NewEndpoint(mux.MatchSRTCP)
-
 	// Configuration for DTLS handshake, namely certificate and private key
 	config := &dtls.Config{Certificate: pc.certificate, PrivateKey: pc.privateKey}
 
@@ -214,21 +215,24 @@ func (pc *PeerConnection) Connect(lcand chan<- ice.Candidate) error {
 	}
 
 	// Create SRTP keys from DTLS handshake (see RFC5764 Section 4.2)
-	material, err := dtlsConn.ExportKeyingMaterial("EXTRACTOR-dtls_srtp", nil, (srtpMasterKeyLen*2)+(srtpMasterKeySaltLen*2))
+	material, err := dtlsConn.ExportKeyingMaterial("EXTRACTOR-dtls_srtp", nil, 2*keyLen+2*saltLen)
 	if err != nil {
 		return err
 	}
+	offset := 0
+	writeKey := append([]byte{}, material[offset:offset+keyLen]...)
+	offset += keyLen
+	readKey := append([]byte{}, material[offset:offset+keyLen]...)
+	offset += keyLen
+	writeSalt := append([]byte{}, material[offset:offset+saltLen]...)
+	offset += saltLen
+	readSalt := append([]byte{}, material[offset:offset+saltLen]...)
 
-	// Keying material consists of:
-	//   0                    ..     keylen               - 1: write key
-	//       keylen           .. 2 * keylen               - 1: read key (unused)
-	//   2 * keylen           .. 2 * keylen +     saltlen - 1: write salt
-	//   2 * keylen + saltlen .. 2 * keylen + 2 * saltlen - 1: read salt (unused)
-	key := append([]byte{}, material[0:srtpMasterKeyLen]...)
-	salt := append([]byte{}, material[2*srtpMasterKeyLen:2*srtpMasterKeyLen+srtpMasterKeySaltLen]...)
+	// Start goroutine for processing incoming SRTCP packets
+	go srtcpReaderRunloop(pc.mux, readKey, readSalt)
 
 	// Instantiate a new SRTP session
-	pc.srtpSession, err = srtp.NewSession(srtpEndpoint, pc.DynamicType, key, salt)
+	pc.srtpSession, err = srtp.NewSession(srtpEndpoint, pc.DynamicType, writeKey, writeSalt)
 
 	return err
 }
@@ -239,11 +243,10 @@ func (pc *PeerConnection) Close() {
 	// Call context cancel function
 	pc.teardown()
 
-	if pc.srtpSession != nil {
-		pc.srtpSession.Close()
+	// Close connection multiplexer and its endpoints
+	if pc.mux != nil {
+		pc.mux.Close()
 	}
-
-	// TODO pc.mux.Close()
 }
 
 // Stream a raw H.264 video over the peer connection. If wholeNALUs is true, assume that each Read()
