@@ -36,9 +36,7 @@
 
     ws.addEventListener("message", function (event) {
       var msg = JSON.parse(event.data);
-      console.log("websocket message received")
-      console.log("type:", msg.type)
-      console.log("text:", msg.text);
+      console.log("websocket message received:", msg)
       switch(msg.type) {
         case "answer":
           pc.setRemoteDescription({ "type": "answer", "sdp": msg.text })

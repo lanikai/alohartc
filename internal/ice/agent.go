@@ -115,7 +115,7 @@ func (a *Agent) gatherLocalCandidates(bases []*Base, lcand chan<- Candidate) err
 		go func(base *Base) {
 			log.Info("Gathering local candidates for base %s\n", base.address)
 			// Host candidate for peers on the same LAN.
-			hc := makeHostCandidate(base)
+			hc := makeHostCandidate(a.mid, base)
 			a.addLocalCandidate(hc)
 			lcand <- hc
 
@@ -127,7 +127,7 @@ func (a *Agent) gatherLocalCandidates(bases []*Base, lcand chan<- Candidate) err
 				} else if mappedAddress == base.address {
 					log.Warn("Server-reflexive address for %s is same as base\n", base.address)
 				} else {
-					c := makeServerReflexiveCandidate(mappedAddress, base, flagStunServer)
+					c := makeServerReflexiveCandidate(a.mid, mappedAddress, base, flagStunServer)
 					a.addLocalCandidate(c)
 					lcand <- c
 				}
@@ -237,11 +237,11 @@ func (a *Agent) handleStunRequest(req *stunMessage, raddr net.Addr, base *Base) 
 
 // [RFC8445 §7.3.1.3-4]
 func (a *Agent) adoptPeerReflexiveCandidate(raddr net.Addr, base *Base, priority uint32) *CandidatePair {
-	c := makePeerReflexiveCandidate(raddr, base, priority)
+	c := makePeerReflexiveCandidate(a.mid, raddr, base, priority)
 	a.remoteCandidates = append(a.remoteCandidates, c)
 
 	// Pair peer reflexive candidate with host candidate.
-	hc := makeHostCandidate(base)
+	hc := makeHostCandidate(a.mid, base)
 	a.checklist.addCandidatePairs([]Candidate{hc}, []Candidate{c})
 
 	p := a.checklist.findPair(base, raddr)
