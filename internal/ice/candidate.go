@@ -149,26 +149,27 @@ func (c Candidate) String() string {
 // An ICE candidate line is a string of the form
 //   candidate:{foundation} {component-id} {protocol} {priority} {address} {port} typ {type} ...
 // See https://tools.ietf.org/html/draft-ietf-mmusic-ice-sip-sdp-24#section-4.1
-func parseCandidateSDP(desc string, c *Candidate) error {
+func ParseCandidate(desc, sdpMid string) (c Candidate, err error) {
 	r := strings.NewReader(desc)
 
 	var protocol, ip, port string
-	_, err := fmt.Fscanf(r, "candidate:%s %d %s %d %s %s typ %s",
+	_, err = fmt.Fscanf(r, "candidate:%s %d %s %d %s %s typ %s",
 		&c.foundation, &c.component, &protocol, &c.priority, &ip, &port, &c.typ)
 	if err != nil {
-		return err
+		return
 	}
 	if c.component < 1 || c.component > 256 {
-		return fmt.Errorf("Component ID out of range: %d", c.component)
+		err = fmt.Errorf("Component ID out of range: %d", c.component)
+		return
 	}
 
 	ipPort := net.JoinHostPort(ip, port)
 	network := strings.ToLower(protocol)
-	if addr, err := resolveAddr(network, ipPort); err != nil {
-		return err
-	} else {
-		c.address = makeTransportAddress(addr)
+	netAddr, err := resolveAddr(network, ipPort)
+	if err != nil {
+		return
 	}
+	c.address = makeTransportAddress(netAddr)
 
 	// The rest of the candidate line consists of "name value" pairs.
 	scanner := bufio.NewScanner(r)
@@ -189,10 +190,12 @@ func parseCandidateSDP(desc string, c *Candidate) error {
 		name = ""
 	}
 	if name != "" {
-		return fmt.Errorf("Unmatched attribute name: %s", name)
+		err = fmt.Errorf("Unmatched attribute name: %s", name)
+		return
 	}
 
-	return nil
+	c.mid = sdpMid
+	return
 }
 
 func resolveAddr(network, address string) (net.Addr, error) {

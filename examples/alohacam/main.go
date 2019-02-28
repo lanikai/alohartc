@@ -4,118 +4,17 @@ import (
 	"flag"
 	"fmt"
 	"log"
-	"net/http"
 	"os"
 	"strings"
 	"time"
 
-	"github.com/gorilla/websocket"
-
 	"github.com/lanikai/alohartc"
-	"github.com/lanikai/alohartc/internal/ice"
+	"github.com/lanikai/alohartc/internal/signaling"
 )
 
 // Populated via -ldflags="-X ...". See Makefile.
 var BuildDate string
 var GitRevisionId string
-
-// Flags
-var (
-	// HTTP port on which to listen
-	flagPort int
-)
-
-func init() {
-	flag.IntVar(&flagPort, "p", 8000, "HTTP port on which to listen")
-}
-
-var upgrader = websocket.Upgrader{
-	ReadBufferSize:  1024,
-	WriteBufferSize: 1024,
-}
-
-type message struct {
-	Type   string            `json:"type"`
-	Text   string            `json:"text"`
-	Params map[string]string `json:"params,omitempty"`
-}
-
-// websocketHandler returns a parameterized websocket handler
-func websocketHandler(ms alohartc.MediaSource) func(w http.ResponseWriter, r *http.Request) {
-	return func(w http.ResponseWriter, r *http.Request) {
-		// Upgrade websocket connection
-		ws, err := upgrader.Upgrade(w, r, nil)
-		if err != nil {
-			log.Println("upgrade:", err)
-			return
-		}
-		defer ws.Close()
-
-		// Get new track from media source. Close it when session ends.
-		track := ms.GetTrack()
-		defer ms.CloseTrack(track)
-
-		// Create peer connection with one video track
-		pc := alohartc.Must(alohartc.NewPeerConnection(alohartc.Config{
-			VideoTrack: track,
-		}))
-		defer pc.Close()
-
-		// Handle incoming websocket messages
-		for {
-			// Read JSON message
-			msg := message{}
-			if err := ws.ReadJSON(&msg); err != nil {
-				log.Println(err)
-				return
-			}
-
-			switch msg.Type {
-			case "offer":
-				answer, err := pc.SetRemoteDescription(msg.Text)
-				if err != nil {
-					log.Println(err)
-					return
-				}
-				ws.WriteJSON(message{Type: "answer", Text: answer})
-				go sendIceCandidates(ws, pc.LocalICECandidates())
-
-				// Use separate goroutine to not block websocket
-				go func() {
-					// Blocks. On error, close websocket connection.
-					if err := pc.Connect(); err != nil {
-						log.Println(err)
-						ws.Close()
-					}
-				}()
-
-			case "iceCandidate":
-				if msg.Text == "" {
-					log.Println("End of remote ICE candidates")
-					pc.AddIceCandidate("", "")
-				} else {
-					log.Println("Remote ICE", msg.Text)
-					pc.AddIceCandidate(msg.Text, msg.Params["sdpMid"])
-				}
-			}
-		}
-	}
-}
-
-// Relay local ICE candidates to the remote ICE agent as soon as they become available.
-func sendIceCandidates(ws *websocket.Conn, lcand <-chan ice.Candidate) {
-	for c := range lcand {
-		log.Println("Local ICE", c)
-		ws.WriteJSON(message{
-			Type:   "iceCandidate",
-			Text:   c.String(),
-			Params: map[string]string{"sdpMid": c.Mid()},
-		})
-	}
-	log.Println("End of local ICE candidates")
-	// Plus an empty candidate to indicate the end of the list.
-	ws.WriteJSON(message{Type: "iceCandidate"})
-}
 
 func version() {
 	fmt.Println("🌈 Alohacam")
@@ -132,6 +31,8 @@ func version() {
 
 	fmt.Println("")
 }
+
+var source alohartc.MediaSource
 
 func main() {
 	// Define and parse optional flags
@@ -150,7 +51,6 @@ func main() {
 	log.SetFlags(log.LstdFlags | log.Lshortfile | log.Lmicroseconds)
 
 	// Open media source
-	var source alohartc.MediaSource
 	{
 		var err error
 		if strings.HasPrefix(*input, "/dev/video") {
@@ -173,25 +73,54 @@ func main() {
 	}
 	defer source.Close()
 
-	// Routes
-	http.HandleFunc("/", indexHandler)
-	http.Handle("/static/", http.StripPrefix("/static/", StaticServer()))
-	http.HandleFunc("/ws", websocketHandler(source))
+	sc := signaling.NewClient(doPeerSession)
+	log.Fatal(sc.Listen())
+}
 
-	// Get hostname
-	url, err := os.Hostname()
-	if err != nil {
-		url = "localhost"
-	} else if strings.IndexAny(url, ".") == -1 {
-		url += ".local"
-	}
-	if flagPort != 80 {
-		url += fmt.Sprintf(":%d", flagPort)
+func doPeerSession(ss *signaling.Session) {
+	// Get new track from media source. Close it when session ends.
+	track := source.GetTrack()
+	defer source.CloseTrack(track)
+
+	// Create peer connection with one video track
+	pc := alohartc.Must(alohartc.NewPeerConnectionWithContext(
+		ss.Context,
+		alohartc.Config{
+			VideoTrack: track,
+		}))
+	defer pc.Close()
+
+	// Wait for SDP offer from remote peer, and send our answer.
+	select {
+	case <-ss.Done():
+		log.Fatal(ss.Err())
+	case offer := <-ss.Offer:
+		answer, err := pc.SetRemoteDescription(offer)
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		if err := ss.SendAnswer(answer); err != nil {
+			log.Fatal(err)
+		}
 	}
 
-	// Listen on port
-	fmt.Printf("Open http://%s/ in a browser\n", url)
-	if err := http.ListenAndServe(fmt.Sprintf(":%d", flagPort), nil); err != nil {
-		log.Fatal("ListenAndServer: ", err)
+	// Pass remote ICE candidates along to the PeerConnection.
+	go func() {
+		for c := range ss.RemoteCandidates {
+			pc.AddIceCandidate(c)
+		}
+	}()
+
+	// Send local ICE candidates to the remote peer.
+	go func() {
+		for c := range pc.LocalICECandidates() {
+			ss.SendLocalCandidate(c)
+		}
+	}()
+
+	// Block until we're connected.
+	if err := pc.Connect(); err != nil {
+		log.Println(err)
 	}
 }

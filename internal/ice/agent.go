@@ -107,17 +107,7 @@ func (a *Agent) ReceiveLocalCandidates() <-chan Candidate {
 	return a.lcand
 }
 
-func (a *Agent) AddRemoteCandidate(desc, mid string) error {
-	if desc == "" {
-		// TODO: This should signal end of trickling.
-		return nil
-	}
-
-	c := Candidate{mid: mid}
-	if err := parseCandidateSDP(desc, &c); err != nil {
-		return err
-	}
-
+func (a *Agent) AddRemoteCandidate(c Candidate) error {
 	a.remoteCandidates = append(a.remoteCandidates, c)
 	// Pair new remote candidate with all existing local candidates.
 	a.checklist.addCandidatePairs(a.localCandidates, []Candidate{c})
@@ -128,6 +118,7 @@ func (a *Agent) addLocalCandidate(c Candidate) {
 	a.localCandidates = append(a.localCandidates, c)
 	// Pair new local candidate with all existing remote candidates.
 	a.checklist.addCandidatePairs([]Candidate{c}, a.remoteCandidates)
+	a.lcand <- c
 }
 
 // Gather local candidates. Pass candidates to lcand as they become known.
@@ -140,7 +131,6 @@ func (a *Agent) gatherLocalCandidates(bases []*Base) error {
 			// Host candidate for peers on the same LAN.
 			hc := makeHostCandidate(a.mid, base)
 			a.addLocalCandidate(hc)
-			a.lcand <- hc
 
 			if base.address.protocol == UDP && !base.address.linkLocal {
 				// Query STUN server to get a server reflexive candidate.
@@ -152,7 +142,6 @@ func (a *Agent) gatherLocalCandidates(bases []*Base) error {
 				} else {
 					c := makeServerReflexiveCandidate(a.mid, mappedAddress, base, flagStunServer)
 					a.addLocalCandidate(c)
-					a.lcand <- c
 				}
 
 				// TODO: TURN
