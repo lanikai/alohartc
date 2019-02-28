@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta charset="utf-8">
-  <title>{{ define "title" }}{{ end }}</title>
+  <title>Alohacam Local Demo</title>
   <style>
     html {
       padding: 0;
@@ -25,7 +25,7 @@
 <body>
   <video id="remoteVideo" autoplay controls muted playsinline></video>
 
-  <script src="/static/js/adapter-latest.js"></script>
+  <script src="/adapter-latest.js"></script>
   <script>
     let pc;
 
@@ -39,7 +39,7 @@
       console.log("websocket message received:", msg)
       switch(msg.type) {
         case "answer":
-          pc.setRemoteDescription({ "type": "answer", "sdp": msg.text })
+          pc.setRemoteDescription({ "type": "answer", "sdp": msg.sdp })
           .then(function() {
             console.log("setRemoteDescription success");
           }).catch(function(error) {
@@ -47,10 +47,10 @@
           });
           break;
         case "iceCandidate":
-          if (msg.text) {
+          if (msg.candidate) {
             pc.addIceCandidate({
-              candidate: msg.text,
-              sdpMid: msg.params.sdpMid,
+              candidate: msg.candidate,
+              sdpMid: msg.sdpMid,
             }).catch(function(error) {
               console.log("Failed to add remote ICE candidate to local ICE agent:", error);
             });
@@ -85,8 +85,8 @@
         let msg = {type: "iceCandidate"};
         let c = event.candidate;
         if (c) {
-          msg.text = c.candidate;
-          msg.params = {sdpMid: c.sdpMid};
+          msg.candidate = c.candidate;
+          msg.sdpMid = c.sdpMid;
         }
         ws.send(JSON.stringify(msg));
       };
@@ -111,12 +111,12 @@
       }
 
       // Called upon successful offer creation
-      function onCreateOfferSuccess(desc) {
-        console.log("onCreateOfferSuccess:", desc.sdp);
-        pc.setLocalDescription(desc);
+      function onCreateOfferSuccess(offer) {
+        console.log("onCreateOfferSuccess:", offer.sdp);
+        pc.setLocalDescription(offer);
         ws.send(JSON.stringify({
           type: "offer",
-          text: desc.sdp
+          sdp: offer.sdp
         }));
       }
 

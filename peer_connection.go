@@ -217,10 +217,9 @@ func (pc *PeerConnection) LocalICECandidates() <-chan ice.Candidate {
 	return pc.iceAgent.ReceiveLocalCandidates()
 }
 
-// Add remote ICE candidate from an SDP candidate string. An empty string for `desc` denotes
-// the end of remote candidates.
-func (pc *PeerConnection) AddIceCandidate(desc, mid string) error {
-	return pc.iceAgent.AddRemoteCandidate(desc, mid)
+// Add remote ICE candidate.
+func (pc *PeerConnection) AddIceCandidate(c ice.Candidate) error {
+	return pc.iceAgent.AddRemoteCandidate(c)
 }
 
 // Connect to remote peer. Sends local ICE candidates via signaler.
