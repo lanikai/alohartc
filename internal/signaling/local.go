@@ -31,7 +31,7 @@ type localWebClient struct {
 	server  *http.Server
 }
 
-func newLocalWebClient(handler SessionHandler) *localWebClient {
+func newLocalWebClient(handler SessionHandler) (*localWebClient, error) {
 	router := http.NewServeMux()
 	c := &localWebClient{
 		handler: handler,
@@ -43,7 +43,7 @@ func newLocalWebClient(handler SessionHandler) *localWebClient {
 
 	router.Handle("/", http.FileServer(localdata.FS(false)))
 	router.HandleFunc("/ws", c.handleWebsocket)
-	return c
+	return c, nil
 }
 
 func (c *localWebClient) Listen() error {
@@ -78,8 +78,8 @@ func (c *localWebClient) handleWebsocket(w http.ResponseWriter, r *http.Request)
 	}
 	defer ws.Close()
 
-	offerCh := make(chan string, 1)
-	rcandCh := make(chan ice.Candidate, 8)
+	offerCh := make(chan string)
+	rcandCh := make(chan ice.Candidate)
 	session := &Session{
 		Context:          ctx,
 		Offer:            offerCh,

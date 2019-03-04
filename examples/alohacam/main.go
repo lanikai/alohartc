@@ -73,8 +73,11 @@ func main() {
 	}
 	defer source.Close()
 
-	sc := signaling.NewClient(doPeerSession)
-	log.Fatal(sc.Listen())
+	sig, err := signaling.NewClient(doPeerSession)
+	if err != nil {
+		log.Fatal(err)
+	}
+	log.Fatal(sig.Listen())
 }
 
 func doPeerSession(ss *signaling.Session) {
@@ -90,10 +93,8 @@ func doPeerSession(ss *signaling.Session) {
 		}))
 	defer pc.Close()
 
-	// Wait for SDP offer from remote peer, and send our answer.
+	// Wait for SDP offer from remote peer, then send our answer.
 	select {
-	case <-ss.Done():
-		log.Fatal(ss.Err())
 	case offer := <-ss.Offer:
 		answer, err := pc.SetRemoteDescription(offer)
 		if err != nil {
@@ -103,6 +104,8 @@ func doPeerSession(ss *signaling.Session) {
 		if err := ss.SendAnswer(answer); err != nil {
 			log.Fatal(err)
 		}
+	case <-ss.Done():
+		log.Fatal(ss.Err())
 	}
 
 	// Pass remote ICE candidates along to the PeerConnection.
