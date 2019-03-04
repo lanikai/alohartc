@@ -1,5 +1,6 @@
 package signaling
 
+// TODO: Rename Client -> Signaler.
 type Client interface {
 	// Connect to the signaling server and handle incoming sessions.
 	//
@@ -12,7 +13,8 @@ type Client interface {
 
 type SessionHandler func(s *Session)
 
-func NewClient(handler SessionHandler) Client {
+func NewClient(handler SessionHandler) (Client, error) {
 	// TODO: Support pluggable signaling clients, using conditional compilation.
-	return newLocalWebClient(handler)
+	//return newLocalWebClient(handler)
+	return newMQTTSignaler(handler)
 }
