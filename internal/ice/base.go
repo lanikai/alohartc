@@ -38,6 +38,12 @@ func establishBases(component int) (bases []*Base, err error) {
 			// TODO: Probably we need these if we're not connected to any network.
 			continue
 		}
+
+		// Skip down interfaces
+		if iface.Flags&net.FlagUp == 0 {
+			continue
+		}
+
 		var addrs []net.Addr
 		addrs, err = iface.Addrs()
 		if err != nil {
@@ -47,13 +53,13 @@ func establishBases(component int) (bases []*Base, err error) {
 			log.Debug("Local address %v", addr)
 			ipnet, ok := addr.(*net.IPNet)
 			if !ok {
-				log.Panicf("Unexpected address type: %T", addr)
+				log.Error("Unexpected address type: %T", addr)
 			}
 
 			ip := ipnet.IP
 			if !flagEnableIPv6 {
 				if ip4 := ip.To4(); ip4 == nil {
-					// Must be an IPv6 address. Skip it.
+					// Not an IPv4 address -- skip it
 					continue
 				}
 			}
@@ -132,6 +138,10 @@ func (base *Base) sendStun(msg *stunMessage, raddr net.Addr, handler stunHandler
 
 // Read continuously from the connection. STUN messages go to handlers, other data to dataIn.
 func (base *Base) demuxStun(defaultHandler stunHandler, dataIn chan<- []byte) {
+	defer func() {
+		close(dataIn)
+	}()
+
 	buf := make([]byte, 4096)
 	for {
 		base.SetReadDeadline(time.Now().Add(60 * time.Second))
@@ -176,11 +186,7 @@ func (base *Base) demuxStun(defaultHandler stunHandler, dataIn chan<- []byte) {
 			}
 		} else {
 			// Not a STUN packet, forward it on
-			select {
-			case dataIn <- data:
-			default:
-				//log.Debug("Warning: Data discarded")
-			}
+			dataIn <- data
 		}
 	}
 }

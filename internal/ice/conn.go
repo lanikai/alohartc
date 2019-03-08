@@ -2,6 +2,7 @@ package ice
 
 import (
 	"errors"
+	"io"
 	"math"
 	"net"
 	"time"
@@ -9,118 +10,98 @@ import (
 
 // Implements net.Conn with channels.
 type ChannelConn struct {
+	// Underlying UDP connection
+	conn *net.UDPConn
+
 	in     <-chan []byte // Channel for reads
-	out    chan<- []byte // Channel for writes
 	laddr  net.Addr      // Local address
 	raddr  net.Addr      // Remote address
 	rtimer *time.Timer   // Timer to enforce read deadline
-	wtimer *time.Timer   // Timer to enforce write deadline
-	closed chan struct{}
 }
 
-const never = math.MaxInt64
-
-func newChannelConn(in <-chan []byte, out chan<- []byte, laddr, raddr net.Addr) *ChannelConn {
-	c := &ChannelConn{}
-	c.in = in
-	c.out = out
-	c.laddr = laddr
-	c.raddr = raddr
-	c.rtimer = time.NewTimer(never)
-	c.wtimer = time.NewTimer(never)
-	c.closed = make(chan struct{})
-	return c
+// newChannelConn returns a new initialized channel-based connection
+func NewChannelConn(base *Base, in <-chan []byte, raddr net.Addr) *ChannelConn {
+	return &ChannelConn{
+		conn:   base.UDPConn,
+		in:     in,
+		raddr:  raddr,
+		rtimer: time.NewTimer(math.MaxInt64),
+	}
 }
 
-func (c *ChannelConn) Read(b []byte) (n int, err error) {
+// Read next buffer from connection. If closed, returns with n = 0.
+func (c *ChannelConn) Read(b []byte) (int, error) {
 	select {
-	case <-c.closed:
-		err = errors.New("Channel closed during read")
 	case data, ok := <-c.in:
-		if ok {
-			// TODO: Deal with case where data doesn't fit in b
-			n = len(data)
-			copy(b, data)
+		if !ok {
+			return 0, io.EOF
 		}
+
+		if len(data) > len(b) {
+			log.Warn("read truncated due to short buffer")
+		}
+
+		copy(b, data)
+
+		return len(data), nil
+
 	case <-c.rtimer.C:
-		err = errors.New("Read timeout")
+		return 0, errors.New("read timeout")
 	}
-	return
 }
 
-func (c *ChannelConn) Write(b []byte) (n int, err error) {
-	select {
-	case <-c.closed:
-		err = errors.New("Channel closed during write")
-	case c.out <- b:
-		n = len(b)
-	case <-c.wtimer.C:
-		err = errors.New("Write timeout")
-	}
-	return
+// Write buffer to connection. If closed, returns with n = 0.
+func (c *ChannelConn) Write(b []byte) (int, error) {
+	return c.conn.WriteTo(b, c.raddr)
 }
 
 func (c *ChannelConn) Close() error {
-	select {
-	case <-c.closed:
-	default:
-		// First time closing, so also close the out channel.
-		close(c.out)
-		close(c.closed)
-	}
 	return nil
 }
 
 func (c *ChannelConn) LocalAddr() net.Addr {
-	return c.laddr
+	return c.conn.LocalAddr()
 }
 
 func (c *ChannelConn) RemoteAddr() net.Addr {
 	return c.raddr
 }
 
+// SetDeadline sets both the read and write timeouts
 func (c *ChannelConn) SetDeadline(t time.Time) error {
 	if err := c.SetReadDeadline(t); err != nil {
 		return err
 	}
+
 	if err := c.SetWriteDeadline(t); err != nil {
 		return err
 	}
+
 	return nil
 }
 
 func (c *ChannelConn) SetReadDeadline(t time.Time) error {
-	var d time.Duration
-	if t.IsZero() {
-		d = never
-	} else {
-		d = time.Until(t)
-	}
+	// Stop timer, and, if already stopped, drain channel
 	if !c.rtimer.Stop() {
-		// Timer already expired. Drain the channel.
 		select {
+		// Prevent timer from firing after call to rtimer.Stop()
 		case <-c.rtimer.C:
+
+		// If timer stopped by a previous call, reading from rtimer.C would
+		// block. This default case prevents deadlock.
 		default:
 		}
 	}
-	c.rtimer.Reset(d)
+
+	// Reset timer, if a non-zero deadline specified
+	if !t.IsZero() {
+		c.rtimer.Reset(time.Until(t))
+	}
+
 	return nil
 }
 
+// SetWriteDeadline sets a write timeout
 func (c *ChannelConn) SetWriteDeadline(t time.Time) error {
-	var d time.Duration
-	if t.IsZero() {
-		d = never
-	} else {
-		d = time.Until(t)
-	}
-	if !c.wtimer.Stop() {
-		// Timer already expired. Drain the channel.
-		select {
-		case <-c.wtimer.C:
-		default:
-		}
-	}
-	c.wtimer.Reset(d)
-	return nil
+	return c.conn.SetWriteDeadline(t)
 }

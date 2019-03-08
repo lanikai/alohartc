@@ -75,9 +75,6 @@ func websocketHandler(w http.ResponseWriter, r *http.Request) {
 	pc := alohartc.NewPeerConnection(context.Background())
 	defer pc.Close()
 
-	// Local ICE candidates, produced by the local ICE agent.
-	lcand := make(chan ice.Candidate, 16)
-
 	// Handle incoming websocket messages
 	for {
 		// Read JSON message
@@ -95,10 +92,10 @@ func websocketHandler(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			ws.WriteJSON(message{Type: "answer", Text: answer})
-			go sendIceCandidates(ws, lcand)
+			go sendIceCandidates(ws, pc.LocalICECandidates())
 
 			go func() {
-				if err := pc.Connect(lcand); err != nil {
+				if err := pc.Connect(); err != nil {
 					log.Println(err)
 					return
 				}
