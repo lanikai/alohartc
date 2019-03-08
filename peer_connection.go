@@ -181,20 +181,26 @@ func (pc *PeerConnection) SetRemoteDescription(sdpOffer string) (sdpAnswer strin
 	return answer.String(), nil
 }
 
+// Return a channel for receiving local ICE candidates.
+func (pc *PeerConnection) LocalICECandidates() <-chan ice.Candidate {
+	return pc.iceAgent.ReceiveLocalCandidates()
+}
+
 // Add remote ICE candidate from an SDP candidate string. An empty string for `desc` denotes
 // the end of remote candidates.
 func (pc *PeerConnection) AddIceCandidate(desc, mid string) error {
 	return pc.iceAgent.AddRemoteCandidate(desc, mid)
 }
 
-// Attempt to connect to remote peer. Send local ICE candidates to lcand.
-func (pc *PeerConnection) Connect(lcand chan<- ice.Candidate) error {
-	ia := pc.iceAgent
-
-	iceConn, err := ia.EstablishConnection(lcand)
+// Connect to remote peer. Sends local ICE candidates via signaler.
+func (pc *PeerConnection) Connect() error {
+	// Connect to remote peer
+	ctx, cancel := context.WithTimeout(pc.localContext, 10*time.Second)
+	iceConn, err := pc.iceAgent.EstablishConnectionWithContext(ctx)
 	if err != nil {
 		return err
 	}
+	defer cancel()
 
 	// Instantiate a new net.Conn multiplexer
 	pc.mux = mux.NewMux(iceConn, 8192)

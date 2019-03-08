@@ -22,6 +22,8 @@ type Checklist struct {
 	// Mutex to prevent reading from pairs while they're being modified.
 	mutex sync.RWMutex
 
+	stateMutex sync.Mutex
+
 	// Index of the next candidate pair to be checked
 	nextToCheck int
 }
@@ -191,6 +193,9 @@ func (cl *Checklist) nominate(p *CandidatePair) {
 }
 
 func (cl *Checklist) updateState() {
+	cl.stateMutex.Lock()
+	defer cl.stateMutex.Unlock()
+
 	if cl.state != checklistRunning {
 		return
 	}
@@ -219,15 +224,20 @@ func (cl *Checklist) updateState() {
 }
 
 func (cl *Checklist) addListener(listener chan struct{}) {
+	cl.mutex.Lock()
 	cl.listeners = append(cl.listeners, listener)
+	cl.mutex.Unlock()
 }
 
+// findPair returns first candidate pair matching the base and remote address
 func (cl *Checklist) findPair(base *Base, raddr net.Addr) *CandidatePair {
 	remoteAddress := makeTransportAddress(raddr)
+
 	for _, p := range cl.pairs {
 		if p.local.address == base.address && p.remote.address == remoteAddress {
 			return p
 		}
 	}
+
 	return nil
 }

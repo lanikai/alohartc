@@ -3,10 +3,20 @@ package ice
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net"
 	"sync"
 	"time"
+)
+
+const (
+	// Number of local candidates to buffer within channel before blocking
+	localCandidateBufferLength = 8
+
+	// Number of read packets to buffer in channel before blocking
+	packetBufferLength = 16
+
+	// Number of ready signals to buffer within channel before blocking
+	readySignalBufferLength = 1
 )
 
 // RFC 8445: https://tools.ietf.org/html/rfc8445
@@ -24,6 +34,9 @@ type Agent struct {
 
 	checklist Checklist
 
+	// Channel for relaying local ICE candidates to the signaling layer.
+	lcand chan Candidate
+
 	// Connection for the data stream.
 	dataConn  *ChannelConn
 	ready     chan *ChannelConn
@@ -35,7 +48,8 @@ type Agent struct {
 // Create a new ICE agent with the given username and passwords.
 func NewAgent(ctx context.Context) *Agent {
 	return &Agent{
-		ready: make(chan *ChannelConn, 1),
+		lcand: make(chan Candidate, localCandidateBufferLength),
+		ready: make(chan *ChannelConn, readySignalBufferLength),
 		ctx:   ctx,
 	}
 }
@@ -47,14 +61,19 @@ func (a *Agent) Configure(mid, username, localPassword, remotePassword string) {
 	a.remotePassword = remotePassword
 }
 
+// EstablishConnection creates a connection with a remote peer
+func (a *Agent) EstablishConnection() (net.Conn, error) {
+	return a.EstablishConnectionWithContext(context.Background())
+}
+
+// EstablishConnectionWithContext creates a connection with a remote agent.
 // On success, returns a net.Conn object from which data can be read/written.
-func (a *Agent) EstablishConnection(lcand chan<- Candidate) (net.Conn, error) {
+func (a *Agent) EstablishConnectionWithContext(ctx context.Context) (net.Conn, error) {
 	if a.username == "" {
 		return nil, errors.New("ICE agent not configured")
 	}
 
 	// TODO: Support multiple components
-	//components := []int{1}
 	component := 1
 
 	bases, err := establishBases(component)
@@ -62,9 +81,9 @@ func (a *Agent) EstablishConnection(lcand chan<- Candidate) (net.Conn, error) {
 		return nil, err
 	}
 
-	// Start gathering condidates, trickling them to the remote agent via 'lcand'.
+	// Start gathering local candidates, trickling them to the remote agent via a.lcand.
 	go func() {
-		err := a.gatherLocalCandidates(bases, lcand)
+		err := a.gatherLocalCandidates(bases)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -79,9 +98,13 @@ func (a *Agent) EstablishConnection(lcand chan<- Candidate) (net.Conn, error) {
 	select {
 	case conn := <-a.ready:
 		return conn, nil
-	case <-time.After(30 * time.Second):
-		return nil, fmt.Errorf("Failed to establish connection after 30 seconds")
+	case <-ctx.Done():
+		return nil, errors.New("agent context terminated")
 	}
+}
+
+func (a *Agent) ReceiveLocalCandidates() <-chan Candidate {
+	return a.lcand
 }
 
 func (a *Agent) AddRemoteCandidate(desc, mid string) error {
@@ -108,7 +131,7 @@ func (a *Agent) addLocalCandidate(c Candidate) {
 }
 
 // Gather local candidates. Pass candidates to lcand as they become known.
-func (a *Agent) gatherLocalCandidates(bases []*Base, lcand chan<- Candidate) error {
+func (a *Agent) gatherLocalCandidates(bases []*Base) error {
 	var wg sync.WaitGroup
 	wg.Add(len(bases))
 	for _, base := range bases {
@@ -117,7 +140,7 @@ func (a *Agent) gatherLocalCandidates(bases []*Base, lcand chan<- Candidate) err
 			// Host candidate for peers on the same LAN.
 			hc := makeHostCandidate(a.mid, base)
 			a.addLocalCandidate(hc)
-			lcand <- hc
+			a.lcand <- hc
 
 			if base.address.protocol == UDP && !base.address.linkLocal {
 				// Query STUN server to get a server reflexive candidate.
@@ -129,7 +152,7 @@ func (a *Agent) gatherLocalCandidates(bases []*Base, lcand chan<- Candidate) err
 				} else {
 					c := makeServerReflexiveCandidate(a.mid, mappedAddress, base, flagStunServer)
 					a.addLocalCandidate(c)
-					lcand <- c
+					a.lcand <- c
 				}
 
 				// TODO: TURN
@@ -140,12 +163,12 @@ func (a *Agent) gatherLocalCandidates(bases []*Base, lcand chan<- Candidate) err
 	}
 
 	wg.Wait()
-	close(lcand)
+	close(a.lcand)
 	return nil
 }
 
 func (a *Agent) loop(base *Base) {
-	dataIn := make(chan []byte, 64)
+	dataIn := make(chan []byte, packetBufferLength)
 	go base.demuxStun(a.handleStun, dataIn)
 
 	Ta := time.NewTicker(50 * time.Millisecond)
@@ -167,12 +190,19 @@ func (a *Agent) loop(base *Base) {
 			case checklistCompleted:
 				if a.dataConn == nil {
 					// Use selected candidate.
-					a.readyOnce.Do(func() {
-						Ta.Stop()
-						log.Info("Selected candidate pair: %s", a.checklist.selected)
-						a.dataConn = createDataConn(a.ctx, a.checklist.selected, dataIn)
-						a.ready <- a.dataConn
-					})
+					if a.checklist.selected.local.base == base {
+						a.readyOnce.Do(func() {
+							Ta.Stop()
+							log.Info("Selected candidate pair: %s", a.checklist.selected)
+							selected := a.checklist.selected
+							a.dataConn = NewChannelConn(
+								selected.local.base,
+								dataIn,
+								selected.remote.address.netAddr(),
+							)
+							a.ready <- a.dataConn
+						})
+					}
 				}
 			case checklistFailed:
 				log.Fatal("Failed to connect to remote peer")
@@ -249,32 +279,4 @@ func (a *Agent) adoptPeerReflexiveCandidate(raddr net.Addr, base *Base, priority
 		log.Fatalf("Expected candidate pair not present after creating peer reflexive candidate")
 	}
 	return p
-}
-
-func createDataConn(ctx context.Context, p *CandidatePair, dataIn chan []byte) *ChannelConn {
-	base := p.local.base
-	remoteAddr := p.remote.address.netAddr()
-	dataOut := make(chan []byte, 32)
-	dataConn := newChannelConn(dataIn, dataOut, base.LocalAddr(), remoteAddr)
-
-	go func() {
-		// Read constantly from the 'dataOut' channel, and forward to the underlying connection.
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case data := <-dataOut:
-				if data == nil {
-					log.Debug("%s: Channel closed\n", p.id)
-					return
-				}
-				if _, err := base.WriteTo(data, remoteAddr); err != nil {
-					log.Warn("%v", err)
-					dataConn.Close()
-				}
-			}
-		}
-	}()
-
-	return dataConn
 }
