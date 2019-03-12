@@ -230,9 +230,11 @@ func (a *Agent) loop(base *Base) {
 	}
 }
 
+// handleStun processes an incoming STUN message from a remote peer or server.
+// Only STUN binding messages are supported
 func (a *Agent) handleStun(msg *stunMessage, raddr net.Addr, base *Base) {
 	if msg.method != stunBindingMethod {
-		log.Fatalf("Unexpected STUN message: %s", msg)
+		log.Errorf("Unexpected STUN message: %s", msg)
 	}
 
 	switch msg.class {
@@ -247,10 +249,16 @@ func (a *Agent) handleStun(msg *stunMessage, raddr net.Addr, base *Base) {
 
 // [RFC8445 §7.3] Respond to STUN binding request by sending a success response.
 func (a *Agent) handleStunRequest(req *stunMessage, raddr net.Addr, base *Base) {
+	var err error
+
 	p := a.checklist.findPair(base, raddr)
 	if p == nil {
-		p = a.adoptPeerReflexiveCandidate(raddr, base, req.getPriority())
+		if p, err = a.adoptPeerReflexiveCandidate(raddr, base, req.getPriority()); err != nil {
+			log.Warn(err)
+			return
+		}
 	}
+
 	if req.hasUseCandidate() && !p.nominated {
 		log.Debugf("Nominating %s\n", p.id)
 		a.checklist.nominate(p)
@@ -259,14 +267,14 @@ func (a *Agent) handleStunRequest(req *stunMessage, raddr net.Addr, base *Base) 
 	resp := newStunBindingResponse(req.transactionID, raddr, a.localPassword)
 	log.Debugf("Response %s -> %s: %s\n", base.LocalAddr(), raddr, resp)
 	if err := base.sendStun(resp, raddr, nil); err != nil {
-		log.Fatalf("Failed to send STUN response: %s", err)
+		log.Errorf("Failed to send STUN response: %s", err)
 	}
 
 	// TODO: Enqueue triggered check
 }
 
 // [RFC8445 §7.3.1.3-4]
-func (a *Agent) adoptPeerReflexiveCandidate(raddr net.Addr, base *Base, priority uint32) *CandidatePair {
+func (a *Agent) adoptPeerReflexiveCandidate(raddr net.Addr, base *Base, priority uint32) (*CandidatePair, error) {
 	c := makePeerReflexiveCandidate(a.mid, raddr, base, priority)
 	a.remoteCandidates = append(a.remoteCandidates, c)
 
@@ -274,9 +282,9 @@ func (a *Agent) adoptPeerReflexiveCandidate(raddr net.Addr, base *Base, priority
 	hc := makeHostCandidate(a.mid, base)
 	a.checklist.addCandidatePairs([]Candidate{hc}, []Candidate{c})
 
-	p := a.checklist.findPair(base, raddr)
-	if p == nil {
-		log.Fatal("Expected candidate pair not present after creating peer reflexive candidate")
+	if p := a.checklist.findPair(base, raddr); p == nil {
+		return nil, errors.New("Expected candidate pair not present after creating peer reflexive candidate")
+	} else {
+		return p, nil
 	}
-	return p
 }
