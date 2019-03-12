@@ -249,7 +249,7 @@ func (a *Agent) handleStun(msg *stunMessage, raddr net.Addr, base *Base) {
 func (a *Agent) handleStunRequest(req *stunMessage, raddr net.Addr, base *Base) {
 	p := a.checklist.findPair(base, raddr)
 	if p == nil {
-		p = a.adoptPeerReflexiveCandidate(raddr, base, req.getPriority())
+		p = a.checklist.adoptPeerReflexiveCandidate(a.mid, base, raddr, req.getPriority())
 	}
 	if req.hasUseCandidate() && !p.nominated {
 		log.Debug("Nominating %s\n", p.id)
@@ -259,24 +259,8 @@ func (a *Agent) handleStunRequest(req *stunMessage, raddr net.Addr, base *Base) 
 	resp := newStunBindingResponse(req.transactionID, raddr, a.localPassword)
 	log.Debug("Response %s -> %s: %s\n", base.LocalAddr(), raddr, resp)
 	if err := base.sendStun(resp, raddr, nil); err != nil {
-		log.Fatalf("Failed to send STUN response: %s", err)
+		log.Warn("Failed to send STUN response: %s", err)
 	}
 
 	// TODO: Enqueue triggered check
-}
-
-// [RFC8445 §7.3.1.3-4]
-func (a *Agent) adoptPeerReflexiveCandidate(raddr net.Addr, base *Base, priority uint32) *CandidatePair {
-	c := makePeerReflexiveCandidate(a.mid, raddr, base, priority)
-	a.remoteCandidates = append(a.remoteCandidates, c)
-
-	// Pair peer reflexive candidate with host candidate.
-	hc := makeHostCandidate(a.mid, base)
-	a.checklist.addCandidatePairs([]Candidate{hc}, []Candidate{c})
-
-	p := a.checklist.findPair(base, raddr)
-	if p == nil {
-		log.Fatalf("Expected candidate pair not present after creating peer reflexive candidate")
-	}
-	return p
 }

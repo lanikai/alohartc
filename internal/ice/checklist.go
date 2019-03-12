@@ -55,28 +55,7 @@ func (cl *Checklist) addCandidatePairs(locals, remotes []Candidate) {
 		}
 	}
 
-	// [RFC8445 §6.1.2.3] Order pairs by priority.
-	sort.Slice(cl.pairs, func(i, j int) bool {
-		return cl.pairs[i].Priority() > cl.pairs[j].Priority()
-	})
-
-	// [RFC8445 §6.1.2.4] Prune redundant pairs.
-	for i := 0; i < len(cl.pairs); i++ {
-		p := cl.pairs[i]
-		// [draft-ietf-ice-trickle-21 §10] Preserve pairs for which checks are in flight.
-		switch p.state {
-		case Frozen, Waiting:
-			continue
-		}
-		// Remove this pair if it is redundant with a higher priority pair.
-		for j := 0; j < i; j++ {
-			if isRedundant(p, cl.pairs[j]) {
-				log.Debug("Pruning %s in favor of %s", p.id, cl.pairs[j].id)
-				cl.pairs = append(cl.pairs[:i], cl.pairs[i+1:]...)
-				break
-			}
-		}
-	}
+	cl.pairs = sortAndPrune(cl.pairs)
 
 	// TODO: Only change the top candidate per foundation.
 	for _, p := range cl.pairs {
@@ -84,7 +63,6 @@ func (cl *Checklist) addCandidatePairs(locals, remotes []Candidate) {
 			p.state = Waiting
 		}
 	}
-
 }
 
 // Only pair candidates for the same component. Their transport addresses must be compatible.
@@ -93,6 +71,52 @@ func canBePaired(local, remote Candidate) bool {
 		local.address.protocol == remote.address.protocol &&
 		local.address.family == remote.address.family &&
 		local.address.linkLocal == remote.address.linkLocal
+}
+
+func sortAndPrune(pairs []*CandidatePair) []*CandidatePair {
+	// [RFC8445 §6.1.2.3] Order pairs by priority.
+	sort.Slice(pairs, func(i, j int) bool {
+		return pairs[i].Priority() > pairs[j].Priority()
+	})
+
+	// [RFC8445 §6.1.2.4] Prune redundant pairs.
+	for i := 0; i < len(pairs); i++ {
+		p := pairs[i]
+		// [draft-ietf-ice-trickle-21 §10] Preserve pairs for which checks are in flight.
+		switch p.state {
+		case Frozen, Waiting:
+			continue
+		}
+		// Remove this pair if it is redundant with a higher priority pair.
+		for j := 0; j < i; j++ {
+			if isRedundant(p, pairs[j]) {
+				log.Debug("Pruning %s in favor of %s", p.id, pairs[j].id)
+				pairs = append(pairs[:i], pairs[i+1:]...)
+				break
+			}
+		}
+	}
+
+	return pairs
+}
+
+// Create a peer reflexive candidate and pair with the base.
+// [RFC8445 §7.3.1.3-4]
+func (cl *Checklist) adoptPeerReflexiveCandidate(mid string, base *Base, raddr net.Addr, priority uint32) *CandidatePair {
+	cl.mutex.Lock()
+	defer cl.mutex.Unlock()
+
+	local := makeHostCandidate(mid, base)
+	remote := makePeerReflexiveCandidate(mid, raddr, base, priority)
+	log.Debug("New peer-reflexive %s", remote)
+
+	p := newCandidatePair(cl.nextPairID, local, remote)
+	p.state = Waiting
+	cl.pairs = append(cl.pairs, p)
+	cl.nextPairID++
+
+	cl.pairs = sortAndPrune(cl.pairs)
+	return p
 }
 
 // [RFC8445 §6.1.2.4] Two candidates are redundant if they have the same remote candidate and same
