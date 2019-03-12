@@ -136,7 +136,7 @@ func (a *Agent) gatherLocalCandidates(bases []*Base) error {
 	wg.Add(len(bases))
 	for _, base := range bases {
 		go func(base *Base) {
-			log.Info("Gathering local candidates for base %s\n", base.address)
+			log.Infof("Gathering local candidates for base %s\n", base.address)
 			// Host candidate for peers on the same LAN.
 			hc := makeHostCandidate(a.mid, base)
 			a.addLocalCandidate(hc)
@@ -146,9 +146,9 @@ func (a *Agent) gatherLocalCandidates(bases []*Base) error {
 				// Query STUN server to get a server reflexive candidate.
 				mappedAddress, err := base.queryStunServer(flagStunServer)
 				if err != nil {
-					log.Warn("Failed to create STUN server candidate for base %s: %s\n", base.address, err)
+					log.Warnf("Failed to create STUN server candidate for base %s: %s\n", base.address, err)
 				} else if mappedAddress == base.address {
-					log.Warn("Server-reflexive address for %s is same as base\n", base.address)
+					log.Warnf("Server-reflexive address for %s is same as base\n", base.address)
 				} else {
 					c := makeServerReflexiveCandidate(a.mid, mappedAddress, base, flagStunServer)
 					a.addLocalCandidate(c)
@@ -185,7 +185,7 @@ func (a *Agent) loop(base *Base) {
 		case <-a.ctx.Done():
 			return
 		case <-checklistUpdate:
-			log.Debug("Checklist state: %d", a.checklist.state)
+			log.Debugf("Checklist state: %d", a.checklist.state)
 			switch a.checklist.state {
 			case checklistCompleted:
 				if a.dataConn == nil {
@@ -193,7 +193,7 @@ func (a *Agent) loop(base *Base) {
 					if a.checklist.selected.local.base == base {
 						a.readyOnce.Do(func() {
 							Ta.Stop()
-							log.Info("Selected candidate pair: %s", a.checklist.selected)
+							log.Infof("Selected candidate pair: %s", a.checklist.selected)
 							selected := a.checklist.selected
 							a.dataConn = NewChannelConn(
 								selected.local.base,
@@ -211,10 +211,10 @@ func (a *Agent) loop(base *Base) {
 		case <-Ta.C: // Periodic check.
 			p := a.checklist.nextPair()
 			if p != nil {
-				log.Debug("Next candidate to check: %s\n", p)
+				log.Debugf("Next candidate to check: %s\n", p)
 				err := a.checklist.sendCheck(p, a.username, a.remotePassword)
 				if err != nil {
-					log.Warn("Failed to send connectivity check: %s", err)
+					log.Warnf("Failed to send connectivity check: %s", err)
 				}
 			}
 
@@ -241,7 +241,7 @@ func (a *Agent) handleStun(msg *stunMessage, raddr net.Addr, base *Base) {
 	case stunIndication:
 		// No-op
 	case stunSuccessResponse, stunErrorResponse:
-		log.Debug("Received unexpected STUN response: %s\n", msg)
+		log.Debugf("Received unexpected STUN response: %s\n", msg)
 	}
 }
 
@@ -252,12 +252,12 @@ func (a *Agent) handleStunRequest(req *stunMessage, raddr net.Addr, base *Base) 
 		p = a.adoptPeerReflexiveCandidate(raddr, base, req.getPriority())
 	}
 	if req.hasUseCandidate() && !p.nominated {
-		log.Debug("Nominating %s\n", p.id)
+		log.Debugf("Nominating %s\n", p.id)
 		a.checklist.nominate(p)
 	}
 
 	resp := newStunBindingResponse(req.transactionID, raddr, a.localPassword)
-	log.Debug("Response %s -> %s: %s\n", base.LocalAddr(), raddr, resp)
+	log.Debugf("Response %s -> %s: %s\n", base.LocalAddr(), raddr, resp)
 	if err := base.sendStun(resp, raddr, nil); err != nil {
 		log.Fatalf("Failed to send STUN response: %s", err)
 	}
@@ -276,7 +276,7 @@ func (a *Agent) adoptPeerReflexiveCandidate(raddr net.Addr, base *Base, priority
 
 	p := a.checklist.findPair(base, raddr)
 	if p == nil {
-		log.Fatalf("Expected candidate pair not present after creating peer reflexive candidate")
+		log.Fatal("Expected candidate pair not present after creating peer reflexive candidate")
 	}
 	return p
 }

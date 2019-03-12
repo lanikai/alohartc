@@ -112,19 +112,36 @@ func (log *Logger) Write(b []byte) (n int, err error) {
 	return
 }
 
-func (log *Logger) Error(format string, a ...interface{}) {
+func (log *Logger) Error(v ...interface{}) {
+	log.Log(Error, 1, fmt.Sprint(v...))
+}
+
+// go:inline
+func (log *Logger) Errorf(format string, a ...interface{}) {
 	log.Log(Error, 1, format, a...)
 }
 
-func (log *Logger) Warn(format string, a ...interface{}) {
+func (log *Logger) Warn(v ...interface{}) {
+	log.Log(Warn, 1, fmt.Sprint(v...))
+}
+
+func (log *Logger) Warnf(format string, a ...interface{}) {
 	log.Log(Warn, 1, format, a...)
 }
 
-func (log *Logger) Info(format string, a ...interface{}) {
+func (log *Logger) Info(v ...interface{}) {
+	log.Log(Info, 1, fmt.Sprint(v...))
+}
+
+func (log *Logger) Infof(format string, a ...interface{}) {
 	log.Log(Info, 1, format, a...)
 }
 
-func (log *Logger) Debug(format string, a ...interface{}) {
+func (log *Logger) Debug(v ...interface{}) {
+	log.Log(Debug, 1, fmt.Sprint(v...))
+}
+
+func (log *Logger) Debugf(format string, a ...interface{}) {
 	log.Log(Debug, 1, format, a...)
 }
 

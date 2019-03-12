@@ -32,13 +32,13 @@ func srtcpReaderRunloop(m *mux.Mux, key, salt []byte) error {
 
 			// Decipher in-place
 			if _, err := ctx.DecipherRTCP(rawPacket, rawPacket); err != nil {
-				log.Error(err.Error()) // Error deciphering. Skip.
+				log.Error(err) // Error deciphering. Skip.
 				continue
 			}
 
 			// Parse
 			if packet, _, err := rtcp.Unmarshal(rawPacket); err != nil {
-				log.Error(err.Error()) // Malformed packet
+				log.Error(err) // Malformed packet
 				continue
 			} else {
 				switch p := packet.(type) {

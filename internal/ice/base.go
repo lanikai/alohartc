@@ -32,7 +32,7 @@ func establishBases(component int) (bases []*Base, err error) {
 		return
 	}
 	for _, iface := range ifaces {
-		log.Debug("Interface %d: %s (%s)\n", iface.Index, iface.Name, iface.Flags)
+		log.Debugf("Interface %d: %s (%s)\n", iface.Index, iface.Name, iface.Flags)
 		if iface.Flags&net.FlagLoopback != 0 {
 			// Skip loopback interfaces to reduce the number of candidates.
 			// TODO: Probably we need these if we're not connected to any network.
@@ -50,10 +50,10 @@ func establishBases(component int) (bases []*Base, err error) {
 			return
 		}
 		for _, addr := range addrs {
-			log.Debug("Local address %v", addr)
+			log.Debugf("Local address %v", addr)
 			ipnet, ok := addr.(*net.IPNet)
 			if !ok {
-				log.Error("Unexpected address type: %T", addr)
+				log.Errorf("Unexpected address type: %T", addr)
 			}
 
 			ip := ipnet.IP
@@ -66,7 +66,7 @@ func establishBases(component int) (bases []*Base, err error) {
 
 			base, err := createBase(ip, component)
 			if err != nil {
-				log.Warn("Failed to create base for %s\n", ip)
+				log.Warnf("Failed to create base for %s\n", ip)
 				// This can happen for link-local IPv6 addresses. Just skip it.
 				continue
 			}
@@ -85,7 +85,7 @@ func createBase(ip net.IP, component int) (base *Base, err error) {
 	}
 
 	address := makeTransportAddress(conn.LocalAddr())
-	log.Info("Listening on %s\n", address)
+	log.Infof("Listening on %s\n", address)
 
 	transactions := make(map[string]stunHandler)
 	base = &Base{conn, address, component, transactions, sync.Mutex{}}
@@ -101,7 +101,7 @@ func (base *Base) queryStunServer(stunServer string) (mapped TransportAddress, e
 	}
 
 	req := newStunBindingRequest("")
-	log.Debug("Sending to %s: %s\n", stunServer, req)
+	log.Debugf("Sending to %s: %s\n", stunServer, req)
 
 	done := make(chan error, 1)
 	err = base.sendStun(req, stunServerAddr, func(resp *stunMessage, raddr net.Addr, base *Base) {
@@ -147,13 +147,13 @@ func (base *Base) demuxStun(defaultHandler stunHandler, dataIn chan<- []byte) {
 		base.SetReadDeadline(time.Now().Add(60 * time.Second))
 		n, raddr, err := base.ReadFrom(buf)
 		if err == io.EOF {
-			log.Warn("Connection closed: %s\n", base.address)
+			log.Warnf("Connection closed: %s\n", base.address)
 			return
 		} else if err != nil {
 			if nerr, ok := err.(net.Error); ok {
 				if nerr.Timeout() {
 					// Timeout is expected for bases that end up not being used.
-					log.Info("Connection timed out: %s\n", base.address)
+					log.Infof("Connection timed out: %s\n", base.address)
 					return
 				}
 			}
@@ -170,7 +170,7 @@ func (base *Base) demuxStun(defaultHandler stunHandler, dataIn chan<- []byte) {
 			}
 
 			if msg != nil {
-				log.Debug("Received from %s: %s\n", raddr, msg)
+				log.Debugf("Received from %s: %s\n", raddr, msg)
 
 				// Pass incoming STUN message to the appropriate handler.
 				var handler stunHandler

@@ -47,7 +47,7 @@ func (cl *Checklist) addCandidatePairs(locals, remotes []Candidate) {
 			if canBePaired(local, remote) {
 				p := newCandidatePair(cl.nextPairID, local, remote)
 				cl.nextPairID++
-				log.Debug("Adding candidate pair %s", p)
+				log.Debugf("Adding candidate pair %s", p)
 				// TODO: Check that this is a new foundation, otherwise it should stay Frozen.
 				p.state = Waiting
 				cl.pairs = append(cl.pairs, p)
@@ -71,7 +71,7 @@ func (cl *Checklist) addCandidatePairs(locals, remotes []Candidate) {
 		// Remove this pair if it is redundant with a higher priority pair.
 		for j := 0; j < i; j++ {
 			if isRedundant(p, cl.pairs[j]) {
-				log.Debug("Pruning %s in favor of %s", p.id, cl.pairs[j].id)
+				log.Debugf("Pruning %s in favor of %s", p.id, cl.pairs[j].id)
 				cl.pairs = append(cl.pairs[:i], cl.pairs[i+1:]...)
 				break
 			}
@@ -138,7 +138,7 @@ func (cl *Checklist) sendCheck(p *CandidatePair, username, password string) erro
 		// If we don't get a response within the RTO, then move the pair back to Waiting.
 		p.state = Waiting
 	})
-	log.Debug("%s: Sending to %s from %s: %s\n", p.id, p.remote.address, p.local.address, req)
+	log.Debugf("%s: Sending to %s from %s: %s\n", p.id, p.remote.address, p.local.address, req)
 	return p.local.base.sendStun(req, p.remote.address.netAddr(), func(resp *stunMessage, raddr net.Addr, base *Base) {
 		retransmit.Stop()
 		cl.processResponse(p, resp, raddr)
@@ -160,7 +160,7 @@ func (cl *Checklist) rto() time.Duration {
 
 func (cl *Checklist) processResponse(p *CandidatePair, resp *stunMessage, raddr net.Addr) {
 	if p.state != InProgress {
-		log.Debug("Received unexpected STUN response for %s:\n%s\n", p, resp)
+		log.Debugf("Received unexpected STUN response for %s:\n%s\n", p, resp)
 		return
 	}
 
@@ -169,7 +169,7 @@ func (cl *Checklist) processResponse(p *CandidatePair, resp *stunMessage, raddr 
 
 	switch resp.class {
 	case stunSuccessResponse:
-		log.Debug("%s: Successful connectivity check", p.id)
+		log.Debugf("%s: Successful connectivity check", p.id)
 		p.state = Succeeded
 		cl.mutex.Lock()
 		cl.valid = append(cl.valid, p)
@@ -178,7 +178,7 @@ func (cl *Checklist) processResponse(p *CandidatePair, resp *stunMessage, raddr 
 		p.state = Failed
 		// TODO: Retries
 	default:
-		log.Fatalf("Impossible")
+		log.Fatal("Impossible")
 	}
 
 	cl.updateState()
@@ -205,7 +205,7 @@ func (cl *Checklist) updateState() {
 
 	for _, p := range cl.valid {
 		if p.nominated {
-			log.Debug("Selected %s", p)
+			log.Debugf("Selected %s", p)
 			cl.selected = p
 			cl.state = checklistCompleted
 			break

@@ -313,7 +313,7 @@ func (pc *PeerConnection) StreamH264(source io.Reader, wholeNALUs bool) error {
 			forbiddenBit := (nalu[0] & 0x80) >> 7
 			nri := (nalu[0] & 0x60) >> 5
 			typ := nalu[0] & 0x1f
-			//log.Printf("F: %b, NRI: %02b, Type: %d, Length: %d\n", forbiddenBit, nri, typ, len(nalu))
+			//log.Debugf("F: %b, NRI: %02b, Type: %d, Length: %d\n", forbiddenBit, nri, typ, len(nalu))
 
 			if (typ == 6) || (typ == 7) || (typ == 8) {
 				// Wrap SPS/PPS/SEI in STAP-A packet
