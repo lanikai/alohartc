@@ -22,7 +22,6 @@ type TransportAddress struct {
 	family    IPAddressFamily
 	ip        IPAddress
 	port      int
-	zone      string
 	linkLocal bool
 }
 
