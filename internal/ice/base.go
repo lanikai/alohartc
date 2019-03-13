@@ -1,13 +1,23 @@
 package ice
 
 import (
+	"context"
 	"fmt"
-	"io"
 	"net"
 	"sync"
 	"time"
 
 	"github.com/lanikai/alohartc/internal/mux"
+)
+
+const (
+	// Packets larger than the maximum transmission unit (MTU) of a path are
+	// fragmented into smaller packets, or dropped. The MTU should be
+	// discovered, but 1500 is typically a safe value.
+	sizeMaximumTransmissionUnit = 1500
+
+	// Time out for reads from base (i.e. its UDPConn)
+	timeoutReadFromBase = 5 * time.Second
 )
 
 // [RFC8445] defines a base to be "The transport address that an ICE agent sends from for a
@@ -136,29 +146,54 @@ func (base *Base) sendStun(msg *stunMessage, raddr net.Addr, handler stunHandler
 	return err
 }
 
-// Read continuously from the connection. STUN messages go to handlers, other data to dataIn.
-func (base *Base) demuxStun(defaultHandler stunHandler, dataIn chan<- []byte) {
-	defer func() {
-		close(dataIn)
-	}()
+// demuxStun reads from base, processing STUN messages, forwarding others
+// Non-STUN messages are written to the `dataIn` channel. Expects to run
+// on its own goroutine.
+func (base *Base) demuxStun(
+	ctx context.Context,
+	defaultHandler stunHandler,
+	dataIn chan<- []byte,
+) {
+	// Sole writer to `dataIn` channel. Close channel upon exit.
+	defer close(dataIn)
 
-	buf := make([]byte, 4096)
+	// Allocate read buffer
+	buf := make([]byte, sizeMaximumTransmissionUnit)
+
+	// Packet read loop
 	for {
-		base.SetReadDeadline(time.Now().Add(60 * time.Second))
+		// Set read timeout
+		base.SetReadDeadline(time.Now().Add(timeoutReadFromBase))
+
+		// Blocks (or timeouts) waiting for packet from underlying UDPConn
 		n, raddr, err := base.ReadFrom(buf)
-		if err == io.EOF {
-			log.Warn("Connection closed: %s\n", base.address)
-			return
-		} else if err != nil {
-			if nerr, ok := err.(net.Error); ok {
-				if nerr.Timeout() {
-					// Timeout is expected for bases that end up not being used.
+
+		if err != nil {
+			if neterr, ok := err.(net.Error); ok {
+				// Timeout is expected for bases that end up not being used.
+				if neterr.Timeout() {
 					log.Info("Connection timed out: %s\n", base.address)
-					return
+					break
+				}
+
+				// Temporary glitch? Try to continue.
+				if neterr.Temporary() {
+					continue
 				}
 			}
+
+			// Check if underlying UDPConn was closed
+			if operr, ok := err.(*net.OpError); ok {
+				if operr.Op == "read" {
+					log.Info("Connection closed while reading: %s\n", base.address)
+					break
+				}
+			}
+
+			// Should never get here
 			log.Fatal(err)
 		}
+
 		data := make([]byte, n)
 		copy(data, buf[0:n])
 
@@ -185,8 +220,13 @@ func (base *Base) demuxStun(defaultHandler stunHandler, dataIn chan<- []byte) {
 				handler(msg, raddr, base)
 			}
 		} else {
-			// Not a STUN packet, forward it on
-			dataIn <- data
+			select {
+			case dataIn <- data:
+				// Enqueue non-STUN packet into chanell. Blocks if full.
+			case <-ctx.Done():
+				// Context terminated. Teardown now.
+				break
+			}
 		}
 	}
 }

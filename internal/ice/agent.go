@@ -169,7 +169,7 @@ func (a *Agent) gatherLocalCandidates(bases []*Base) error {
 
 func (a *Agent) loop(base *Base) {
 	dataIn := make(chan []byte, packetBufferLength)
-	go base.demuxStun(a.handleStun, dataIn)
+	go base.demuxStun(a.ctx, a.handleStun, dataIn)
 
 	Ta := time.NewTicker(50 * time.Millisecond)
 	defer Ta.Stop()
@@ -182,15 +182,23 @@ func (a *Agent) loop(base *Base) {
 
 	for {
 		select {
+		// Context terminated. Teardown now.
 		case <-a.ctx.Done():
+			// Close base. Causes any blocked ReadFrom() calls to terminate.
+			if err := base.Close(); err != nil {
+				log.Error("failed to close base: %v", err)
+			}
 			return
+
+		// New candidate added to checklist
 		case <-checklistUpdate:
 			log.Debug("Checklist state: %d", a.checklist.state)
 			switch a.checklist.state {
 			case checklistCompleted:
 				if a.dataConn == nil {
-					// Use selected candidate.
+					// Candidate base must match this loop's base
 					if a.checklist.selected.local.base == base {
+						// Use selected candidate.
 						a.readyOnce.Do(func() {
 							Ta.Stop()
 							log.Info("Selected candidate pair: %s", a.checklist.selected)
@@ -208,26 +216,36 @@ func (a *Agent) loop(base *Base) {
 				log.Fatal("Failed to connect to remote peer")
 			}
 
-		case <-Ta.C: // Periodic check.
-			p := a.checklist.nextPair()
-			if p != nil {
-				log.Debug("Next candidate to check: %s\n", p)
-				err := a.checklist.sendCheck(p, a.username, a.remotePassword)
-				if err != nil {
+		// Periodic check
+		case <-Ta.C:
+			if p := a.checklist.nextPair(); p != nil {
+				log.Debug("Next candidate pair to check: %s\n", p)
+				if err := a.checklist.sendCheck(
+					p,
+					a.username,
+					a.remotePassword,
+				); err != nil {
 					log.Warn("Failed to send connectivity check: %s", err)
 				}
 			}
 
 		// TODO: Triggered checks
 
-		case <-Tr.C: // Keepalive.
+		// Keep-alive
+		case <-Tr.C:
 			// [RFC8445 §11] Send STUN binding indication.
-			p := a.checklist.selected
-			if p != nil {
-				p.local.base.sendStun(newStunBindingIndication(), p.remote.address.netAddr(), nil)
+			if p := a.checklist.selected; p != nil {
+				p.local.base.sendStun(
+					newStunBindingIndication(),
+					p.remote.address.netAddr(),
+					nil,
+				)
 			}
 		}
 	}
+
+	// Should never get here
+	log.Fatal("loop exited")
 }
 
 func (a *Agent) handleStun(msg *stunMessage, raddr net.Addr, base *Base) {
