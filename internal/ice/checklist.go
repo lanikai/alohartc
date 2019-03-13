@@ -48,8 +48,6 @@ func (cl *Checklist) addCandidatePairs(locals, remotes []Candidate) {
 				p := newCandidatePair(cl.nextPairID, local, remote)
 				cl.nextPairID++
 				log.Debug("Adding candidate pair %s", p)
-				// TODO: Check that this is a new foundation, otherwise it should stay Frozen.
-				p.state = Waiting
 				cl.pairs = append(cl.pairs, p)
 			}
 		}
@@ -73,6 +71,8 @@ func canBePaired(local, remote Candidate) bool {
 		local.address.linkLocal == remote.address.linkLocal
 }
 
+// sortAndPrune sorts the candidate pairs from highest to lowest priority, then
+// prunes any redundant pairs.
 func sortAndPrune(pairs []*CandidatePair) []*CandidatePair {
 	// [RFC8445 §6.1.2.3] Order pairs by priority.
 	sort.Slice(pairs, func(i, j int) bool {
@@ -84,10 +84,10 @@ func sortAndPrune(pairs []*CandidatePair) []*CandidatePair {
 		p := pairs[i]
 		// [draft-ietf-ice-trickle-21 §10] Preserve pairs for which checks are in flight.
 		switch p.state {
-		case Frozen, Waiting:
+		case InProgress, Succeeded, Failed:
 			continue
 		}
-		// Remove this pair if it is redundant with a higher priority pair.
+		// Compare this pair against higher priority pairs, and remove if redundant.
 		for j := 0; j < i; j++ {
 			if isRedundant(p, pairs[j]) {
 				log.Debug("Pruning %s in favor of %s", p.id, pairs[j].id)
@@ -119,8 +119,8 @@ func (cl *Checklist) adoptPeerReflexiveCandidate(mid string, base *Base, raddr n
 	return p
 }
 
-// [RFC8445 §6.1.2.4] Two candidates are redundant if they have the same remote candidate and same
-// local base.
+// [RFC8445 §6.1.2.4] Two candidate pairs are redundant if they have the same
+// remote candidate and same local base.
 func isRedundant(p1, p2 *CandidatePair) bool {
 	return p1.remote.address == p2.remote.address && p1.local.base.address == p2.local.base.address
 }
