@@ -6,6 +6,12 @@ import (
 	"github.com/lanikai/alohartc/internal/ice"
 )
 
+// A SessionHandler responds to incoming calls.
+type SessionHandler func(s *Session)
+
+// A Session represents a sequence of interactions with the signaling server,
+// wherein two peers attempt to establish a direct connection. It includes the
+// SDP offer/answer and ICE candidate exchange.
 type Session struct {
 	// Context used to indicate the end of the session.
 	context.Context

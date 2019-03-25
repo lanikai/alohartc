@@ -1,20 +1,16 @@
 package signaling
 
-// TODO: Rename Client -> Signaler.
+// A signaling Client connects the signaling server and waits for a remote peer
+// to initiate a call session.
 type Client interface {
-	// Connect to the signaling server and handle incoming sessions.
+	// Listen connects to the signaling server and handles incoming sessions.
 	//
 	// Blocks until an error occurs or until the client is explicitly shut down.
 	Listen() error
 
-	// Interrupt the signaling client.
+	// Shutdown interrupts the signaling client.
 	Shutdown() error
 }
 
-type SessionHandler func(s *Session)
-
-func NewClient(handler SessionHandler) (Client, error) {
-	// TODO: Support pluggable signaling clients, using conditional compilation.
-	//return newLocalWebClient(handler)
-	return newMQTTSignaler(handler)
-}
+// NewClient returns a new signaling Client.
+var NewClient func(handler SessionHandler) (Client, error)
