@@ -1,4 +1,8 @@
+// +build !oahu
+
 package signaling
+
+// See ./localdata/gen.go for "go generate" command used to bundle static files.
 
 import (
 	"context"
@@ -21,32 +25,34 @@ var (
 
 func init() {
 	flag.IntVar(&flagPort, "p", 8000, "HTTP port on which to listen")
+
+	NewClient = newLocalWebSignaler
 }
 
 // A signaling.Client that also acts as the signaling server, running a local
 // webserver that the browser connects to directly. Signaling is then performed
 // over a websocket.
-type localWebClient struct {
+type localWebSignaler struct {
 	handler SessionHandler
 	server  *http.Server
 }
 
-func newLocalWebClient(handler SessionHandler) (*localWebClient, error) {
+func newLocalWebSignaler(handler SessionHandler) (Client, error) {
 	router := http.NewServeMux()
-	c := &localWebClient{
+	s := &localWebSignaler{
 		handler: handler,
 		server: &http.Server{
 			Addr:    fmt.Sprintf(":%d", flagPort),
 			Handler: router,
 		},
 	}
-
 	router.Handle("/", http.FileServer(localdata.FS(false)))
-	router.HandleFunc("/ws", c.handleWebsocket)
-	return c, nil
+	router.HandleFunc("/ws", s.handleWebsocket)
+
+	return s, nil
 }
 
-func (c *localWebClient) Listen() error {
+func (s *localWebSignaler) Listen() error {
 	// Get hostname
 	url, err := os.Hostname()
 	if err != nil {
@@ -59,14 +65,14 @@ func (c *localWebClient) Listen() error {
 	}
 
 	fmt.Printf("Open http://%s/ in a browser\n", url)
-	return c.server.ListenAndServe()
+	return s.server.ListenAndServe()
 }
 
-func (c *localWebClient) Shutdown() error {
-	return c.server.Shutdown(context.Background())
+func (s *localWebSignaler) Shutdown() error {
+	return s.server.Shutdown(context.Background())
 }
 
-func (c *localWebClient) handleWebsocket(w http.ResponseWriter, r *http.Request) {
+func (s *localWebSignaler) handleWebsocket(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -99,7 +105,7 @@ func (c *localWebClient) handleWebsocket(w http.ResponseWriter, r *http.Request)
 		},
 	}
 
-	go c.handler(session)
+	go s.handler(session)
 
 	// Process incoming websocket messages. We expect JSON messages of the following form:
 	//   { "type": "offer", "sdp": "..." }

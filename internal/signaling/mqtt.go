@@ -1,3 +1,5 @@
+// +build oahu
+
 package signaling
 
 import (
@@ -23,6 +25,8 @@ func init() {
 	flag.StringVar(&mqttBrokerFlag, "mqttbroker", "127.0.0.1:8883", "MQTT broker address")
 	flag.StringVar(&certFlag, "cert", "cert.pem", "Client certificate for connecting to MQTT broker")
 	flag.StringVar(&keyFlag, "key", "key.pem", "Private key corresponding to client certificate")
+	
+	NewClient = newMQTTSignaler
 }
 
 type mqttSignaler struct {
@@ -38,7 +42,7 @@ type mqttSignaler struct {
 	cancel func()
 }
 
-func newMQTTSignaler(handler SessionHandler) (*mqttSignaler, error) {
+func newMQTTSignaler(handler SessionHandler) (Client, error) {
 	// Load certificate and key.
 	cert, err := tls.LoadX509KeyPair(certFlag, keyFlag)
 	if err != nil {
