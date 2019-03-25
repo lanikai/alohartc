@@ -14,6 +14,10 @@ Set a pre-commit hook to `go fmt` code (see https://tip.golang.org/misc/git/pre-
 
 ## Building
 
+First, download dependencies:
+
+    make get
+
 To cross-compile for a Raspberry Pi Model 3B/3B+ (armv7-based architecture):
 
     make
@@ -25,8 +29,8 @@ To cross-compile for a Raspberry Pi Zero (armv6-based architecture):
 
 ## Quickstart
 
-Build code as above, then transfer `examples/demo/demo` to Raspberry Pi and run.
-Open http://<target>:8000 in browser. This should start a live video stream from
+Build code as above, then transfer `alohacam` to Raspberry Pi and run. Open
+http://<target>:8000 in browser. This should start a live video stream from
 Raspberry Pi.
     
     
