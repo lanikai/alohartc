@@ -111,6 +111,7 @@ func doPeerSession(ss *signaling.Session) {
 	// Pass remote ICE candidates along to the PeerConnection.
 	go func() {
 		for c := range ss.RemoteCandidates {
+			log.Println("Remote ICE", c)
 			pc.AddIceCandidate(c)
 		}
 	}()
@@ -118,6 +119,7 @@ func doPeerSession(ss *signaling.Session) {
 	// Send local ICE candidates to the remote peer.
 	go func() {
 		for c := range pc.LocalICECandidates() {
+			log.Println("Local ICE", c)
 			ss.SendLocalCandidate(c)
 		}
 	}()
