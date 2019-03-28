@@ -216,7 +216,7 @@ func (a *Agent) loop(base *Base) {
 				log.Fatal("Failed to connect to remote peer")
 			}
 
-		// Periodic check
+		// [RFC8445 §6.1.4.2] Periodic connectivity check
 		case <-Ta.C:
 			if p := a.checklist.nextPair(); p != nil {
 				log.Debug("Next candidate pair to check: %s\n", p)
@@ -228,8 +228,6 @@ func (a *Agent) loop(base *Base) {
 					log.Warn("Failed to send connectivity check: %s", err)
 				}
 			}
-
-		// TODO: Triggered checks
 
 		// Keep-alive
 		case <-Tr.C:
@@ -275,10 +273,10 @@ func (a *Agent) handleStunRequest(req *stunMessage, raddr net.Addr, base *Base) 
 	}
 
 	resp := newStunBindingResponse(req.transactionID, raddr, a.localPassword)
-	log.Debug("Response %s -> %s: %s\n", base.LocalAddr(), raddr, resp)
+	log.Debug("Sending response %s -> %s: %s\n", base.LocalAddr(), raddr, resp)
 	if err := base.sendStun(resp, raddr, nil); err != nil {
 		log.Warn("Failed to send STUN response: %s", err)
 	}
 
-	// TODO: Enqueue triggered check
+	a.checklist.triggerCheck(p)
 }

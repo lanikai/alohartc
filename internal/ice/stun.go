@@ -100,7 +100,7 @@ func (msg *stunMessage) String() string {
 		case stunAttrIceControlling:
 			fmt.Fprintf(b, ", ICE-CONTROLLING")
 		case stunAttrPriority:
-			fmt.Fprintf(b, ", PRIORITY ?")
+			fmt.Fprintf(b, ", PRIORITY %v", binary.BigEndian.Uint32(attr.Value))
 		case stunAttrSoftware:
 		case stunAttrFingerprint:
 		case stunAttrMessageIntegrity:

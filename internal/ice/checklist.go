@@ -11,12 +11,14 @@ type Checklist struct {
 	state checklistState
 	pairs []*CandidatePair
 
+	triggeredQueue []*CandidatePair
+
 	nextPairID int
 
 	valid    []*CandidatePair
 	selected *CandidatePair
 
-	// Listeners that gets notified every time checklist state changes.
+	// Listeners that get notified every time checklist state changes.
 	listeners []chan struct{}
 
 	// Mutex to prevent reading from pairs while they're being modified.
@@ -74,7 +76,7 @@ func canBePaired(local, remote Candidate) bool {
 // sortAndPrune sorts the candidate pairs from highest to lowest priority, then
 // prunes any redundant pairs.
 func sortAndPrune(pairs []*CandidatePair) []*CandidatePair {
-	// [RFC8445 §6.1.2.3] Order pairs by priority.
+	// [RFC8445 §6.1.2.3] Sort pairs from highest to lowest priority.
 	sort.Slice(pairs, func(i, j int) bool {
 		return pairs[i].Priority() > pairs[j].Priority()
 	})
@@ -127,8 +129,14 @@ func isRedundant(p1, p2 *CandidatePair) bool {
 
 // Return the next candidate pair to check for connectivity.
 func (cl *Checklist) nextPair() *CandidatePair {
-	cl.mutex.RLock()
-	defer cl.mutex.RUnlock()
+	cl.mutex.Lock()
+	defer cl.mutex.Unlock()
+
+	if len(cl.triggeredQueue) > 0 {
+		p := cl.triggeredQueue[0]
+		cl.triggeredQueue = cl.triggeredQueue[1:]
+		return p
+	}
 
 	n := len(cl.pairs)
 	if n == 0 {
@@ -240,10 +248,7 @@ func (cl *Checklist) updateState() {
 
 	// Notify listeners.
 	for _, listener := range cl.listeners {
-		select {
-		case listener <- struct{}{}:
-		default:
-		}
+		listener <- struct{}{}
 	}
 }
 
@@ -264,4 +269,12 @@ func (cl *Checklist) findPair(base *Base, raddr net.Addr) *CandidatePair {
 	}
 
 	return nil
+}
+
+func (cl *Checklist) triggerCheck(p *CandidatePair) {
+	if p.state == Frozen || p.state == Waiting {
+		cl.mutex.Lock()
+		cl.triggeredQueue = append(cl.triggeredQueue, p)
+		cl.mutex.Unlock()
+	}
 }
