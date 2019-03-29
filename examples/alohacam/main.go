@@ -1,10 +1,8 @@
 package main
 
 import (
-	"context"
 	"flag"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"os"
@@ -15,7 +13,6 @@ import (
 
 	"github.com/lanikai/alohartc"
 	"github.com/lanikai/alohartc/internal/ice"
-	"github.com/lanikai/alohartc/internal/v4l2"
 )
 
 // Populated via -ldflags="-X ...". See Makefile.
@@ -24,30 +21,12 @@ var GitRevisionId string
 
 // Flags
 var (
-
 	// HTTP port on which to listen
 	flagPort int
-
-	// Path to raw H.264 video source
-	flagVideoSource string
-
-	// Video parameters when using v4l2 source
-	flagVideoBitrate int
-	flagVideoWidth   uint
-	flagVideoHeight  uint
-
-	flagVideoHflip bool
-	flagVideoVflip bool
 )
 
 func init() {
 	flag.IntVar(&flagPort, "p", 8000, "HTTP port on which to listen")
-	flag.StringVar(&flagVideoSource, "i", "/dev/video0", "H.264 video source ('-' for stdin)")
-	flag.IntVar(&flagVideoBitrate, "b", 2e6, "Bitrate for v4l2 video")
-	flag.UintVar(&flagVideoWidth, "w", 1280, "Width for v4l2 video")
-	flag.UintVar(&flagVideoHeight, "h", 720, "Height for v4l2 video")
-	flag.BoolVar(&flagVideoHflip, "hflip", false, "Flip video horizontally")
-	flag.BoolVar(&flagVideoVflip, "vflip", false, "Flip video vertically")
 }
 
 var upgrader = websocket.Upgrader{
@@ -61,54 +40,59 @@ type message struct {
 	Params map[string]string `json:"params,omitempty"`
 }
 
-// websocketHandler handles websocket connections
-func websocketHandler(w http.ResponseWriter, r *http.Request) {
-	// Upgrade websocket connection
-	ws, err := upgrader.Upgrade(w, r, nil)
-	if err != nil {
-		log.Println("upgrade:", err)
-		return
-	}
-	defer ws.Close()
-
-	// Create peer connection
-	pc := alohartc.NewPeerConnection(context.Background())
-	defer pc.Close()
-
-	// Handle incoming websocket messages
-	for {
-		// Read JSON message
-		msg := message{}
-		if err := ws.ReadJSON(&msg); err != nil {
-			log.Println(err)
+// websocketHandler returns a parameterized websocket handler
+func websocketHandler(ms alohartc.MediaSource) func(w http.ResponseWriter, r *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Upgrade websocket connection
+		ws, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			log.Println("upgrade:", err)
 			return
 		}
+		defer ws.Close()
 
-		switch msg.Type {
-		case "offer":
-			answer, err := pc.SetRemoteDescription(msg.Text)
-			if err != nil {
+		// Get new track from media source. Close it when session ends.
+		track := ms.GetTrack()
+		defer ms.CloseTrack(track)
+
+		// Create peer connection with one video track
+		pc := alohartc.Must(alohartc.NewPeerConnection(alohartc.Config{
+			VideoTrack: track,
+		}))
+		defer pc.Close()
+
+		// Handle incoming websocket messages
+		for {
+			// Read JSON message
+			msg := message{}
+			if err := ws.ReadJSON(&msg); err != nil {
 				log.Println(err)
 				return
 			}
-			ws.WriteJSON(message{Type: "answer", Text: answer})
-			go sendIceCandidates(ws, pc.LocalICECandidates())
 
-			go func() {
+			switch msg.Type {
+			case "offer":
+				answer, err := pc.SetRemoteDescription(msg.Text)
+				if err != nil {
+					log.Println(err)
+					return
+				}
+				ws.WriteJSON(message{Type: "answer", Text: answer})
+				go sendIceCandidates(ws, pc.LocalICECandidates())
+
 				if err := pc.Connect(); err != nil {
 					log.Println(err)
 					return
 				}
-				streamVideo(pc)
-			}()
 
-		case "iceCandidate":
-			if msg.Text == "" {
-				log.Println("End of remote ICE candidates")
-				pc.AddIceCandidate("", "")
-			} else {
-				log.Println("Remote ICE", msg.Text)
-				pc.AddIceCandidate(msg.Text, msg.Params["sdpMid"])
+			case "iceCandidate":
+				if msg.Text == "" {
+					log.Println("End of remote ICE candidates")
+					pc.AddIceCandidate("", "")
+				} else {
+					log.Println("Remote ICE", msg.Text)
+					pc.AddIceCandidate(msg.Text, msg.Params["sdpMid"])
+				}
 			}
 		}
 	}
@@ -129,68 +113,6 @@ func sendIceCandidates(ws *websocket.Conn, lcand <-chan ice.Candidate) {
 	ws.WriteJSON(message{Type: "iceCandidate"})
 }
 
-func streamVideo(pc *alohartc.PeerConnection) {
-	var source io.Reader
-	wholeNALUs := false
-
-	// Open the video source, either a v42l device, stdin, or a plain file.
-	if strings.HasPrefix(flagVideoSource, "/dev/video") {
-		v, err := v4l2.Open(flagVideoSource, &v4l2.Config{
-			Width:                flagVideoWidth,
-			Height:               flagVideoHeight,
-			Format:               v4l2.V4L2_PIX_FMT_H264,
-			RepeatSequenceHeader: true,
-		})
-		if err != nil {
-			log.Println(err)
-			return
-		}
-		defer v.Close()
-
-		if err := v.SetBitrate(flagVideoBitrate); err != nil {
-			log.Println(err)
-			return
-		}
-
-		if flagVideoHflip {
-			if err := v.FlipHorizontal(); err != nil {
-				log.Println(err)
-				return
-			}
-		}
-
-		if flagVideoVflip {
-			if err := v.FlipVertical(); err != nil {
-				log.Println(err)
-				return
-			}
-		}
-
-		// Start video
-		if err := v.Start(); err != nil {
-			log.Println(err)
-			return
-		}
-		defer v.Stop()
-
-		source = v
-		wholeNALUs = true
-	} else if flagVideoSource == "-" {
-		source = os.Stdin
-	} else {
-		f, err := os.Open(flagVideoSource)
-		if err != nil {
-			log.Println(err)
-			return
-		}
-		source = f
-	}
-
-	if err := pc.StreamH264(source, wholeNALUs); err != nil {
-		log.Println(err)
-	}
-}
-
 func version() {
 	fmt.Println("🌈 Alohacam")
 
@@ -208,16 +130,49 @@ func version() {
 }
 
 func main() {
-	version()
-
+	// Define and parse optional flags
+	input := flag.String("i", "/dev/video0", "video input ('-' for stdin)")
+	bitrate := flag.Uint("bitrate", 2e6, "set video bitrate")
+	width := flag.Uint("width", 1280, "set video width")
+	height := flag.Uint("height", 720, "set video height")
+	hflip := flag.Bool("hflip", false, "flip video horizontally")
+	vflip := flag.Bool("vflip", false, "flip video vertically")
 	flag.Parse()
 
+	// Always print version information
+	version()
+
+	// Configure logging
 	log.SetFlags(log.LstdFlags | log.Lshortfile | log.Lmicroseconds)
+
+	// Open media source
+	var source alohartc.MediaSource
+	{
+		var err error
+		if strings.HasPrefix(*input, "/dev/video") {
+			source, err = alohartc.NewV4L2MediaSource(
+				*input,
+				*width,
+				*height,
+				*bitrate,
+				*hflip,
+				*vflip,
+			)
+		} else {
+			source, err = alohartc.NewFileMediaSource(*input)
+		}
+
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Cannot open %s (%s)\n", *input, err)
+			os.Exit(1)
+		}
+	}
+	defer source.Close()
 
 	// Routes
 	http.HandleFunc("/", indexHandler)
 	http.Handle("/static/", http.StripPrefix("/static/", StaticServer()))
-	http.HandleFunc("/ws", websocketHandler)
+	http.HandleFunc("/ws", websocketHandler(source))
 
 	// Get hostname
 	url, err := os.Hostname()

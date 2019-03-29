@@ -79,7 +79,6 @@ func NewSession(conn net.Conn, dynamicType uint8, masterKey, masterSalt []byte) 
 		return nil, err
 	}
 
-	// TODO Fix hard-coded dynamic RTP type,
 	return &Conn{
 		conn: conn,
 		typ:  dynamicType, // must match SDP answer (hard-coded for now)
@@ -91,8 +90,8 @@ func NewSession(conn net.Conn, dynamicType uint8, masterKey, masterSalt []byte) 
 	}, nil
 }
 
+// Close the underlying connection.
 func (c *Conn) Close() {
-	// Close the underlying connection.
 	c.conn.Close()
 }
 
@@ -112,7 +111,6 @@ func (c *Conn) Stap(b []byte) {
 }
 
 func (c *Conn) Send(b []byte) {
-
 	maxSize := 1280
 
 	if len(b) < maxSize {

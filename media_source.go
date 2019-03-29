@@ -1,0 +1,15 @@
+//////////////////////////////////////////////////////////////////////////////
+//
+// MediaSource defines an interface for audio and video sources
+//
+// Copyright 2019 Lanikai Labs. All rights reserved.
+//
+//////////////////////////////////////////////////////////////////////////////
+
+package alohartc
+
+type MediaSource interface {
+	Close() error
+	GetTrack() Track
+	CloseTrack(Track)
+}
