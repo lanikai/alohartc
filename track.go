@@ -1,0 +1,17 @@
+//////////////////////////////////////////////////////////////////////////////
+//
+// Track is an interface for audio and video tracks used by PeerConnection
+//
+// Copyright 2019 Lanikai Labs. All rights reserved.
+//
+//////////////////////////////////////////////////////////////////////////////
+
+package alohartc
+
+import "io"
+
+type Track interface {
+	io.ReadCloser
+
+	PayloadType() string
+}

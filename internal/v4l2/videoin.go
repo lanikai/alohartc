@@ -5,8 +5,8 @@ package v4l2
 
 import (
 	"encoding/binary"
-	"errors"
 	"io"
+	"syscall"
 	"unsafe"
 
 	"golang.org/x/sys/unix"
@@ -20,8 +20,6 @@ type VideoReader struct {
 
 	fd   int    // File descriptor
 	data []byte // Memory-mapped buffer
-
-	active bool
 }
 
 // Close video device
@@ -29,11 +27,38 @@ func (r *VideoReader) Close() error {
 	if err := r.Stop(); err != nil {
 		return err
 	}
-	if err := unix.Munmap(r.data); err != nil {
-		return err
-	}
 
 	return unix.Close(r.fd)
+}
+
+// Flip video horizontally
+func (r *VideoReader) FlipHorizontal() error {
+	ctrl := v4l2_control{V4L2_CID_HFLIP, 1}
+	_, _, errno := unix.Syscall(
+		unix.SYS_IOCTL,
+		uintptr(r.fd),
+		uintptr(VIDIOC_S_CTRL),
+		uintptr(unsafe.Pointer(&ctrl)),
+	)
+	if errno != 0 {
+		return errno
+	}
+	return nil
+}
+
+// Flip video vertically
+func (r *VideoReader) FlipVertical() error {
+	ctrl := v4l2_control{V4L2_CID_VFLIP, 1}
+	_, _, errno := unix.Syscall(
+		unix.SYS_IOCTL,
+		uintptr(r.fd),
+		uintptr(VIDIOC_S_CTRL),
+		uintptr(unsafe.Pointer(&ctrl)),
+	)
+	if errno != 0 {
+		return errno
+	}
+	return nil
 }
 
 // Open specified video device
@@ -45,7 +70,7 @@ func Open(name string, config *Config) (*VideoReader, error) {
 	}
 
 	// Open device
-	r.fd, err = unix.Open(name, unix.O_RDWR|unix.O_NONBLOCK, 0666)
+	r.fd, err = unix.Open(name, unix.O_RDWR, 0666)
 	if err != nil {
 		return nil, err
 	}
@@ -64,68 +89,31 @@ func Open(name string, config *Config) (*VideoReader, error) {
 		return r, err
 	}
 
-	// Request buffers
-	if err = r.requestBuffers(r.numBuffers); err != nil {
-		return r, err
-	}
-
-	// Query buffer
-	if length, offset, err := r.queryBuffer(0); err != nil {
-		return r, err
-	} else {
-		// Memory map
-		r.data, err = unix.Mmap(
-			r.fd,
-			int64(offset),
-			int(length),
-			unix.PROT_READ|unix.PROT_WRITE,
-			unix.MAP_SHARED,
-		)
-		if err != nil {
-			return r, err
-		}
-	}
-
-	// Enqueue buffers
-	for i := 0; i < r.numBuffers; i++ {
-		if err = r.enqueue(i); err != nil {
-			return r, err
-		}
-	}
-
 	return r, nil
 }
 
 // Read data from video device. Blocks until data available.
 func (r *VideoReader) Read(p []byte) (int, error) {
-	fds := unix.FdSet{}
-
-	// Set bit in set corresponding to file descriptor
-	fds.Bits[r.fd>>6] |= 1 << (uint(r.fd) & 0x3F)
-
-	// Block until data available
-	_, err := unix.Select(r.fd+1, &fds, nil, nil, nil)
-	if err != nil {
-		return 0, err
-	}
-
 	// Dequeue memory-mapped buffer
-	n, err := r.dequeue()
-	if err != nil {
-		return n, err
+	if n, errno := r.dequeue(); errno != 0 {
+		if errno == syscall.EINVAL {
+			return n, io.EOF
+		} else {
+			return n, errno
+		}
+	} else {
+		// Copy data from memory-mapped buffer
+		copy(p, r.data[:n])
+
+		// Re-enqueue memory-mapped buffer
+		r.enqueue(0)
+
+		return n, nil
 	}
-
-	// Copy data from memory-mapped buffer
-	copy(p, r.data[:n])
-
-	// Re-enqueue memory-mapped buffer
-	r.enqueue(0)
-
-	return n, nil
 }
 
 // Set bitrate
-func (r *VideoReader) SetBitrate(bitrate int) error {
+func (r *VideoReader) SetBitrate(bitrate uint) error {
 	return r.SetCodecControl(V4L2_CID_MPEG_VIDEO_BITRATE, int32(bitrate))
 }
 
@@ -166,13 +154,13 @@ func (r *VideoReader) SetControl(class, id uint32, value int32) error {
 		uintptr(unsafe.Pointer(&extctrls)),
 	)
 	if errno != 0 {
-		return errors.New(errno.Error())
+		return errno
 	}
 	return nil
 }
 
 // Dequeue buffer from device out-buffer queue
-func (r *VideoReader) dequeue() (int, error) {
+func (r *VideoReader) dequeue() (int, syscall.Errno) {
 	dqbuf := v4l2_buffer{
 		typ: V4L2_BUF_TYPE_VIDEO_CAPTURE,
 	}
@@ -182,10 +170,82 @@ func (r *VideoReader) dequeue() (int, error) {
 		uintptr(VIDIOC_DQBUF),
 		uintptr(unsafe.Pointer(&dqbuf)),
 	)
-	if errno != 0 {
-		return int(dqbuf.bytesused), errors.New(errno.Error())
+	return int(dqbuf.bytesused), errno
+}
+
+// Start video capture
+func (r *VideoReader) Start() error {
+	var err error
+
+	// Request buffers
+	if err = r.requestBuffers(r.numBuffers); err != nil {
+		return err
 	}
-	return int(dqbuf.bytesused), nil
+
+	// Query buffer
+	if length, offset, err := r.queryBuffer(0); err != nil {
+		return err
+	} else {
+		// Memory map
+		r.data, err = unix.Mmap(
+			r.fd,
+			int64(offset),
+			int(length),
+			unix.PROT_READ|unix.PROT_WRITE,
+			unix.MAP_SHARED,
+		)
+		if err != nil {
+			return err
+		}
+	}
+
+	// Enqueue buffers
+	for i := 0; i < r.numBuffers; i++ {
+		if err = r.enqueue(i); err != nil {
+			return err
+		}
+	}
+
+	// Enable stream
+	typ := V4L2_BUF_TYPE_VIDEO_CAPTURE
+	_, _, errno := unix.Syscall(
+		unix.SYS_IOCTL,
+		uintptr(r.fd),
+		uintptr(VIDIOC_STREAMON),
+		uintptr(unsafe.Pointer(&typ)),
+	)
+	if errno != 0 {
+		return errno
+	}
+
+	return nil
+}
+
+// Stop video capture
+func (r *VideoReader) Stop() error {
+	// Disable stream (dequeues any outstanding buffers as well)
+	typ := V4L2_BUF_TYPE_VIDEO_CAPTURE
+	_, _, errno := unix.Syscall(
+		unix.SYS_IOCTL,
+		uintptr(r.fd),
+		uintptr(VIDIOC_STREAMOFF),
+		uintptr(unsafe.Pointer(&typ)),
+	)
+	if errno != 0 {
+		return errno
+	}
+
+	// Unmap memory
+	if err := unix.Munmap(r.data); err != nil {
+		return err
+	}
+
+	// Deallocate buffers
+	if err := r.requestBuffers(0); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 // Enqueue buffer into device in-buffer queue
@@ -202,7 +262,7 @@ func (r *VideoReader) enqueue(index int) error {
 		uintptr(unsafe.Pointer(&qbuf)),
 	)
 	if errno != 0 {
-		return errors.New(errno.Error())
+		return errno
 	}
 	return nil
 }
@@ -221,7 +281,7 @@ func (r *VideoReader) queryBuffer(n uint32) (length, offset uint32, err error) {
 		uintptr(unsafe.Pointer(&qb)),
 	)
 	if errno != 0 {
-		return 0, 0, errors.New(errno.Error())
+		return 0, 0, errno
 	}
 
 	switch nativeEndian {
@@ -250,7 +310,7 @@ func (r *VideoReader) requestBuffers(n int) error {
 		uintptr(unsafe.Pointer(&rb)),
 	)
 	if errno != 0 {
-		return errors.New(errno.Error())
+		return errno
 	}
 
 	return nil
@@ -275,74 +335,8 @@ func (r *VideoReader) setPixelFormat(width, height, format uint32) error {
 		uintptr(unsafe.Pointer(&fmt)),
 	)
 	if errno != 0 {
-		return errors.New(errno.Error())
+		return errno
 	}
 
-	return nil
-}
-
-// Flip video horizontally
-func (r *VideoReader) FlipHorizontal() error {
-	ctrl := v4l2_control{V4L2_CID_HFLIP, 1}
-	_, _, errno := unix.Syscall(
-		unix.SYS_IOCTL,
-		uintptr(r.fd),
-		uintptr(VIDIOC_S_CTRL),
-		uintptr(unsafe.Pointer(&ctrl)),
-	)
-	if errno != 0 {
-		return errors.New(errno.Error())
-	}
-	return nil
-}
-
-// Flip video vertically
-func (r *VideoReader) FlipVertical() error {
-	ctrl := v4l2_control{V4L2_CID_VFLIP, 1}
-	_, _, errno := unix.Syscall(
-		unix.SYS_IOCTL,
-		uintptr(r.fd),
-		uintptr(VIDIOC_S_CTRL),
-		uintptr(unsafe.Pointer(&ctrl)),
-	)
-	if errno != 0 {
-		return errors.New(errno.Error())
-	}
-	return nil
-}
-
-// Start video capture
-func (r *VideoReader) Start() error {
-	typ := V4L2_BUF_TYPE_VIDEO_CAPTURE
-	_, _, errno := unix.Syscall(
-		unix.SYS_IOCTL,
-		uintptr(r.fd),
-		uintptr(VIDIOC_STREAMON),
-		uintptr(unsafe.Pointer(&typ)),
-	)
-	if errno != 0 {
-		return errors.New(errno.Error())
-	}
-
-	r.active = true
-	return nil
-}
-
-// Stop video capture
-func (r *VideoReader) Stop() error {
-	if !r.active {
-		return nil
-	}
-
-	typ := V4L2_BUF_TYPE_VIDEO_CAPTURE
-	_, _, errno := unix.Syscall(
-		unix.SYS_IOCTL,
-		uintptr(r.fd),
-		uintptr(VIDIOC_STREAMOFF),
-		uintptr(unsafe.Pointer(&typ)),
-	)
-	if errno != 0 {
-		return errors.New(errno.Error())
-	}
 	return nil
 }

@@ -46,7 +46,7 @@ func main() {
 	if bitrate, err := strconv.Atoi(flagBitrate); err != nil {
 		panic(err)
 	} else {
-		dev.SetBitrate(bitrate)
+		dev.SetBitrate(uint(bitrate))
 	}
 
 	// Start

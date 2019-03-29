@@ -1,14 +1,17 @@
+//////////////////////////////////////////////////////////////////////////////
+//
+// PeerConnection implements a WebRTC native client modeled after the W3C API.
+//
 // Copyright (c) 2019 Lanikai Labs. All rights reserved.
+//
+//////////////////////////////////////////////////////////////////////////////
 
 package alohartc
 
 import (
-	"bufio"
-	"bytes"
 	"context"
 	"crypto"
 	"crypto/x509"
-	"errors"
 	"fmt"
 	"io"
 	"strconv"
@@ -54,38 +57,66 @@ type PeerConnection struct {
 
 	iceAgent *ice.Agent
 
-	// SRTP session, established after successful call to Connect()
-	srtpSession *srtp.Conn
-
 	// Local certificate
 	certificate *x509.Certificate // Public key
 	privateKey  crypto.PrivateKey // Private key
 	fingerprint string
 
 	mux *mux.Mux
+
+	// Media tracks
+	localVideoTrack  *Track
+	remoteVideoTrack *Track // not implemented
+	localAudioTrack  *Track // not implemented
+	remoteAudioTrack *Track // not implemented
 }
 
-func NewPeerConnection(ctx context.Context) *PeerConnection {
+// Must is a helper that wraps a call to a function returning
+// (*PeerConnection, error) and panics if the error is non-nil. It is intended
+// for use in variable initializations such as
+//	var pc = alohartc.Must(alohartc.NewPeerConnection(config))
+func Must(pc *PeerConnection, err error) *PeerConnection {
+	if err != nil {
+		panic(err)
+	}
+	return pc
+}
+
+// NewPeerConnection creates a new peer connection object
+func NewPeerConnection(config Config) (*PeerConnection, error) {
+	return NewPeerConnectionWithContext(context.Background(), config)
+}
+
+// NewPeerConnectionWithContext creates a new peer connection object
+func NewPeerConnectionWithContext(
+	ctx context.Context,
+	config Config,
+) (*PeerConnection, error) {
 	var err error
 
-	pc := &PeerConnection{}
+	// Create new peer connection (with local audio and video)
+	pc := &PeerConnection{
+		localVideoTrack: &config.VideoTrack,
+		localAudioTrack: &config.AudioTrack,
+	}
 
-	// Create cancelable context
+	// Create cancelable context, derived from upstream context
 	pc.localContext, pc.teardown = context.WithCancel(ctx)
 
+	// Create new ICE agent for peer connection
 	pc.iceAgent = ice.NewAgent(pc.localContext)
 
 	// Dynamically generate a certificate for the peer connection
 	if pc.certificate, pc.privateKey, err = dtls.GenerateSelfSigned(); err != nil {
-		panic(err)
+		return nil, err
 	}
 
 	// Compute certificate fingerprint for later inclusion in SDP offer/answer
 	if pc.fingerprint, err = dtls.Fingerprint(pc.certificate, dtls.HashAlgorithmSHA256); err != nil {
-		panic(err)
+		return nil, err
 	}
 
-	return pc
+	return pc, nil
 }
 
 // Create SDP answer. Only needs SDP offer, no ICE candidates.
@@ -237,12 +268,25 @@ func (pc *PeerConnection) Connect() error {
 	// Start goroutine for processing incoming SRTCP packets
 	go srtcpReaderRunloop(pc.mux, readKey, readSalt)
 
-	// Instantiate a new SRTP session
-	pc.srtpSession, err = srtp.NewSession(srtpEndpoint, pc.DynamicType, writeKey, writeSalt)
+	// Begin a new SRTP session
+	if sess, err := srtp.NewSession(
+		srtpEndpoint,
+		pc.DynamicType,
+		writeKey,
+		writeSalt,
+	); err != nil {
+		return err
+	} else {
+		// Start a goroutine for sending each video tracks to connected peer
+		if pc.localVideoTrack != nil {
+			go sendVideoTrack(sess, *pc.localVideoTrack)
+		}
+	}
 
-	return err
+	return nil
 }
 
+// Close the peer connection
 func (pc *PeerConnection) Close() {
 	log.Info("Closing peer connection")
 
@@ -255,97 +299,75 @@ func (pc *PeerConnection) Close() {
 	}
 }
 
-// Stream a raw H.264 video over the peer connection. If wholeNALUs is true, assume that each Read()
-// returns a whole number of NAL units (this is just an optimization).
-func (pc *PeerConnection) StreamH264(source io.Reader, wholeNALUs bool) error {
-	if pc.srtpSession == nil {
-		return errors.New("Must establish connection before streaming video")
-	}
+// sendVideoTrack transmits the local video track to the remote peer
+func sendVideoTrack(conn *srtp.Conn, track Track) {
+	switch track.(type) {
 
-	// Custom splitter. Extracts NAL units.
-	ScanNALU := func(data []byte, atEOF bool) (advance int, token []byte, err error) {
-		i := bytes.Index(data, []byte{0, 0, 1})
+	// H.264 video track
+	case H264VideoTrack:
+		var stap []byte
+		nalu := make([]byte, 128*1024)
+		gotParameterSet := false
 
-		switch i {
-		case -1:
-			if wholeNALUs {
-				// Assume entire remaining data chunk is one NALU.
-				return len(data), data, nil
+		for {
+			// Read next NAL unit from H.264 video track
+			if n, err := track.Read(nalu); err != nil {
+				switch err {
+				// End-of-track
+				case io.EOF:
+					return
+
+				// Should never get here
+				default:
+					panic(err)
+				}
+
 			} else {
-				// No NALU boundary found. Wait for more data.
-				return 0, nil, nil
-			}
-		case 0:
-			return 3, nil, nil
-		case 1:
-			return 4, nil, nil
-		// Found NAL unit boundary
-		default:
-			if data[i-1] == 0 {
-				// 4 byte boundary
-				return i + 3, data[0 : i-1], nil
-			} else {
-				// 3 byte boundary
-				return i + 3, data[0:i], nil
+				// See https://tools.ietf.org/html/rfc6184#section-1.3
+				forbiddenBit := (nalu[0] & 0x80) >> 7
+				nri := (nalu[0] & 0x60) >> 5
+				typ := nalu[0] & 0x1f
+
+				// Wrap SPS, PPS, and SEI types into a STAP-A packet
+				// See https://tools.ietf.org/html/rfc6184#section-5.7
+				if (typ == 6) || (typ == 7) || (typ == 8) {
+					if stap == nil {
+						stap = []byte{nalTypeSingleTimeAggregationPacketA}
+					}
+					stap = append(stap, byte(n>>8), byte(n))
+					stap = append(stap, nalu[:n]...)
+
+					// STAP-A forbidden bit is bitwise-OR of all forbidden bits
+					stap[0] |= forbiddenBit << 7
+
+					// STAP-A NRI value is maximum of all NRI values
+					stapnri := (stap[0] & 0x60) >> 5
+					if nri > stapnri {
+						stap[0] = (stap[0] &^ 0x60) | (nri << 5)
+					}
+
+					gotParameterSet = true
+				} else {
+					// Discard NAL units until parameter set received
+					if !gotParameterSet {
+						continue
+					}
+
+					// Send STAP-A when complete
+					if stap != nil {
+						conn.Stap(stap)
+						stap = nil
+					}
+
+					// Send NAL
+					conn.Send(nalu[:n])
+				}
 			}
 		}
+
+	default:
+		panic("unsupported video track")
 	}
 
-	buffer := make([]byte, naluBufferSize)
-	scanner := bufio.NewScanner(source)
-	scanner.Buffer(buffer, naluBufferSize)
-	scanner.Split(ScanNALU)
-	var stap []byte
-	var nalu []byte
-	for scanner.Scan() {
-
-		select {
-		case <-pc.localContext.Done():
-			return nil
-
-		default:
-			// Get most recent token generated by Scan(). Does no allocation.
-			if nalu = scanner.Bytes(); len(nalu) < 1 {
-				continue
-			}
-
-			// https://tools.ietf.org/html/rfc6184#section-1.3
-			forbiddenBit := (nalu[0] & 0x80) >> 7
-			nri := (nalu[0] & 0x60) >> 5
-			typ := nalu[0] & 0x1f
-			//log.Printf("F: %b, NRI: %02b, Type: %d, Length: %d\n", forbiddenBit, nri, typ, len(nalu))
-
-			if (typ == 6) || (typ == 7) || (typ == 8) {
-				// Wrap SPS/PPS/SEI in STAP-A packet
-				// https://tools.ietf.org/html/rfc6184#section-5.7
-				if stap == nil {
-					stap = []byte{nalTypeSingleTimeAggregationPacketA}
-				}
-				length := len(nalu)
-				stap = append(stap, byte(length>>8), byte(length))
-				stap = append(stap, nalu...)
-
-				// STAP-A forbidden bit is bitwise-OR of all aggregated forbidden bits
-				stap[0] |= forbiddenBit << 7
-
-				// STAP-A NRI value is the maximum of all aggregated NRI values.
-				stapnri := (stap[0] & 0x60) >> 5
-				if nri > stapnri {
-					stap[0] = (stap[0] &^ 0x60) | (nri << 5)
-				}
-			} else {
-				if stap != nil {
-					pc.srtpSession.Stap(stap)
-					stap = nil
-				}
-
-				// Make a copy of the NALU, since the RTP payload gets encrypted in place.
-				naluCopy := make([]byte, len(nalu))
-				copy(naluCopy, nalu)
-				pc.srtpSession.Send(naluCopy)
-			}
-		}
-	}
-
-	return scanner.Err()
+	panic("should never get here")
 }
