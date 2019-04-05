@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pions/dtls"
+	"github.com/lanikai/alohartc/internal/dtls"
 )
 
 const testMessage = "Hello World"
