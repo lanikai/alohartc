@@ -80,10 +80,14 @@ func websocketHandler(ms alohartc.MediaSource) func(w http.ResponseWriter, r *ht
 				ws.WriteJSON(message{Type: "answer", Text: answer})
 				go sendIceCandidates(ws, pc.LocalICECandidates())
 
-				if err := pc.Connect(); err != nil {
-					log.Println(err)
-					return
-				}
+				// Use separate goroutine to not block websocket
+				go func() {
+					// Blocks. On error, close websocket connection.
+					if err := pc.Connect(); err != nil {
+						log.Println(err)
+						ws.Close()
+					}
+				}()
 
 			case "iceCandidate":
 				if msg.Text == "" {
