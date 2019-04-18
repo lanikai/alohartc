@@ -1,0 +1,23 @@
+//////////////////////////////////////////////////////////////////////////////
+//
+// Colorspace conversions
+//
+// Copyright 2019 Lanikai Labs. All rights reserved.
+//
+//////////////////////////////////////////////////////////////////////////////
+
+#ifndef __YUYV_TO_YUV420P_H
+#define __YUYV_TO_YUV420P_H
+
+#include <inttypes.h>
+
+
+///////////////////////////  FORWARD DECLARATIONS  ///////////////////////////
+
+void yuyv_to_yuv420p(
+	uint8_t *y, uint8_t *u, uint8_t *v,
+	uint8_t *yuyv,
+	int width, int height
+);
+
+#endif // __YUYV_TO_YUV420P_H
