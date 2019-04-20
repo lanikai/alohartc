@@ -5,6 +5,7 @@ package main
 
 import (
 	"html/template"
+	"mime"
 	"net/http"
 )
 
@@ -17,6 +18,9 @@ func StaticServer() http.Handler {
 }
 
 func (h *staticHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// Set content type based on extension. Some browsers (e.g. Chrome) reject
+	// assets with incorrect content type (e.g. CSS with text/plain).
+	w.Header().Add("Content-Type", mime.TypeByExtension(r.URL.Path))
 	w.Write(static(r.URL.Path))
 }
 
