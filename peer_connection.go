@@ -282,6 +282,11 @@ func (pc *PeerConnection) Connect() error {
 		}
 	}
 
+	// Block until we're done streaming.
+	// TODO: Provide a termination condition.
+	done := make(chan struct{})
+	<-done
+
 	return nil
 }
 
