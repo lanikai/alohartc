@@ -66,3 +66,12 @@ checktree:
 	    exit 1; \
 	fi
 endif
+
+
+# Run a simple Python 3 download server, for development. For testing the
+# Alohacam installer script.
+download_server:
+	python3 -m http.server 8086
+
+
+# TODO: Add a make target to upload releases to S3.
