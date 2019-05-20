@@ -13,6 +13,9 @@ BUILDCMD = \
 .PHONY: all
 all: alohacam
 
+.PHONY: generate
+generate:
+	$(MAKE) -C $(TOP) generate
 
 # Default 'alohacam' target platform is Linux/ARMv7. Can be overridden on the
 # command line. (Note: these variables are ignored for release builds.)
@@ -24,7 +27,7 @@ GOOS ?= linux
 
 # PHONY because we let the Go build system decide if it's up-to-date.
 .PHONY: alohacam
-alohacam:
+alohacam: generate
 	CGO_ENABLED=$(CGO_ENABLED) GOARM=$(GOARM) GOARCH=$(GOARCH) GOOS=$(GOOS) $(BUILDCMD)
 
 
@@ -45,8 +48,7 @@ release/$(VERSION)/alohacam-linux-armv6: GOARM=6
 release/$(VERSION)/alohacam-linux-armv7: GOARM=7
 
 .PHONY: $(RELEASE_TARGETS)
-$(RELEASE_TARGETS): checktree
-	$(MAKE) -C $(TOP) generate
+$(RELEASE_TARGETS): checktree generate
 	$(BUILDCMD)
 
 .PHONY: release
