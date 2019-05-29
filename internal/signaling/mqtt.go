@@ -25,64 +25,45 @@ func init() {
 	flag.StringVar(&mqttBrokerFlag, "mqttbroker", "127.0.0.1:8883", "MQTT broker address")
 	flag.StringVar(&certFlag, "cert", "cert.pem", "Client certificate for connecting to MQTT broker")
 	flag.StringVar(&keyFlag, "key", "key.pem", "Private key corresponding to client certificate")
-	
-	NewClient = newMQTTSignaler
+
+	RegisterListener(mqttListener)
 }
 
-type mqttSignaler struct {
-	handler SessionHandler
-
-	clientID  string
-	tlsConfig *tls.Config
-
-	calls    map[string]*call
-	callLock sync.Mutex
-
-	ctx    context.Context
-	cancel func()
-}
-
-func newMQTTSignaler(handler SessionHandler) (Client, error) {
+// Connect to the Oahu MQTT broker and subscribe to topics for incoming calls.
+func mqttListener(handler SessionHandler) error {
 	// Load certificate and key.
 	cert, err := tls.LoadX509KeyPair(certFlag, keyFlag)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	tlsConfig := &tls.Config{
 		Certificates:       []tls.Certificate{cert},
 		InsecureSkipVerify: true,
 	}
 
-	// Extract Common Name from the client certificate, and use it as the client ID.
+	// Extract the subject Common Name from the client certificate, and use it
+	// as the MQTT client ID.
 	var clientID string
 	tlsConfig.BuildNameToCertificate()
 	for clientID, _ = range tlsConfig.NameToCertificate {
 		break
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	s := &mqttSignaler{
-		handler:   handler,
-		clientID:  clientID,
-		tlsConfig: tlsConfig,
-		calls:     make(map[string]*call),
-		ctx:       ctx,
-		cancel:    cancel,
-	}
-	return s, nil
-}
-
-func (s *mqttSignaler) Listen() error {
-	err := mq.Connect(mq.Config{
+	// Connect to MQTT broker.
+	err = mq.Connect(mq.Config{
 		Server:    mqttBrokerFlag,
-		ClientID:  s.clientID,
-		TLSConfig: s.tlsConfig,
+		ClientID:  clientID,
+		TLSConfig: tlsConfig,
 	})
 	if err != nil {
 		return err
 	}
 
-	topicPrefix := fmt.Sprintf("devices/%s", s.clientID)
+	var callLock sync.Mutex
+	calls := make(map[string]*callState)
+	topicPrefix := fmt.Sprintf("devices/%s", clientID)
+
+	ctx := context.TODO()
 
 	// Listen for incoming calls.
 	mq.Subscribe(topicPrefix+"/calls/+/remote/#", 1, func(topic *mq.TopicMatch, payload []byte) {
@@ -90,7 +71,17 @@ func (s *mqttSignaler) Listen() error {
 		callID := topic.Wildcards[0]
 		what := topic.Wildcards[1]
 
-		call := s.getOrCreateCall(callID)
+		// If this is a new call, invoke the handler.
+		callLock.Lock()
+		call, existing := calls[callID]
+		if !existing {
+			call = newCall(callID, fmt.Sprintf("%s/calls/%s/local", topicPrefix, callID))
+			calls[callID] = call
+			go handler(call.session)
+		}
+		callLock.Unlock()
+
+		// Handle the message.
 		switch what {
 		case "sdp-offer":
 			call.offerCh <- string(payload)
@@ -112,7 +103,7 @@ func (s *mqttSignaler) Listen() error {
 				}
 			}
 			if c, err := ice.ParseCandidate(desc, sdpMid); err != nil {
-				log.Warn("Invalid ICE candidate: %v", err)
+				log.Warn("Invalid ICE candidate (%q, %q): %v", desc, sdpMid, err)
 			} else {
 				call.rcandCh <- c
 			}
@@ -121,26 +112,14 @@ func (s *mqttSignaler) Listen() error {
 		}
 	})
 
-	<-s.ctx.Done()
-	return s.ctx.Err()
-}
-
-func (s *mqttSignaler) Shutdown() error {
-	s.cancel()
+	<-ctx.Done()
 	return nil
 }
 
-func (s *mqttSignaler) getOrCreateCall(id string) *call {
-	s.callLock.Lock()
-	defer s.callLock.Unlock()
-
-	if call, ok := s.calls[id]; ok {
-		return call
-	}
-
+// Creates a new call object.
+func newCall(id, topicPrefix string) *callState {
 	offerCh := make(chan string)
 	rcandCh := make(chan ice.Candidate)
-	topicPrefix := fmt.Sprintf("devices/%s/calls/%s/local", s.clientID, id)
 	session := &Session{
 		Context:          context.Background(),
 		Offer:            offerCh,
@@ -156,21 +135,17 @@ func (s *mqttSignaler) getOrCreateCall(id string) *call {
 			return nil
 		},
 	}
-	go s.handler(session)
 
-	call := &call{
+	return &callState{
 		id:      id,
 		offerCh: offerCh,
 		rcandCh: rcandCh,
 		session: session,
 	}
-	s.calls[id] = call
-	return call
 }
 
-type call struct {
-	id string
-
+type callState struct {
+	id      string
 	offerCh chan string
 	rcandCh chan ice.Candidate
 	session *Session

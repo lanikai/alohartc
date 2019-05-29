@@ -2,6 +2,7 @@ package signaling
 
 import (
 	"context"
+	"sync"
 
 	"github.com/lanikai/alohartc/internal/ice"
 )
@@ -29,4 +30,37 @@ type Session struct {
 	SendLocalCandidate func(c ice.Candidate) error
 
 	// TODO: Add method to close session.
+}
+
+// A ListenFunc connects to a signaling server and listens for incoming calls.
+// For each call it creates a Session object and invokes the provided handler.
+type ListenFunc func(handler SessionHandler) error
+
+var listeners []ListenFunc
+
+func RegisterListener(lf ListenFunc) {
+	listeners = append(listeners, lf)
+}
+
+// Listen invokes all registered listeners, passing each new Session to the
+// provided handler. Blocks until all listeners have returned.
+func Listen(h SessionHandler) {
+	if len(listeners) == 0 {
+		log.Warn("No signaling listeners registered.")
+		return
+	}
+
+	// Start listeners, then wait until they're all finished.
+	var wg sync.WaitGroup
+	for _, l := range listeners {
+		wg.Add(1)
+		go func(listen ListenFunc) {
+			err := listen(h)
+			if err != nil {
+				log.Warn("Signaling listener failed: %v", err)
+			}
+			wg.Done()
+		}(l)
+	}
+	wg.Wait()
 }

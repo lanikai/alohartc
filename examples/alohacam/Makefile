@@ -73,8 +73,8 @@ checktree:
 endif
 
 
-# Run a simple Python 3 download server, for development. For testing the
-# Alohacam installer script.
+# Run a simple Python 3 download server, for use with the Alohacam installer
+# script.
 download_server:
 	python3 -m http.server 8086
 
