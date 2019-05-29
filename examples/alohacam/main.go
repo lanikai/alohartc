@@ -73,11 +73,7 @@ func main() {
 	}
 	defer source.Close()
 
-	sig, err := signaling.NewClient(doPeerSession)
-	if err != nil {
-		log.Fatal(err)
-	}
-	log.Fatal(sig.Listen())
+	signaling.Listen(doPeerSession)
 }
 
 func doPeerSession(ss *signaling.Session) {

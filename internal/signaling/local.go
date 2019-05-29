@@ -1,5 +1,3 @@
-// +build !oahu
-
 package signaling
 
 // See ./localdata/gen.go for "go generate" command used to bundle static files.
@@ -11,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/gorilla/websocket"
 
@@ -26,33 +25,22 @@ var (
 func init() {
 	flag.IntVar(&flagPort, "p", 8000, "HTTP port on which to listen")
 
-	NewClient = newLocalWebSignaler
+	RegisterListener(localWebsocketListener)
 }
 
-// A signaling.Client that also acts as the signaling server, running a local
-// webserver that the browser connects to directly. Signaling is then performed
-// over a websocket.
-type localWebSignaler struct {
-	handler SessionHandler
-	server  *http.Server
-}
-
-func newLocalWebSignaler(handler SessionHandler) (Client, error) {
+// Serve a static web page that uses a WebSocket for signaling. This is meant
+// for development and debugging only.
+func localWebsocketListener(handle SessionHandler) error {
 	router := http.NewServeMux()
-	s := &localWebSignaler{
-		handler: handler,
-		server: &http.Server{
-			Addr:    fmt.Sprintf(":%d", flagPort),
-			Handler: router,
-		},
-	}
 	router.Handle("/", http.FileServer(localdata.FS(false)))
-	router.HandleFunc("/ws", s.handleWebsocket)
+	router.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
+		websocketHandler(w, r, handle)
+	})
+	server := http.Server{
+		Addr:    fmt.Sprintf(":%d", flagPort),
+		Handler: router,
+	}
 
-	return s, nil
-}
-
-func (s *localWebSignaler) Listen() error {
 	// Get hostname
 	url, err := os.Hostname()
 	if err != nil {
@@ -65,14 +53,10 @@ func (s *localWebSignaler) Listen() error {
 	}
 
 	fmt.Printf("Open http://%s/ in a browser\n", url)
-	return s.server.ListenAndServe()
+	return server.ListenAndServe()
 }
 
-func (s *localWebSignaler) Shutdown() error {
-	return s.server.Shutdown(context.Background())
-}
-
-func (s *localWebSignaler) handleWebsocket(w http.ResponseWriter, r *http.Request) {
+func websocketHandler(w http.ResponseWriter, r *http.Request, handle SessionHandler) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -105,12 +89,16 @@ func (s *localWebSignaler) handleWebsocket(w http.ResponseWriter, r *http.Reques
 		},
 	}
 
-	go s.handler(session)
+	go handle(session)
 
 	// Process incoming websocket messages. We expect JSON messages of the following form:
 	//   { "type": "offer", "sdp": "..." }
 	//   { "type": "iceCandidate", "candidate": "...", "sdpMid": "..." }
 	for {
+		if err := ws.SetReadDeadline(time.Now().Add(30 * time.Second)); err != nil {
+			log.Warn("Failed to set websocket read deadline: %v", err)
+		}
+
 		msg := map[string]string{}
 		if err := ws.ReadJSON(&msg); err != nil {
 			log.Warn("Failed to read websocket message: %v", err)
