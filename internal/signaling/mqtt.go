@@ -49,11 +49,16 @@ func mqttListener(handler SessionHandler) error {
 		break
 	}
 
+	topicPrefix := fmt.Sprintf("devices/%s", clientID)
+
 	// Connect to MQTT broker.
 	err = mq.Connect(mq.Config{
-		Server:    mqttBrokerFlag,
-		ClientID:  clientID,
-		TLSConfig: tlsConfig,
+		Server:      mqttBrokerFlag,
+		ClientID:    clientID,
+		TLSConfig:   tlsConfig,
+		WillTopic:   topicPrefix + "/status",
+		WillRetain:  true,
+		WillPayload: []byte("disconnected"),
 	})
 	if err != nil {
 		return err
@@ -61,7 +66,6 @@ func mqttListener(handler SessionHandler) error {
 
 	var callLock sync.Mutex
 	calls := make(map[string]*callState)
-	topicPrefix := fmt.Sprintf("devices/%s", clientID)
 
 	ctx := context.TODO()
 
@@ -112,6 +116,8 @@ func mqttListener(handler SessionHandler) error {
 		}
 	})
 
+	mq.Publish(topicPrefix + "/status", 1, []byte("connected"))
+
 	<-ctx.Done()
 	return nil
 }
@@ -125,13 +131,13 @@ func newCall(id, topicPrefix string) *callState {
 		Offer:            offerCh,
 		RemoteCandidates: rcandCh,
 		SendAnswer: func(sdp string) error {
-			mq.Publish(topicPrefix+"/sdp-answer", []byte(sdp))
+			mq.Publish(topicPrefix+"/sdp-answer", 0, []byte(sdp))
 			return nil
 		},
 		SendLocalCandidate: func(c ice.Candidate) error {
 			var payload bytes.Buffer
 			fmt.Fprintf(&payload, "%s\nmid:%s\n", c.String(), c.Mid())
-			mq.Publish(topicPrefix+"/ice-candidate", payload.Bytes())
+			mq.Publish(topicPrefix+"/ice-candidate", 0, payload.Bytes())
 			return nil
 		},
 	}
