@@ -27,7 +27,7 @@ func version() {
 		fmt.Println("Build Date:\t", BuildDate)
 	}
 
-	fmt.Println("Copyright", time.Now().Year(), "Lanikai Labs. All rights reserved.")
+	fmt.Println("Copyright", time.Now().Year(), "Lanikai Labs LLC. All rights reserved.")
 
 	fmt.Println("")
 }
@@ -37,7 +37,7 @@ var source alohartc.MediaSource
 func main() {
 	// Define and parse optional flags
 	input := flag.String("i", "/dev/video0", "video input ('-' for stdin)")
-	bitrate := flag.Uint("bitrate", 2e6, "set video bitrate")
+	bitrate := flag.Uint("bitrate", 1500e3, "set video bitrate")
 	width := flag.Uint("width", 1280, "set video width")
 	height := flag.Uint("height", 720, "set video height")
 	hflip := flag.Bool("hflip", false, "flip video horizontally")
