@@ -26,6 +26,10 @@ To cross-compile for a Raspberry Pi Zero (armv6-based architecture):
 
     GOARM=6 make
 
+To build for production:
+
+    GOFLAGS="-tags=production" make
+
 
 ## Quickstart
 

@@ -3,6 +3,7 @@ package ice
 import (
 	"flag"
 
+	"github.com/lanikai/alohartc/internal/config"
 	"github.com/lanikai/alohartc/internal/logging"
 )
 
@@ -20,5 +21,5 @@ var log = logging.DefaultLogger.WithTag("ice")
 
 func init() {
 	flag.BoolVar(&flagEnableIPv6, "6", false, "Allow use of IPv6")
-	flag.StringVar(&flagStunServer, "stunServer", defaultStunServer, "STUN server address")
+	flag.StringVar(&flagStunServer, "stunServer", config.STUN_SERVER, "STUN server address")
 }

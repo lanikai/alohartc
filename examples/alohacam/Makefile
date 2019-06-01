@@ -43,7 +43,7 @@ RELEASE_TARGETS := \
 
 # Set Go build environment for each release target.
 $(RELEASE_TARGETS): CGO_ENABLED=0
-$(RELEASE_TARGETS): GOFLAGS=-tags=oahu
+$(RELEASE_TARGETS): GOFLAGS=-tags=production
 release/$(VERSION)/alohacam-linux-%: GOOS=linux
 release/$(VERSION)/alohacam-linux-armv%: GOARCH=arm
 release/$(VERSION)/alohacam-linux-armv6: GOARM=6

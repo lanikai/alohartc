@@ -1,3 +1,5 @@
+// +build !production
+
 package signaling
 
 // See ./localdata/gen.go for "go generate" command used to bundle static files.

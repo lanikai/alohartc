@@ -1,5 +1,3 @@
-// +build oahu
-
 package signaling
 
 import (
@@ -11,6 +9,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/lanikai/alohartc/internal/config"
 	"github.com/lanikai/alohartc/internal/ice"
 	"github.com/lanikai/oahu/api/mq"
 )
@@ -22,7 +21,7 @@ var (
 )
 
 func init() {
-	flag.StringVar(&mqttBrokerFlag, "mqttbroker", "127.0.0.1:8883", "MQTT broker address")
+	flag.StringVar(&mqttBrokerFlag, "mqttbroker", config.MQTT_BROKER, "MQTT broker address")
 	flag.StringVar(&certFlag, "cert", "cert.pem", "Client certificate for connecting to MQTT broker")
 	flag.StringVar(&keyFlag, "key", "key.pem", "Private key corresponding to client certificate")
 
@@ -116,7 +115,7 @@ func mqttListener(handler SessionHandler) error {
 		}
 	})
 
-	mq.Publish(topicPrefix + "/status", 1, []byte("connected"))
+	mq.Publish(topicPrefix+"/status", 1, []byte("connected"))
 
 	<-ctx.Done()
 	return nil
