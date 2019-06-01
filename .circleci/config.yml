@@ -20,6 +20,11 @@ jobs:
     steps:
       - checkout
 
+      # Add an extra SSH key for the github.com/lanikai/oahu repository.
+      - add_ssh_keys:
+          fingerprints:
+            - "13:39:6e:d4:ed:28:67:d5:32:b5:30:19:2a:41:a7:d6"
+
       # specify any bash command here prefixed with `run: `
       - run: go get -u github.com/mjibson/esc
       - run: go generate -x ./...
