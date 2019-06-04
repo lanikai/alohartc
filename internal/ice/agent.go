@@ -42,15 +42,20 @@ type Agent struct {
 	ready     chan *ChannelConn
 	readyOnce sync.Once
 
-	ctx context.Context
+	agentContext context.Context
+	agentCancel  context.CancelFunc
 }
 
-// Create a new ICE agent with the given username and passwords.
-func NewAgent(ctx context.Context) *Agent {
+// NewAgentWithContext creates a new ICE agent. The agent is used to establish
+// a peer connection.
+func NewAgentWithContext(ctx context.Context) *Agent {
+	agentContext, agentCancel := context.WithCancel(ctx)
+
 	return &Agent{
-		lcand: make(chan Candidate, localCandidateBufferLength),
-		ready: make(chan *ChannelConn, readySignalBufferLength),
-		ctx:   ctx,
+		lcand:        make(chan Candidate, localCandidateBufferLength),
+		ready:        make(chan *ChannelConn, readySignalBufferLength),
+		agentContext: agentContext,
+		agentCancel:  agentCancel,
 	}
 }
 
@@ -90,9 +95,21 @@ func (a *Agent) EstablishConnectionWithContext(ctx context.Context) (net.Conn, e
 	}()
 
 	// Begin connectivity checks.
-	for _, base := range bases {
-		go a.loop(base)
-	}
+	go func() {
+		var wg sync.WaitGroup
+
+		wg.Add(len(bases))
+		for _, base := range bases {
+			go func() {
+				a.loop(base)
+				wg.Done()
+			}()
+		}
+
+		// When all base loops have terminated, agent is done
+		wg.Wait()
+		a.agentCancel()
+	}()
 
 	// Wait for a candidate to be selected.
 	select {
@@ -156,9 +173,23 @@ func (a *Agent) gatherLocalCandidates(bases []*Base) error {
 	return nil
 }
 
+// Done returns a channel that's closed when the agent is terminated, either
+// because its parent context was terminated, or because all bases timed out,
+// meaning no further peer communication will be attempted.
+//
+// Done is provided for use in select statements.
+func (a *Agent) Done() <-chan struct{} {
+	return a.agentContext.Done()
+}
+
 func (a *Agent) loop(base *Base) {
 	dataIn := make(chan []byte, packetBufferLength)
-	go base.demuxStun(a.ctx, a.handleStun, dataIn)
+
+	loopContext, loopCancel := context.WithCancel(a.agentContext)
+	go func() {
+		defer loopCancel()
+		base.demuxStun(loopContext, a.handleStun, dataIn)
+	}()
 
 	Ta := time.NewTicker(50 * time.Millisecond)
 	defer Ta.Stop()
@@ -172,7 +203,7 @@ func (a *Agent) loop(base *Base) {
 	for {
 		select {
 		// Context terminated. Teardown now.
-		case <-a.ctx.Done():
+		case <-loopContext.Done():
 			// Close base. Causes any blocked ReadFrom() calls to terminate.
 			if err := base.Close(); err != nil {
 				log.Error("failed to close base: %v", err)

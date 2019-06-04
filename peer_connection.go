@@ -104,7 +104,7 @@ func NewPeerConnectionWithContext(
 	pc.localContext, pc.teardown = context.WithCancel(ctx)
 
 	// Create new ICE agent for peer connection
-	pc.iceAgent = ice.NewAgent(pc.localContext)
+	pc.iceAgent = ice.NewAgentWithContext(pc.localContext)
 
 	// Dynamically generate a certificate for the peer connection
 	if pc.certificate, pc.privateKey, err = dtls.GenerateSelfSigned(); err != nil {
@@ -276,16 +276,21 @@ func (pc *PeerConnection) Connect() error {
 	); err != nil {
 		return err
 	} else {
-		// Start a goroutine for sending each video tracks to connected peer
+		// Start a goroutine for sending each video track to connected peer
 		if pc.localVideoTrack != nil {
 			go sendVideoTrack(sess, *pc.localVideoTrack)
 		}
 	}
 
-	// Block until we're done streaming.
-	// TODO: Provide a termination condition.
-	done := make(chan struct{})
-	<-done
+	// Block until either:
+	// - Local peer closes connection
+	// - Remote peer closes connection or connection fails
+	select {
+	case <-pc.localContext.Done():
+		log.Debug("Local peer done")
+	case <-pc.iceAgent.Done():
+		log.Debug("ICE agent terminated (remote peer gone)")
+	}
 
 	return nil
 }
