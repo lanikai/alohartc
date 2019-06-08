@@ -69,10 +69,12 @@ func mqttListener(handler SessionHandler) error {
 	ctx := context.TODO()
 
 	// Listen for incoming calls.
-	mq.Subscribe(topicPrefix+"/calls/+/remote/#", 1, func(topic *mq.TopicMatch, payload []byte) {
-		log.Debug("Received MQTT message on topic '%s': %q", topic.Name, payload)
-		callID := topic.Wildcards[0]
-		what := topic.Wildcards[1]
+	topicFilter := topicPrefix + "/calls/+/remote/#"
+	mq.Subscribe(topicFilter, 1, func(msg mq.Message) {
+		log.Debug("Received MQTT message on topic %s: %q", msg.Topic, msg.Payload)
+		callID := msg.Wildcards[0]
+		what := msg.Wildcards[1]
+		body := string(msg.Payload)
 
 		// If this is a new call, invoke the handler.
 		callLock.Lock()
@@ -87,14 +89,14 @@ func mqttListener(handler SessionHandler) error {
 		// Handle the message.
 		switch what {
 		case "sdp-offer":
-			call.offerCh <- string(payload)
+			call.offerCh <- body
 		case "ice-candidate":
-			if len(payload) == 0 {
+			if len(body) == 0 {
 				close(call.rcandCh)
 				break
 			}
 			var desc, sdpMid string
-			for _, line := range strings.Split(string(payload), "\n") {
+			for _, line := range strings.Split(body, "\n") {
 				if line == "" {
 					continue
 				} else if strings.HasPrefix(line, "candidate:") {
@@ -102,7 +104,7 @@ func mqttListener(handler SessionHandler) error {
 				} else if strings.HasPrefix(line, "mid:") {
 					sdpMid = line[4:]
 				} else {
-					log.Warn("Invalid 'ice-candidate' payload: %q", payload)
+					log.Warn("Invalid 'ice-candidate' payload: %q", body)
 				}
 			}
 			if c, err := ice.ParseCandidate(desc, sdpMid); err != nil {
@@ -114,6 +116,7 @@ func mqttListener(handler SessionHandler) error {
 			log.Warn("Unrecognized MQTT topic level: %s", what)
 		}
 	})
+	defer mq.Unsubscribe(topicFilter)
 
 	mq.Publish(topicPrefix+"/status", 1, []byte("connected"))
 
