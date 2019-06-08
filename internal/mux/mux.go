@@ -6,22 +6,26 @@ import (
 	"sync"
 )
 
+const (
+	// Number of packets to buffer for each endpoint.
+	numBufferPackets = 32
+)
+
 // Mux allows multiplexing
 type Mux struct {
-	lock       sync.RWMutex
+	lock       sync.Mutex
 	nextConn   net.Conn
 	endpoints  map[*Endpoint]MatchFunc
 	bufferSize int
-	closedCh   chan struct{}
 }
 
-// NewMux creates a new Mux
+// NewMux creates a new Mux. This Mux takes ownership of the underlying
+// net.Conn, and is responsible for closing it.
 func NewMux(conn net.Conn, bufferSize int) *Mux {
 	m := &Mux{
 		nextConn:   conn,
 		endpoints:  make(map[*Endpoint]MatchFunc),
 		bufferSize: bufferSize,
-		closedCh:   make(chan struct{}),
 	}
 
 	go m.readLoop()
@@ -31,12 +35,7 @@ func NewMux(conn net.Conn, bufferSize int) *Mux {
 
 // NewEndpoint creates a new Endpoint
 func (m *Mux) NewEndpoint(f MatchFunc) *Endpoint {
-	e := &Endpoint{
-		mux:     m,
-		readCh:  make(chan []byte),
-		wroteCh: make(chan int),
-		doneCh:  make(chan struct{}),
-	}
+	e := createEndpoint(m, numBufferPackets, m.bufferSize)
 
 	m.lock.Lock()
 	m.endpoints[e] = f
@@ -48,8 +47,8 @@ func (m *Mux) NewEndpoint(f MatchFunc) *Endpoint {
 // RemoveEndpoint removes an endpoint from the Mux
 func (m *Mux) RemoveEndpoint(e *Endpoint) {
 	m.lock.Lock()
-	defer m.lock.Unlock()
 	delete(m.endpoints, e)
+	m.lock.Unlock()
 }
 
 // Close closes the Mux and all associated Endpoints.
@@ -66,16 +65,15 @@ func (m *Mux) Close() error {
 		return err
 	}
 
-	// Wait for readLoop to end
-	<-m.closedCh
-
 	return nil
 }
 
+// Read continually from the underlying connection and dispatch to the
+// appropriate endpoint. Terminate on read error, e.g. when the underlying
+// connection is closed.
 func (m *Mux) readLoop() {
-	defer func() {
-		close(m.closedCh)
-	}()
+	defer m.Close()
+
 	buf := make([]byte, m.bufferSize)
 	for {
 		n, err := m.nextConn.Read(buf)
@@ -83,11 +81,18 @@ func (m *Mux) readLoop() {
 			return
 		}
 
-		m.dispatch(buf[:n])
+		// Dispatching to endpoints is done with a "give a penny, take a penny"
+		// approach. The data packet is delivered to the endpoint in exchange
+		// for one of its unused buffers.
+		buf = m.dispatch(buf[:n])
+
+		// Resize the buffer to its full capacity (m.bufferSize), since we may
+		// have shrunk it when we originally dispatched it to the endpoint.
+		buf = buf[0:cap(buf)]
 	}
 }
 
-func (m *Mux) dispatch(buf []byte) {
+func (m *Mux) dispatch(buf []byte) []byte {
 	var endpoint *Endpoint
 
 	m.lock.Lock()
@@ -101,17 +106,8 @@ func (m *Mux) dispatch(buf []byte) {
 
 	if endpoint == nil {
 		fmt.Printf("Warning: mux: no endpoint for packet starting with %d\n", buf[0])
-		return
+		return buf
 	}
 
-	select {
-	case readBuf, ok := <-endpoint.readCh:
-		if !ok {
-			return
-		}
-		n := copy(readBuf, buf)
-		endpoint.wroteCh <- n
-	case <-endpoint.doneCh:
-		return
-	}
+	return endpoint.deliver(buf)
 }
