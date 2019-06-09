@@ -26,6 +26,7 @@ type Base struct {
 	*net.UDPConn
 	address   TransportAddress
 	component int
+	sdpMid    string
 
 	// STUN response handlers for transactions sent from this base, keyed by transaction ID.
 	transactions map[string]stunHandler
@@ -36,7 +37,7 @@ type Base struct {
 type stunHandler func(msg *stunMessage, addr net.Addr, base *Base)
 
 // Create a base for each local IP address.
-func establishBases(component int) (bases []*Base, err error) {
+func establishBases(component int, sdpMid string) (bases []*Base, err error) {
 	ifaces, err := net.Interfaces()
 	if err != nil {
 		return
@@ -74,7 +75,7 @@ func establishBases(component int) (bases []*Base, err error) {
 				}
 			}
 
-			base, err := createBase(ip, component)
+			base, err := createBase(ip, component, sdpMid)
 			if err != nil {
 				log.Warn("Failed to create base for %s\n", ip)
 				// This can happen for link-local IPv6 addresses. Just skip it.
@@ -86,7 +87,7 @@ func establishBases(component int) (bases []*Base, err error) {
 	return
 }
 
-func createBase(ip net.IP, component int) (base *Base, err error) {
+func createBase(ip net.IP, component int, sdpMid string) (base *Base, err error) {
 	// Listen on an arbitrary UDP port.
 	listenAddr := &net.UDPAddr{IP: ip, Port: 0}
 	conn, err := net.ListenUDP("udp", listenAddr)
@@ -98,7 +99,7 @@ func createBase(ip net.IP, component int) (base *Base, err error) {
 	log.Info("Listening on %s\n", address)
 
 	transactions := make(map[string]stunHandler)
-	base = &Base{conn, address, component, transactions, sync.Mutex{}}
+	base = &Base{conn, address, component, sdpMid, transactions, sync.Mutex{}}
 	return
 }
 

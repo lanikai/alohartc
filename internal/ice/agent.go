@@ -81,7 +81,7 @@ func (a *Agent) EstablishConnectionWithContext(ctx context.Context) (net.Conn, e
 	// TODO: Support multiple components
 	component := 1
 
-	bases, err := establishBases(component)
+	bases, err := establishBases(component, a.mid)
 	if err != nil {
 		return nil, err
 	}
@@ -146,7 +146,7 @@ func (a *Agent) gatherLocalCandidates(bases []*Base) error {
 		go func(base *Base) {
 			log.Info("Gathering local candidates for base %s\n", base.address)
 			// Host candidate for peers on the same LAN.
-			hc := makeHostCandidate(a.mid, base)
+			hc := makeHostCandidate(base)
 			a.addLocalCandidate(hc)
 
 			if base.address.protocol == UDP && !base.address.linkLocal {
@@ -157,7 +157,7 @@ func (a *Agent) gatherLocalCandidates(bases []*Base) error {
 				} else if mappedAddress == base.address {
 					log.Warn("Server-reflexive address for %s is same as base\n", base.address)
 				} else {
-					c := makeServerReflexiveCandidate(a.mid, mappedAddress, base, flagStunServer)
+					c := makeServerReflexiveCandidate(base, mappedAddress, flagStunServer)
 					a.addLocalCandidate(c)
 				}
 
@@ -285,7 +285,7 @@ func (a *Agent) handleStun(msg *stunMessage, raddr net.Addr, base *Base) {
 func (a *Agent) handleStunRequest(req *stunMessage, raddr net.Addr, base *Base) {
 	p := a.checklist.findPair(base, raddr)
 	if p == nil {
-		p = a.checklist.adoptPeerReflexiveCandidate(a.mid, base, raddr, req.getPriority())
+		p = a.checklist.adoptPeerReflexiveCandidate(base, raddr, req.getPriority())
 	}
 	if req.hasUseCandidate() && !p.nominated {
 		log.Debug("Nominating %s\n", p.id)
