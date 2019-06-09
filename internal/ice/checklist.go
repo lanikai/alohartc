@@ -104,12 +104,12 @@ func sortAndPrune(pairs []*CandidatePair) []*CandidatePair {
 
 // Create a peer reflexive candidate and pair with the base.
 // [RFC8445 §7.3.1.3-4]
-func (cl *Checklist) adoptPeerReflexiveCandidate(mid string, base *Base, raddr net.Addr, priority uint32) *CandidatePair {
+func (cl *Checklist) adoptPeerReflexiveCandidate(base *Base, raddr net.Addr, priority uint32) *CandidatePair {
 	cl.mutex.Lock()
 	defer cl.mutex.Unlock()
 
-	local := makeHostCandidate(mid, base)
-	remote := makePeerReflexiveCandidate(mid, raddr, base, priority)
+	local := makeHostCandidate(base)
+	remote := makePeerReflexiveCandidate(base, raddr, priority)
 	log.Debug("New peer-reflexive %s", remote)
 
 	p := newCandidatePair(cl.nextPairID, local, remote)

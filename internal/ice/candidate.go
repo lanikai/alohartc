@@ -37,9 +37,9 @@ const (
 	relayType = "relay"
 )
 
-func makeHostCandidate(mid string, base *Base) Candidate {
+func makeHostCandidate(base *Base) Candidate {
 	return Candidate{
-		mid:        mid,
+		mid:        base.sdpMid,
 		address:    base.address,
 		typ:        hostType,
 		priority:   computePriority(hostType, base.component),
@@ -49,9 +49,9 @@ func makeHostCandidate(mid string, base *Base) Candidate {
 	}
 }
 
-func makeServerReflexiveCandidate(mid string, mapped TransportAddress, base *Base, stunServer string) Candidate {
+func makeServerReflexiveCandidate(base *Base, mapped TransportAddress, stunServer string) Candidate {
 	c := Candidate{
-		mid:        mid,
+		mid:        base.sdpMid,
 		address:    mapped,
 		typ:        srflxType,
 		priority:   computePriority(srflxType, base.component),
@@ -65,10 +65,10 @@ func makeServerReflexiveCandidate(mid string, mapped TransportAddress, base *Bas
 	return c
 }
 
-func makePeerReflexiveCandidate(mid string, addr net.Addr, base *Base, priority uint32) Candidate {
+func makePeerReflexiveCandidate(base *Base, addr net.Addr, priority uint32) Candidate {
 	ta := makeTransportAddress(addr)
 	c := Candidate{
-		mid:        mid,
+		mid:        base.sdpMid,
 		address:    ta,
 		typ:        prflxType,
 		priority:   priority,
