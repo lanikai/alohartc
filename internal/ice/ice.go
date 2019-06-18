@@ -20,6 +20,6 @@ var (
 var log = logging.DefaultLogger.WithTag("ice")
 
 func init() {
-	flag.BoolVar(&flagEnableIPv6, "6", false, "Allow use of IPv6")
+	flag.BoolVar(&flagEnableIPv6, "ipv6", true, "Allow IPv6 ICE candidates")
 	flag.StringVar(&flagStunServer, "stunServer", config.STUN_SERVER, "STUN server address")
 }
