@@ -2,6 +2,7 @@ package ice
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"sync"
@@ -16,28 +17,42 @@ const (
 	// discovered, but 1500 is typically a safe value.
 	sizeMaximumTransmissionUnit = 1500
 
-	// Time out for reads from base (i.e. its UDPConn)
+	// How many incoming packets can be enqueued before dropping data.
+	packetQueueLength = 64
+
+	// Timeout for querying STUN server.
+	timeoutQuerySTUNServer = 5 * time.Second
+
+	// Timeout for reads from base (i.e. its UDPConn).
 	timeoutReadFromBase = 5 * time.Second
 )
 
 // [RFC8445] defines a base to be "The transport address that an ICE agent sends from for a
 // particular candidate." It is represented here by a UDP connection, listening on a single port.
 type Base struct {
-	*net.UDPConn
+	net.PacketConn
+
 	address   TransportAddress
 	component int
 	sdpMid    string
 
 	// STUN response handlers for transactions sent from this base, keyed by transaction ID.
-	transactions map[string]stunHandler
+	handlers transactionHandlers
 
-	transactionsLock sync.Mutex
+	// Queue of incoming packets, initialized when the read loop begins.
+	bufin chan []byte
+
+	// Single-fire channel used to indicate that the read loop has died.
+	dead chan struct{}
+
+	// Error that caused the read loop to terminate.
+	err error
 }
 
 type stunHandler func(msg *stunMessage, addr net.Addr, base *Base)
 
 // Create a base for each local IP address.
-func establishBases(component int, sdpMid string) (bases []*Base, err error) {
+func initializeBases(component int, sdpMid string) (bases []*Base, err error) {
 	ifaces, err := net.Interfaces()
 	if err != nil {
 		return
@@ -77,8 +92,8 @@ func establishBases(component int, sdpMid string) (bases []*Base, err error) {
 
 			base, err := createBase(ip, component, sdpMid)
 			if err != nil {
-				log.Warn("Failed to create base for %s\n", ip)
 				// This can happen for link-local IPv6 addresses. Just skip it.
+				log.Debug("Failed to create base for %s\n", ip)
 				continue
 			}
 			bases = append(bases, base)
@@ -87,24 +102,68 @@ func establishBases(component int, sdpMid string) (bases []*Base, err error) {
 	return
 }
 
-func createBase(ip net.IP, component int, sdpMid string) (base *Base, err error) {
+func createBase(ip net.IP, component int, sdpMid string) (*Base, error) {
 	// Listen on an arbitrary UDP port.
 	listenAddr := &net.UDPAddr{IP: ip, Port: 0}
 	conn, err := net.ListenUDP("udp", listenAddr)
 	if err != nil {
-		return
+		return nil, err
 	}
 
 	address := makeTransportAddress(conn.LocalAddr())
 	log.Info("Listening on %s\n", address)
 
-	transactions := make(map[string]stunHandler)
-	base = &Base{conn, address, component, sdpMid, transactions, sync.Mutex{}}
-	return
+	return &Base{
+		PacketConn:   conn,
+		address:      address,
+		component:    component,
+		sdpMid:       sdpMid,
+	}, nil
+}
+
+// Gather host and server-reflexive candidates for each base. Blocks until
+// gathering is complete.
+func gatherAllCandidates(ctx context.Context, bases []*Base, take func(c Candidate)) {
+	var wg sync.WaitGroup
+	for _, b := range bases {
+		wg.Add(1)
+		go func(base *Base) {
+			base.gatherCandidates(ctx, take)
+			wg.Done()
+		}(b)
+	}
+	wg.Wait()
+}
+
+// Gather candidates host and server-reflexive candidates for this base.
+func (base *Base) gatherCandidates(ctx context.Context, take func(c Candidate)) {
+	log.Debug("Gathering local candidates for base %s\n", base.address)
+	// Host candidate for peers on the same LAN.
+	take(makeHostCandidate(base))
+
+	if base.address.protocol == UDP && !base.address.linkLocal {
+		// Query STUN server to get a server reflexive candidate.
+		mappedAddress, err := base.queryStunServer(ctx, flagStunServer)
+
+		// If the context ended, ignore the error.
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
+		if err != nil {
+			log.Debug("Failed to create STUN server candidate for base %s: %s\n", base.address, err)
+		} else if mappedAddress == base.address {
+			log.Debug("Server-reflexive address for %s is same as base\n", base.address)
+		} else {
+			take(makeServerReflexiveCandidate(base, mappedAddress, flagStunServer))
+		}
+	}
 }
 
 // Return the server-reflexive address of this base.
-func (base *Base) queryStunServer(stunServer string) (mapped TransportAddress, err error) {
+func (base *Base) queryStunServer(ctx context.Context, stunServer string) (mapped TransportAddress, err error) {
 	network := fmt.Sprintf("udp%d", base.address.family)
 	stunServerAddr, err := net.ResolveUDPAddr(network, stunServer)
 	if err != nil {
@@ -114,13 +173,14 @@ func (base *Base) queryStunServer(stunServer string) (mapped TransportAddress, e
 	req := newStunBindingRequest("")
 	log.Debug("Sending to %s: %s\n", stunServer, req)
 
-	done := make(chan error, 1)
+	// TODO: Handle retransmissions.
+	errCh := make(chan error, 1)
 	err = base.sendStun(req, stunServerAddr, func(resp *stunMessage, raddr net.Addr, base *Base) {
 		if resp.class == stunSuccessResponse {
 			mapped = makeTransportAddress(resp.getMappedAddress())
-			done <- nil
+			errCh <- nil
 		} else {
-			done <- fmt.Errorf("STUN server query failed: %s", resp)
+			errCh <- fmt.Errorf("STUN server query failed: %s", resp)
 		}
 	})
 	if err != nil {
@@ -128,40 +188,42 @@ func (base *Base) queryStunServer(stunServer string) (mapped TransportAddress, e
 	}
 
 	select {
-	case err = <-done:
-	case <-time.After(3 * time.Second):
-		err = fmt.Errorf("Timed out waiting for response from %s", stunServer)
+	case err = <-errCh:
+	case <-ctx.Done():
+		err = ctx.Err()
+	case <-time.After(timeoutQuerySTUNServer):
+		err = errors.New("timeout")
 	}
+
+	base.handlers.remove(req.transactionID)
 	return
 }
 
 // Send a STUN message to the given remote address. If a handler is supplied, it will be used to
 // process the STUN response, based on the transaction ID.
-func (base *Base) sendStun(msg *stunMessage, raddr net.Addr, handler stunHandler) error {
+func (base *Base) sendStun(msg *stunMessage, raddr net.Addr, responseHandler stunHandler) error {
 	_, err := base.WriteTo(msg.Bytes(), raddr)
-	if err == nil && handler != nil {
-		base.transactionsLock.Lock()
-		base.transactions[msg.transactionID] = handler
-		base.transactionsLock.Unlock()
+	if err == nil && responseHandler != nil {
+		base.handlers.put(msg.transactionID, responseHandler)
 	}
 	return err
 }
 
-// demuxStun reads from base, processing STUN messages, forwarding others
-// Non-STUN messages are written to the `dataIn` channel. Expects to run
-// on its own goroutine.
-func (base *Base) demuxStun(
-	ctx context.Context,
-	defaultHandler stunHandler,
-	dataIn chan<- []byte,
-) {
-	// Sole writer to `dataIn` channel. Close channel upon exit.
-	defer close(dataIn)
+// Read incoming packets from the underlying PacketConn, until an error occurs.
+// STUN messages are handled, the rest are sent to the bufin channel.
+func (base *Base) readLoop(defaultHandler stunHandler) {
+	if base.dead != nil {
+		panic("Base read loop already started")
+	}
 
-	// Allocate read buffer
+	base.bufin = make(chan []byte, packetQueueLength)
+	base.dead = make(chan struct{})
+	defer close(base.dead)
+
+	// Single packet read buffer.
 	buf := make([]byte, sizeMaximumTransmissionUnit)
 
-	// Packet read loop
+	var logOnce sync.Once
 	for {
 		// Set read timeout
 		base.SetReadDeadline(time.Now().Add(timeoutReadFromBase))
@@ -171,9 +233,10 @@ func (base *Base) demuxStun(
 
 		if err != nil {
 			if neterr, ok := err.(net.Error); ok {
-				// Timeout is expected for bases that end up not being used.
+				// Timeout is expected for bases that are not selected.
 				if neterr.Timeout() {
-					log.Info("Connection timed out: %s\n", base.address)
+					log.Debug("Connection timed out: %s\n", base.address)
+					base.err = ErrReadTimeout
 					break
 				}
 
@@ -183,23 +246,25 @@ func (base *Base) demuxStun(
 				}
 			}
 
-			// Check if underlying UDPConn was closed
+			// Exit cleanly if the underlying PacketConn was closed.
 			if operr, ok := err.(*net.OpError); ok {
 				if operr.Op == "read" {
-					log.Info("Connection closed while reading: %s\n", base.address)
+					log.Debug("Connection closed while reading: %s\n", base.address)
 					break
 				}
 			}
 
-			// Should never get here
-			log.Fatal(err)
+			log.Warn("Read error in %s: %v\n", base.address, err)
+			base.err = err
+			break
 		}
 
+		// TODO: Use a sync.Pool of buffers to avoid allocating on each packet.
 		data := make([]byte, n)
 		copy(data, buf[0:n])
 
-		// Only process STUN messages
 		if mux.MatchSTUN(data) {
+			// Process STUN packets.
 			msg, err := parseStunMessage(data)
 			if err != nil {
 				log.Fatal(err)
@@ -209,25 +274,69 @@ func (base *Base) demuxStun(
 				log.Debug("Received from %s: %s\n", raddr, msg)
 
 				// Pass incoming STUN message to the appropriate handler.
-				var handler stunHandler
-				base.transactionsLock.Lock()
-				handler, found := base.transactions[msg.transactionID]
-				if found {
-					delete(base.transactions, msg.transactionID)
-				} else {
-					handler = defaultHandler
-				}
-				base.transactionsLock.Unlock()
+				handler := base.handlers.get(msg.transactionID, defaultHandler)
 				handler(msg, raddr, base)
 			}
 		} else {
+			// Pass data packets (non-STUN) to the bufin channel.
 			select {
-			case dataIn <- data:
-				// Enqueue non-STUN packet into chanell. Blocks if full.
-			case <-ctx.Done():
-				// Context terminated. Teardown now.
-				break
+			case base.bufin <- data:
+			default:
+				logOnce.Do(func() {
+					log.Warn("Dropping data packet (first byte %x) because reader cannot keep up", data[0])
+				})
 			}
 		}
+	}
+}
+
+func (base *Base) makeDataStream(raddr net.Addr) *DataStream {
+	return &DataStream{
+		conn:  base,
+		raddr: raddr,
+		in:    base.bufin,
+		dead:  base.dead,
+		cause: func() error {
+			return base.err
+		},
+	}
+}
+
+// transactionHandlers manages a map of STUN transaction ID -> stunHandler. When an
+// outgoing STUN request is made, a handler can be registered for processing the
+// remote peer's STUN response.
+type transactionHandlers struct {
+	sync.Mutex
+	m map[string]stunHandler
+}
+
+func (t *transactionHandlers) get(transactionID string, def stunHandler) stunHandler {
+	t.lockAndInitialize()
+	handler, found := t.m[transactionID]
+	if found {
+		delete(t.m, transactionID)
+	} else {
+		handler = def
+	}
+	t.Unlock()
+	return handler
+}
+
+func (t *transactionHandlers) put(transactionID string, handler stunHandler) {
+	t.lockAndInitialize()
+	t.m[transactionID] = handler
+	t.Unlock()
+}
+
+func (t *transactionHandlers) remove(transactionID string) {
+	t.lockAndInitialize()
+	delete(t.m, transactionID)
+	t.Unlock()
+}
+
+func (t *transactionHandlers) lockAndInitialize() {
+	t.Lock()
+	if t.m == nil {
+		t.m = make(map[string]stunHandler)
 	}
 }

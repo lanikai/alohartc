@@ -1,6 +1,7 @@
 package ice
 
 import (
+	"context"
 	"net"
 	"sort"
 	"sync"
@@ -8,23 +9,32 @@ import (
 )
 
 type Checklist struct {
-	state checklistState
+	state       checklistState
+
+	// Checklist state listeners, each with a unique id.
+	listeners      map[int]chan checklistState
+	nextListenerID int
+
+	// ICE credentials
+	username       string
+	localPassword  string
+	remotePassword string
+
+	// ID for next candidate pair to be added
+	nextPairID int
+
 	pairs []*CandidatePair
 
 	triggeredQueue []*CandidatePair
 
-	nextPairID int
+	// Valid list
+	valid []*CandidatePair
 
-	valid    []*CandidatePair
+	// Selected candidate pair
 	selected *CandidatePair
 
-	// Listeners that get notified every time checklist state changes.
-	listeners []chan struct{}
-
 	// Mutex to prevent reading from pairs while they're being modified.
-	mutex sync.RWMutex
-
-	stateMutex sync.Mutex
+	mutex sync.Mutex
 
 	// Index of the next candidate pair to be checked
 	nextToCheck int
@@ -102,8 +112,99 @@ func sortAndPrune(pairs []*CandidatePair) []*CandidatePair {
 	return pairs
 }
 
-// Create a peer reflexive candidate and pair with the base.
-// [RFC8445 §7.3.1.3-4]
+// [RFC8445 §6.1.2.4] Two candidate pairs are redundant if they have the same
+// remote candidate and same local base.
+func isRedundant(p1, p2 *CandidatePair) bool {
+	return p1.remote.address == p2.remote.address && p1.local.base.address == p2.local.base.address
+}
+
+func (cl *Checklist) run(ctx context.Context) {
+	lid, stateCh := cl.addListener()
+	defer cl.removeListener(lid)
+
+	go func() {
+		// Timer for periodic connectivity checks. This is stopped once a
+		// candidate pair has been selected.
+		Ta := time.NewTicker(50 * time.Millisecond)
+		defer Ta.Stop()
+
+		// Timer for keepalives.
+		Tr := time.NewTicker(30 * time.Second)
+		defer Tr.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+
+			case newState := <-stateCh:
+				// Checklist state has changed.
+				log.Debug("Checklist state: %d", newState)
+				switch newState {
+				case checklistCompleted:
+					// TODO; Just end the run loop when the checklist completes.
+					Ta.Stop()
+				case checklistFailed:
+					log.Fatal("Failed to connect to remote peer")
+				}
+
+			case <-Ta.C:
+				// [RFC8445 §6.1.4.2] Periodic connectivity check.
+				if p := cl.nextPair(); p != nil {
+					log.Debug("Next candidate pair to check: %s\n", p)
+					if err := cl.sendCheck(p); err != nil {
+						log.Warn("Failed to send connectivity check: %s", err)
+					}
+				}
+
+			case <-Tr.C:
+				// [RFC8445 §11] Send STUN binding indication to selected pair.
+				if p := cl.selected; p != nil {
+					p.sendStun(newStunBindingIndication(), nil)
+				}
+			}
+		}
+	}()
+}
+
+func (cl *Checklist) getSelected(ctx context.Context) (*CandidatePair, error) {
+	lid, stateCh := cl.addListener()
+	defer cl.removeListener(lid)
+
+	for {
+		if cl.selected != nil {
+			return cl.selected, nil
+		}
+
+		select {
+		case <-stateCh:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+}
+
+// [RFC8445 §7.3] Respond to STUN binding request by sending a success response.
+func (cl *Checklist) handleStunRequest(req *stunMessage, raddr net.Addr, base *Base) {
+	p := cl.findPair(base, raddr)
+	if p == nil {
+		p = cl.adoptPeerReflexiveCandidate(base, raddr, req.getPriority())
+	}
+	if req.hasUseCandidate() && !p.nominated {
+		log.Debug("Nominating %s\n", p.id)
+		cl.nominate(p)
+	}
+
+	resp := newStunBindingResponse(req.transactionID, raddr, cl.localPassword)
+	log.Debug("Sending response %s -> %s: %s\n", base.LocalAddr(), raddr, resp)
+	if err := base.sendStun(resp, raddr, nil); err != nil {
+		log.Warn("Failed to send STUN response: %s", err)
+	}
+
+	cl.triggerCheck(p)
+}
+
+// [RFC8445 §7.3.1.3-4] Create a peer reflexive candidate and pair with the base.
 func (cl *Checklist) adoptPeerReflexiveCandidate(base *Base, raddr net.Addr, priority uint32) *CandidatePair {
 	cl.mutex.Lock()
 	defer cl.mutex.Unlock()
@@ -121,12 +222,6 @@ func (cl *Checklist) adoptPeerReflexiveCandidate(base *Base, raddr net.Addr, pri
 	return p
 }
 
-// [RFC8445 §6.1.2.4] Two candidate pairs are redundant if they have the same
-// remote candidate and same local base.
-func isRedundant(p1, p2 *CandidatePair) bool {
-	return p1.remote.address == p2.remote.address && p1.local.base.address == p2.local.base.address
-}
-
 // Return the next candidate pair to check for connectivity.
 func (cl *Checklist) nextPair() *CandidatePair {
 	cl.mutex.Lock()
@@ -138,13 +233,8 @@ func (cl *Checklist) nextPair() *CandidatePair {
 		return p
 	}
 
-	n := len(cl.pairs)
-	if n == 0 {
-		// Nothing to do yet.
-		return nil
-	}
-
 	// Find the next pair in the Waiting state.
+	n := len(cl.pairs)
 	for i := 0; i < n; i++ {
 		k := (cl.nextToCheck + i) % n
 		p := cl.pairs[k]
@@ -158,20 +248,21 @@ func (cl *Checklist) nextPair() *CandidatePair {
 	return nil
 }
 
-func (cl *Checklist) sendCheck(p *CandidatePair, username, password string) error {
+func (cl *Checklist) sendCheck(p *CandidatePair) error {
 	req := newStunBindingRequest("")
-	req.addAttribute(stunAttrUsername, []byte(username))
+	req.addAttribute(stunAttrUsername, []byte(cl.username))
 	req.addAttribute(stunAttrIceControlled, []byte{1, 2, 3, 4, 5, 6, 7, 8})
 	req.addPriority(p.local.peerPriority())
-	req.addMessageIntegrity(password)
+	req.addMessageIntegrity(cl.remotePassword)
 	req.addFingerprint()
 	p.state = InProgress
 	retransmit := time.AfterFunc(cl.rto(), func() {
 		// If we don't get a response within the RTO, then move the pair back to Waiting.
 		p.state = Waiting
 	})
+
 	log.Debug("%s: Sending to %s from %s: %s\n", p.id, p.remote.address, p.local.address, req)
-	return p.local.base.sendStun(req, p.remote.address.netAddr(), func(resp *stunMessage, raddr net.Addr, base *Base) {
+	return p.sendStun(req, func(resp *stunMessage, raddr net.Addr, base *Base) {
 		retransmit.Stop()
 		cl.processResponse(p, resp, raddr)
 	})
@@ -225,19 +316,16 @@ func (cl *Checklist) nominate(p *CandidatePair) {
 }
 
 func (cl *Checklist) updateState() {
-	cl.stateMutex.Lock()
-	defer cl.stateMutex.Unlock()
+	cl.mutex.Lock()
+	defer cl.mutex.Unlock()
 
 	if cl.state != checklistRunning {
 		return
 	}
 
-	cl.mutex.RLock()
-	defer cl.mutex.RUnlock()
-
 	for _, p := range cl.valid {
 		if p.nominated {
-			log.Debug("Selected %s", p)
+			log.Info("Selected %s", p)
 			cl.selected = p
 			cl.state = checklistCompleted
 			break
@@ -246,16 +334,34 @@ func (cl *Checklist) updateState() {
 
 	// TODO: Handle checklist failure
 
-	// Notify listeners.
-	for _, listener := range cl.listeners {
-		listener <- struct{}{}
+	// Notify listeners that the state has changed.
+	for _, ch := range cl.listeners {
+		select {
+		case ch <- cl.state:
+		default:
+		}
 	}
 }
 
-func (cl *Checklist) addListener(listener chan struct{}) {
+func (cl *Checklist) addListener() (int, <-chan checklistState) {
 	cl.mutex.Lock()
-	cl.listeners = append(cl.listeners, listener)
-	cl.mutex.Unlock()
+	defer cl.mutex.Unlock()
+
+	id := cl.nextListenerID
+	ch := make(chan checklistState, 1)
+	if cl.listeners == nil {
+		cl.listeners = make(map[int]chan checklistState)
+	}
+	cl.listeners[id] = ch
+	cl.nextListenerID++
+	return id, ch
+}
+
+func (cl *Checklist) removeListener(id int) {
+	cl.mutex.Lock()
+	defer cl.mutex.Unlock()
+
+	delete(cl.listeners, id)
 }
 
 // findPair returns first candidate pair matching the base and remote address

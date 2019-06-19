@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log"
@@ -77,13 +78,16 @@ func main() {
 }
 
 func doPeerSession(ss *signaling.Session) {
+	ctx, cancel := context.WithCancel(ss.Context)
+	defer cancel()
+
 	// Get new track from media source. Close it when session ends.
 	track := source.GetTrack()
 	defer source.CloseTrack(track)
 
 	// Create peer connection with one video track
 	pc := alohartc.Must(alohartc.NewPeerConnectionWithContext(
-		ss.Context,
+		ctx,
 		alohartc.Config{
 			VideoTrack: track,
 		}))
@@ -104,24 +108,16 @@ func doPeerSession(ss *signaling.Session) {
 		log.Fatal(ss.Err())
 	}
 
-	// Pass remote ICE candidates along to the PeerConnection.
-	go func() {
-		for c := range ss.RemoteCandidates {
-			log.Println("Remote ICE", c)
-			pc.AddIceCandidate(c)
-		}
-	}()
+	lcand := pc.ExchangeCandidates(ss.RemoteCandidates)
 
-	// Send local ICE candidates to the remote peer.
+	// Send local ICE candidates to the remote peer via the signaling server.
 	go func() {
-		for c := range pc.LocalICECandidates() {
-			log.Println("Local ICE", c)
+		for c := range lcand {
 			ss.SendLocalCandidate(c)
 		}
 	}()
 
-	// Block until we're connected.
-	if err := pc.Connect(); err != nil {
+	if err := pc.Stream(); err != nil {
 		log.Println(err)
 	}
 }

@@ -95,7 +95,7 @@ func (c *Conn) Close() {
 	c.conn.Close()
 }
 
-func (c *Conn) Stap(b []byte) {
+func (c *Conn) Stap(b []byte) error {
 	m := rtpMsg{
 		payloadType:    c.typ,
 		timestamp:      c.time,
@@ -106,13 +106,15 @@ func (c *Conn) Stap(b []byte) {
 		payload:        b,
 	}
 	c.context.encrypt(&m)
-	c.conn.Write(m.marshal())
+	_, err := c.conn.Write(m.marshal())
 	c.seq += 1
+	return err
 }
 
-func (c *Conn) Send(b []byte) {
+func (c *Conn) Send(b []byte) error {
 	maxSize := 1280
 
+	var err error
 	if len(b) < maxSize {
 		m := rtpMsg{
 			payloadType:    c.typ,
@@ -124,7 +126,7 @@ func (c *Conn) Send(b []byte) {
 			payload:        b,
 		}
 		c.context.encrypt(&m)
-		c.conn.Write(m.marshal())
+		_, err = c.conn.Write(m.marshal())
 		c.seq += 1
 	} else {
 		indicator := byte((0 & 0x80) | (b[0] & 0x60) | 28)
@@ -155,7 +157,10 @@ func (c *Conn) Send(b []byte) {
 				payload:        data,
 			}
 			c.context.encrypt(&m)
-			c.conn.Write(m.marshal())
+			_, err = c.conn.Write(m.marshal())
+			if err != nil {
+				break
+			}
 
 			c.seq += 1
 
@@ -166,4 +171,6 @@ func (c *Conn) Send(b []byte) {
 	// TODO This should be replaced with the difference between successive
 	// TODO timecodes returned by the v4l2 device (or other future source).
 	c.time += 3000
+
+	return err
 }
