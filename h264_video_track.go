@@ -31,31 +31,31 @@ type H264VideoTrack struct {
 }
 
 // NewH264VideoTrack returns a new video track for the specified reader
-func NewH264VideoTrack(r io.Reader) H264VideoTrack {
+func NewH264VideoTrack(r io.Reader) *H264VideoTrack {
 	scanner := bufio.NewScanner(r)
 
 	scanner.Buffer(make([]byte, initialScanBufSize), MaxNALUnitSize)
 	scanner.Split(splitNALU)
 
-	return H264VideoTrack{
+	return &H264VideoTrack{
 		scanner: scanner,
 	}
 }
 
 // Close the video track
-func (vt H264VideoTrack) Close() error {
+func (vt *H264VideoTrack) Close() error {
 	return nil
 }
 
 // PayloadType returns a string denoting the codec and clock rate. The Track
 // interface requires the method. The string is SDP compatible.
-func (vt H264VideoTrack) PayloadType() string {
+func (vt *H264VideoTrack) PayloadType() string {
 	return "H264/90000"
 }
 
 // Read next packet of video track. This packet will be a STAP-A or NAL unit.
 // The packet may need to be fragmented.
-func (vt H264VideoTrack) Read(p []byte) (n int, err error) {
+func (vt *H264VideoTrack) Read(p []byte) (n int, err error) {
 	// Blocking read and parsing
 	if ok := vt.scanner.Scan(); ok {
 		if nalu := vt.scanner.Bytes(); len(nalu) < 1 {

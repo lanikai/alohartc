@@ -65,10 +65,10 @@ type PeerConnection struct {
 	mux *mux.Mux
 
 	// Media tracks
-	localVideoTrack  *Track
-	remoteVideoTrack *Track // not implemented
-	localAudioTrack  *Track // not implemented
-	remoteAudioTrack *Track // not implemented
+	localVideoTrack  Track
+	remoteVideoTrack Track // not implemented
+	localAudioTrack  Track // not implemented
+	remoteAudioTrack Track // not implemented
 }
 
 // Must is a helper that wraps a call to a function returning
@@ -96,8 +96,8 @@ func NewPeerConnectionWithContext(
 
 	// Create new peer connection (with local audio and video)
 	pc := &PeerConnection{
-		localVideoTrack: &config.VideoTrack,
-		localAudioTrack: &config.AudioTrack,
+		localVideoTrack: config.VideoTrack,
+		localAudioTrack: config.AudioTrack,
 	}
 
 	// Create cancelable context, derived from upstream context
@@ -278,7 +278,7 @@ func (pc *PeerConnection) Connect() error {
 	} else {
 		// Start a goroutine for sending each video track to connected peer
 		if pc.localVideoTrack != nil {
-			go sendVideoTrack(sess, *pc.localVideoTrack)
+			go sendVideoTrack(sess, pc.localVideoTrack)
 		}
 	}
 
@@ -311,9 +311,7 @@ func (pc *PeerConnection) Close() {
 // sendVideoTrack transmits the local video track to the remote peer
 func sendVideoTrack(conn *srtp.Conn, track Track) {
 	switch track.(type) {
-
-	// H.264 video track
-	case H264VideoTrack:
+	case *H264VideoTrack:
 		var stap []byte
 		nalu := make([]byte, 128*1024)
 		gotParameterSet := false
