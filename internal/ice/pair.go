@@ -59,6 +59,14 @@ func newCandidatePair(seq int, local, remote Candidate) *CandidatePair {
 	}
 }
 
+func (p *CandidatePair) getDataStream() *DataStream {
+	return p.local.base.makeDataStream(p.remote.address.netAddr())
+}
+
+func (p *CandidatePair) sendStun(msg *stunMessage, handler stunHandler) error {
+	return p.local.base.sendStun(msg, p.remote.address.netAddr(), handler)
+}
+
 func (p *CandidatePair) String() string {
 	return fmt.Sprintf("%s: %s -> %s [%s]", p.id, p.local.address, p.remote.address, p.state)
 }

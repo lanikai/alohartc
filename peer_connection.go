@@ -13,7 +13,6 @@ import (
 	"crypto"
 	"crypto/x509"
 	"fmt"
-	"io"
 	"strconv"
 	"strings"
 	"time"
@@ -39,12 +38,14 @@ const (
 	saltLen = 14
 
 	maxSRTCPSize = 65536
+
+	connectTimeout = 10 * time.Second
 )
 
 type PeerConnection struct {
 	// Local context (for signaling)
-	localContext context.Context
-	teardown     context.CancelFunc
+	ctx    context.Context
+	cancel context.CancelFunc
 
 	// Local session description
 	localDescription sdp.Session
@@ -61,8 +62,6 @@ type PeerConnection struct {
 	certificate *x509.Certificate // Public key
 	privateKey  crypto.PrivateKey // Private key
 	fingerprint string
-
-	mux *mux.Mux
 
 	// Media tracks
 	localVideoTrack  Track
@@ -88,23 +87,20 @@ func NewPeerConnection(config Config) (*PeerConnection, error) {
 }
 
 // NewPeerConnectionWithContext creates a new peer connection object
-func NewPeerConnectionWithContext(
-	ctx context.Context,
-	config Config,
-) (*PeerConnection, error) {
-	var err error
+func NewPeerConnectionWithContext(ctx context.Context, config Config) (*PeerConnection, error) {
+	// Create cancelable context, derived from upstream context
+	ctx, cancel := context.WithCancel(ctx)
 
 	// Create new peer connection (with local audio and video)
 	pc := &PeerConnection{
+		ctx:             ctx,
+		cancel:          cancel,
 		localVideoTrack: config.VideoTrack,
 		localAudioTrack: config.AudioTrack,
+		iceAgent:        ice.NewAgent(),
 	}
 
-	// Create cancelable context, derived from upstream context
-	pc.localContext, pc.teardown = context.WithCancel(ctx)
-
-	// Create new ICE agent for peer connection
-	pc.iceAgent = ice.NewAgentWithContext(pc.localContext)
+	var err error
 
 	// Dynamically generate a certificate for the peer connection
 	if pc.certificate, pc.privateKey, err = dtls.GenerateSelfSigned(); err != nil {
@@ -163,6 +159,7 @@ func (pc *PeerConnection) createAnswer() sdp.Session {
 			Attributes: []sdp.Attribute{
 				{"mid", remoteMedia.GetAttr("mid")},
 				{"rtcp", "9 IN IP4 0.0.0.0"},
+				// TODO: Randomize ufrag and local password
 				{"ice-ufrag", "n3E3"},
 				{"ice-pwd", "auh7I7RsuhlZQgS2XYLStR05"},
 				{"ice-options", "trickle"},
@@ -178,6 +175,7 @@ func (pc *PeerConnection) createAnswer() sdp.Session {
 				// 4d0032 (main)
 				// 640032 (high)
 				{"fmtp", fmt.Sprintf("%d level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f", pc.DynamicType)},
+				// TODO: Randomize SSRC
 				{"ssrc", "2541098696 cname:cYhx/N8U7h7+3GW3"},
 				{"ssrc", "2541098696 msid:SdWLKyaNRoUSWQ7BzkKGcbCWcuV7rScYxCAv e9b60276-a415-4a66-8395-28a893918d4c"},
 				{"ssrc", "2541098696 mslabel:SdWLKyaNRoUSWQ7BzkKGcbCWcuV7rScYxCAv"},
@@ -212,34 +210,34 @@ func (pc *PeerConnection) SetRemoteDescription(sdpOffer string) (sdpAnswer strin
 	return answer.String(), nil
 }
 
-// Return a channel for receiving local ICE candidates.
-func (pc *PeerConnection) LocalICECandidates() <-chan ice.Candidate {
-	return pc.iceAgent.ReceiveLocalCandidates()
+// ExchangeCandidates arranges for remote candidates to be trickled in to the
+// local ICE agent (via rcand), and local candidates to be trickled back out
+// (via the returned channel).
+func (pc *PeerConnection) ExchangeCandidates(rcand <-chan ice.Candidate) <-chan ice.Candidate {
+	return pc.iceAgent.Start(pc.ctx, rcand)
 }
 
-// Add remote ICE candidate.
-func (pc *PeerConnection) AddIceCandidate(c ice.Candidate) error {
-	return pc.iceAgent.AddRemoteCandidate(c)
-}
-
-// Connect to remote peer. Sends local ICE candidates via signaler.
-func (pc *PeerConnection) Connect() error {
-	// Connect to remote peer
-	ctx, cancel := context.WithTimeout(pc.localContext, 10*time.Second)
-	iceConn, err := pc.iceAgent.EstablishConnectionWithContext(ctx)
+// Stream establishes a connection to the remote peer, and streams media to/from
+// the configured tracks. Blocks until an error occurs, or until the
+// PeerConnection is closed.
+func (pc *PeerConnection) Stream() error {
+	// Wait for ICE agent to establish a connection.
+	timeoutCtx, _ := context.WithTimeout(pc.ctx, connectTimeout)
+	dataStream, err := pc.iceAgent.GetDataStream(timeoutCtx)
 	if err != nil {
 		return err
 	}
-	defer cancel()
+	defer dataStream.Close()
 
 	// Instantiate a new net.Conn multiplexer
-	pc.mux = mux.NewMux(iceConn, 8192)
+	dataMux := mux.NewMux(dataStream, 8192)
+	defer dataMux.Close()
 
 	// Instantiate a new endpoint for DTLS from multiplexer
-	dtlsEndpoint := pc.mux.NewEndpoint(mux.MatchDTLS)
+	dtlsEndpoint := dataMux.NewEndpoint(mux.MatchDTLS)
 
 	// Instantiate a new endpoint for SRTP from multiplexer
-	srtpEndpoint := pc.mux.NewEndpoint(mux.MatchSRTP)
+	srtpEndpoint := dataMux.NewEndpoint(mux.MatchSRTP)
 
 	// Configuration for DTLS handshake, namely certificate and private key
 	config := &dtls.Config{Certificate: pc.certificate, PrivateKey: pc.privateKey}
@@ -265,109 +263,99 @@ func (pc *PeerConnection) Connect() error {
 	readSalt := append([]byte{}, material[offset:offset+saltLen]...)
 
 	// Start goroutine for processing incoming SRTCP packets
-	go srtcpReaderRunloop(pc.mux, readKey, readSalt)
+	go srtcpReaderRunloop(dataMux, readKey, readSalt)
 
 	// Begin a new SRTP session
-	if sess, err := srtp.NewSession(
-		srtpEndpoint,
-		pc.DynamicType,
-		writeKey,
-		writeSalt,
-	); err != nil {
+	srtpSession, err := srtp.NewSession(srtpEndpoint, pc.DynamicType, writeKey, writeSalt)
+	if err != nil {
 		return err
-	} else {
-		// Start a goroutine for sending each video track to connected peer
-		if pc.localVideoTrack != nil {
-			go sendVideoTrack(sess, pc.localVideoTrack)
-		}
 	}
 
-	// Block until either:
-	// - Local peer closes connection
-	// - Remote peer closes connection or connection fails
+	// Start a goroutine for sending each video track to connected peer.
+	if pc.localVideoTrack != nil {
+		go sendVideoTrack(srtpSession, pc.localVideoTrack)
+	}
+
+	// There are two termination conditions that we need to deal with here:
+	// 1. Context cancellation. If Close() is called explicitly, or if the
+	// parent context is canceled, we should terminate cleanly.
+	// 2. Connection timeout. If the remote peer disconnects unexpectedly, the
+	// read loop on the underlying net.UDPConn will time out. The associated
+	// ice.DataStream will then be marked dead, which we check for here.
 	select {
-	case <-pc.localContext.Done():
-		log.Debug("Local peer done")
-	case <-pc.iceAgent.Done():
-		log.Debug("ICE agent terminated (remote peer gone)")
+	case <-pc.ctx.Done():
+		return nil
+	case <-dataStream.Done():
+		return dataStream.Err()
 	}
-
-	return nil
 }
 
 // Close the peer connection
 func (pc *PeerConnection) Close() {
 	log.Info("Closing peer connection")
 
-	// Call context cancel function
-	pc.teardown()
-
-	// Close connection multiplexer and its endpoints
-	if pc.mux != nil {
-		pc.mux.Close()
-	}
+	// Cancel context to notify goroutines to exit.
+	pc.cancel()
 }
 
-// sendVideoTrack transmits the local video track to the remote peer
-func sendVideoTrack(conn *srtp.Conn, track Track) {
+// sendVideoTrack transmits the local video track to the remote peer.
+// Terminates either on track read error or SRTP write error.
+func sendVideoTrack(conn *srtp.Conn, track Track) error {
 	switch track.(type) {
 	case *H264VideoTrack:
 		var stap []byte
-		nalu := make([]byte, 128*1024)
+		buf := make([]byte, 128*1024)
 		gotParameterSet := false
 
 		for {
 			// Read next NAL unit from H.264 video track
-			if n, err := track.Read(nalu); err != nil {
-				switch err {
-				// End-of-track
-				case io.EOF:
-					return
+			n, err := track.Read(buf)
+			if err != nil {
+				return err
+			}
+			nalu := buf[:n]
 
-				// Should never get here
-				default:
-					panic(err)
+			// See https://tools.ietf.org/html/rfc6184#section-1.3
+			forbiddenBit := (nalu[0] & 0x80) >> 7
+			nri := (nalu[0] & 0x60) >> 5
+			typ := nalu[0] & 0x1f
+
+			// Wrap SPS, PPS, and SEI types into a STAP-A packet
+			// See https://tools.ietf.org/html/rfc6184#section-5.7
+			if (typ == 6) || (typ == 7) || (typ == 8) {
+				if stap == nil {
+					stap = []byte{nalTypeSingleTimeAggregationPacketA}
+				}
+				stap = append(stap, byte(n>>8), byte(n))
+				stap = append(stap, nalu...)
+
+				// STAP-A forbidden bit is bitwise-OR of all forbidden bits
+				stap[0] |= forbiddenBit << 7
+
+				// STAP-A NRI value is maximum of all NRI values
+				stapnri := (stap[0] & 0x60) >> 5
+				if nri > stapnri {
+					stap[0] = (stap[0] &^ 0x60) | (nri << 5)
 				}
 
+				gotParameterSet = true
 			} else {
-				// See https://tools.ietf.org/html/rfc6184#section-1.3
-				forbiddenBit := (nalu[0] & 0x80) >> 7
-				nri := (nalu[0] & 0x60) >> 5
-				typ := nalu[0] & 0x1f
+				// Discard NAL units until parameter set received
+				if !gotParameterSet {
+					continue
+				}
 
-				// Wrap SPS, PPS, and SEI types into a STAP-A packet
-				// See https://tools.ietf.org/html/rfc6184#section-5.7
-				if (typ == 6) || (typ == 7) || (typ == 8) {
-					if stap == nil {
-						stap = []byte{nalTypeSingleTimeAggregationPacketA}
+				// Send STAP-A when complete
+				if stap != nil {
+					if err := conn.Stap(stap); err != nil {
+						return err
 					}
-					stap = append(stap, byte(n>>8), byte(n))
-					stap = append(stap, nalu[:n]...)
+					stap = nil
+				}
 
-					// STAP-A forbidden bit is bitwise-OR of all forbidden bits
-					stap[0] |= forbiddenBit << 7
-
-					// STAP-A NRI value is maximum of all NRI values
-					stapnri := (stap[0] & 0x60) >> 5
-					if nri > stapnri {
-						stap[0] = (stap[0] &^ 0x60) | (nri << 5)
-					}
-
-					gotParameterSet = true
-				} else {
-					// Discard NAL units until parameter set received
-					if !gotParameterSet {
-						continue
-					}
-
-					// Send STAP-A when complete
-					if stap != nil {
-						conn.Stap(stap)
-						stap = nil
-					}
-
-					// Send NAL
-					conn.Send(nalu[:n])
+				// Send NALU
+				if err := conn.Send(nalu); err != nil {
+					return err
 				}
 			}
 		}
