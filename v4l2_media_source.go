@@ -66,8 +66,13 @@ func NewV4L2MediaSource(
 	}, nil
 }
 
-// Close media source. Closes the underlying video4linux2 device.
+// Close media source. Closes all tracks as well as the underlying video4linux2
+// device.
 func (ms *V4L2MediaSource) Close() error {
+	for t := range ms.tracks {
+		ms.CloseTrack(t)
+	}
+
 	return ms.device.Close()
 }
 
@@ -90,27 +95,42 @@ func (ms *V4L2MediaSource) GetTrack() Track {
 
 // CloseTrack when the reader is done with the track
 func (ms *V4L2MediaSource) CloseTrack(track Track) {
-	// If last track, stop device
-	if len(ms.tracks) == 1 {
-		ms.device.Stop()
+	buffer, ok := ms.tracks[track]
+	if !ok {
+		return
 	}
 
 	// Delete track
 	delete(ms.tracks, track)
+
+	// If last track, stop device. This will terminate the read loop.
+	if len(ms.tracks) == 0 {
+		ms.device.Stop()
+	}
+
+	buffer.Close()
 }
 
-// readLoop repeatedly reads from the underlying video4linux2 device and
-// writes each read frame to each reader. It exits when the device is
-// closed or an unrecoverable error occurs.
+// readLoop repeatedly reads from the underlying video4linux2 device and writes
+// each read frame to each track. It exits when the device is closed or an
+// unrecoverable error occurs.
 func (ms *V4L2MediaSource) readLoop() {
+	// On read error, close all tracks.
+	defer func() {
+		for t, _ := range ms.tracks {
+			ms.CloseTrack(t)
+		}
+	}()
+
 	buf := make([]byte, 256*1024)
 	for {
-		if n, err := ms.device.Read(buf); err != nil {
+		n, err := ms.device.Read(buf)
+		if err != nil {
 			return
-		} else {
-			for _, buffer := range ms.tracks {
-				buffer.Write(buf[:n])
-			}
+		}
+
+		for _, buffer := range ms.tracks {
+			buffer.Write(buf[:n])
 		}
 	}
 }
