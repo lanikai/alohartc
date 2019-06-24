@@ -136,9 +136,11 @@ func newCall(id, topicPrefix string) *callState {
 			mq.Publish(topicPrefix+"/sdp-answer", 0, []byte(sdp))
 			return nil
 		},
-		SendLocalCandidate: func(c ice.Candidate) error {
+		SendLocalCandidate: func(c *ice.Candidate) error {
 			var payload bytes.Buffer
-			fmt.Fprintf(&payload, "%s\nmid:%s\n", c.String(), c.Mid())
+			if c != nil {
+				fmt.Fprintf(&payload, "%s\nmid:%s\n", c.String(), c.Mid())
+			}
 			mq.Publish(topicPrefix+"/ice-candidate", 0, payload.Bytes())
 			return nil
 		},

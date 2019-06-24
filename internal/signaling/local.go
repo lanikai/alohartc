@@ -82,12 +82,13 @@ func websocketHandler(w http.ResponseWriter, r *http.Request, handle SessionHand
 				"sdp":  sdp,
 			})
 		},
-		SendLocalCandidate: func(c ice.Candidate) error {
-			return ws.WriteJSON(map[string]string{
-				"type":      "iceCandidate",
-				"candidate": c.String(),
-				"sdpMid":    c.Mid(),
-			})
+		SendLocalCandidate: func(c *ice.Candidate) error {
+			msg := map[string]string{"type": "iceCandidate"}
+			if c != nil {
+				msg["candidate"] = c.String()
+				msg["sdpMid"] = c.Mid()
+			}
+			return ws.WriteJSON(msg)
 		},
 	}
 

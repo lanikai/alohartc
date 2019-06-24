@@ -56,7 +56,11 @@ type PeerConnection struct {
 	// RTP payload type (negotiated via SDP)
 	DynamicType uint8
 
-	iceAgent *ice.Agent
+	iceAgent         *ice.Agent
+	remoteCandidates chan ice.Candidate
+
+	// Callback when a local ICE candidate is available.
+	OnIceCandidate func(*ice.Candidate)
 
 	// Local certificate
 	certificate *x509.Certificate // Public key
@@ -93,11 +97,16 @@ func NewPeerConnectionWithContext(ctx context.Context, config Config) (*PeerConn
 
 	// Create new peer connection (with local audio and video)
 	pc := &PeerConnection{
-		ctx:             ctx,
-		cancel:          cancel,
-		localVideoTrack: config.VideoTrack,
-		localAudioTrack: config.AudioTrack,
-		iceAgent:        ice.NewAgent(),
+		ctx:              ctx,
+		cancel:           cancel,
+		localVideoTrack:  config.VideoTrack,
+		localAudioTrack:  config.AudioTrack,
+		iceAgent:         ice.NewAgent(),
+
+		// Set initial dummy handler for local ICE candidates.
+		OnIceCandidate: func(c *ice.Candidate) {
+			log.Warn("No OnICECandidate handler: %v", c)
+		},
 	}
 
 	var err error
@@ -207,14 +216,45 @@ func (pc *PeerConnection) SetRemoteDescription(sdpOffer string) (sdpAnswer strin
 	remotePassword := offer.Media[0].GetAttr("ice-pwd")
 	pc.iceAgent.Configure(mid, username, localPassword, remotePassword)
 
+	// ICE gathering begins implicitly after offer/answer exchange.
+	go pc.startGathering()
+
 	return answer.String(), nil
 }
 
-// ExchangeCandidates arranges for remote candidates to be trickled in to the
-// local ICE agent (via rcand), and local candidates to be trickled back out
-// (via the returned channel).
-func (pc *PeerConnection) ExchangeCandidates(rcand <-chan ice.Candidate) <-chan ice.Candidate {
-	return pc.iceAgent.Start(pc.ctx, rcand)
+func (pc *PeerConnection) startGathering() {
+	pc.remoteCandidates = make(chan ice.Candidate, 4)
+	lcand := pc.iceAgent.Start(pc.ctx, pc.remoteCandidates)
+	for {
+		select {
+		case c, more := <-lcand:
+			if !more {
+				// Signal end-of-candidates.
+				pc.OnIceCandidate(nil)
+				return
+			}
+			pc.OnIceCandidate(&c)
+		case <-pc.ctx.Done():
+			return
+		}
+	}
+}
+
+// AddIceCandidate adds a remote ICE candidate.
+func (pc *PeerConnection) AddIceCandidate(c *ice.Candidate) {
+	if pc.remoteCandidates == nil {
+		return
+	}
+	if c == nil {
+		// nil means end-of-candidates.
+		close(pc.remoteCandidates)
+		pc.remoteCandidates = nil
+	} else {
+		select {
+		case pc.remoteCandidates <- *c:
+		case <-pc.ctx.Done():
+		}
+	}
 }
 
 // Stream establishes a connection to the remote peer, and streams media to/from

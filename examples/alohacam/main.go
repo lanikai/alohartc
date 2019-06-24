@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/lanikai/alohartc"
+	"github.com/lanikai/alohartc/internal/ice"
 	"github.com/lanikai/alohartc/internal/signaling"
 )
 
@@ -93,6 +94,13 @@ func doPeerSession(ss *signaling.Session) {
 		}))
 	defer pc.Close()
 
+	// Register callback for ICE candidates produced by the local ICE agent.
+	pc.OnIceCandidate = func(c *ice.Candidate) {
+		if err := ss.SendLocalCandidate(c); err != nil {
+			log.Fatal(err)
+		}
+	}
+
 	// Wait for SDP offer from remote peer, then send our answer.
 	select {
 	case offer := <-ss.Offer:
@@ -108,13 +116,12 @@ func doPeerSession(ss *signaling.Session) {
 		log.Fatal(ss.Err())
 	}
 
-	lcand := pc.ExchangeCandidates(ss.RemoteCandidates)
-
-	// Send local ICE candidates to the remote peer via the signaling server.
+	// Pass remote candidates from the signaling server to the local ICE agent.
 	go func() {
-		for c := range lcand {
-			ss.SendLocalCandidate(c)
+		for c := range ss.RemoteCandidates {
+			pc.AddIceCandidate(&c)
 		}
+		pc.AddIceCandidate(nil)
 	}()
 
 	if err := pc.Stream(); err != nil {
