@@ -27,7 +27,7 @@ type Session struct {
 	SendAnswer func(sdpAnswer string) error
 
 	// Client-specific function for sending local ICE candidates to remote peer.
-	SendLocalCandidate func(c ice.Candidate) error
+	SendLocalCandidate func(c *ice.Candidate) error
 
 	// TODO: Add method to close session.
 }
