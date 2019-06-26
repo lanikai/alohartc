@@ -11,7 +11,9 @@ package alohartc
 import (
 	"context"
 	"crypto"
+	"crypto/rand"
 	"crypto/x509"
+	"encoding/base64"
 	"fmt"
 	"strconv"
 	"strings"
@@ -97,11 +99,11 @@ func NewPeerConnectionWithContext(ctx context.Context, config Config) (*PeerConn
 
 	// Create new peer connection (with local audio and video)
 	pc := &PeerConnection{
-		ctx:              ctx,
-		cancel:           cancel,
-		localVideoTrack:  config.VideoTrack,
-		localAudioTrack:  config.AudioTrack,
-		iceAgent:         ice.NewAgent(),
+		ctx:             ctx,
+		cancel:          cancel,
+		localVideoTrack: config.VideoTrack,
+		localAudioTrack: config.AudioTrack,
+		iceAgent:        ice.NewAgent(),
 
 		// Set initial dummy handler for local ICE candidates.
 		OnIceCandidate: func(c *ice.Candidate) {
@@ -125,7 +127,7 @@ func NewPeerConnectionWithContext(ctx context.Context, config Config) (*PeerConn
 }
 
 // Create SDP answer. Only needs SDP offer, no ICE candidates.
-func (pc *PeerConnection) createAnswer() sdp.Session {
+func (pc *PeerConnection) createAnswer() (sdp.Session, error) {
 	s := sdp.Session{
 		Version: 0,
 		Origin: sdp.Origin{
@@ -155,6 +157,17 @@ func (pc *PeerConnection) createAnswer() sdp.Session {
 				}
 			}
 		}
+
+		// Require 24 and 128 bits of randomness for ufrag and pwd, respectively
+		rnd := make([]byte, 3+16)
+		if _, err := rand.Read(rnd); err != nil {
+			return sdp.Session{}, err
+		}
+
+		// Base64 encode ice-ufrag and ice-pwd
+		ufrag := base64.StdEncoding.EncodeToString(rnd[0:3])
+		pwd := base64.StdEncoding.EncodeToString(rnd[3:])
+
 		m := sdp.Media{
 			Type:   "video",
 			Port:   9,
@@ -168,9 +181,8 @@ func (pc *PeerConnection) createAnswer() sdp.Session {
 			Attributes: []sdp.Attribute{
 				{"mid", remoteMedia.GetAttr("mid")},
 				{"rtcp", "9 IN IP4 0.0.0.0"},
-				// TODO: Randomize ufrag and local password
-				{"ice-ufrag", "n3E3"},
-				{"ice-pwd", "auh7I7RsuhlZQgS2XYLStR05"},
+				{"ice-ufrag", ufrag},
+				{"ice-pwd", pwd},
 				{"ice-options", "trickle"},
 				{"fingerprint", "sha-256 " + strings.ToUpper(pc.fingerprint)},
 				{"setup", "active"},
@@ -195,7 +207,7 @@ func (pc *PeerConnection) createAnswer() sdp.Session {
 	}
 
 	pc.localDescription = s
-	return s
+	return s, nil
 }
 
 // Set remote SDP offer. Return SDP answer.
@@ -206,7 +218,10 @@ func (pc *PeerConnection) SetRemoteDescription(sdpOffer string) (sdpAnswer strin
 	}
 	pc.remoteDescription = offer
 
-	answer := pc.createAnswer()
+	answer, err := pc.createAnswer()
+	if err != nil {
+		return
+	}
 
 	mid := offer.Media[0].GetAttr("mid")
 	remoteUfrag := offer.Media[0].GetAttr("ice-ufrag")
