@@ -1,33 +1,102 @@
 # Golang CircleCI 2.0 configuration file
 #
 # Check https://circleci.com/docs/2.0/language-go/ for more details
-version: 2
-jobs:
-  build:
+version: 2.1
+
+# Golang executor environment for AlohaRTC build, test, and release
+executors:
+  alohartc-executor:
     docker:
       - image: circleci/golang:latest
-      
-      # Specify service dependencies here if necessary
-      # CircleCI maintains a library of pre-built images
-      # documented at https://circleci.com/docs/2.0/circleci-images/
-      # - image: circleci/postgres:9.4
-
-    #### TEMPLATE_NOTE: go expects specific checkout path representing url
-    #### expecting it in the form of
-    ####   /go/src/github.com/circleci/go-tool
-    ####   /go/src/bitbucket.org/circleci/go-tool
     working_directory: /go/src/github.com/lanikai/alohartc
+
+orbs:
+  aws-s3: circleci/aws-s3@1.0.0
+
+jobs:
+  build:
+    executor: alohartc-executor
     steps:
+      # Checkout source code from repository
       - checkout
 
       # Add an extra SSH key for the github.com/lanikai/oahu repository.
+      # AlohaRTC depends on this repository for MQTT message definitions.
       - add_ssh_keys:
           fingerprints:
             - "13:39:6e:d4:ed:28:67:d5:32:b5:30:19:2a:41:a7:d6"
 
-      # specify any bash command here prefixed with `run: `
+      # Get dependencies, generate, and test
       - run: go get -u github.com/mjibson/esc
       - run: go generate -x ./...
       - run: go get -v -t -d ./...
       - run: go get -u github.com/kyoh86/richgo
       - run: richgo test -v ./...
+
+  build-release:
+    executor: alohartc-executor
+    steps:
+      # Checkout source code from repository
+      - checkout
+
+      # Add an extra SSH key for the github.com/lanikai/oahu repository.
+      # AlohaRTC depends on this repository for MQTT message definitions.
+      - add_ssh_keys:
+          fingerprints:
+            - "13:39:6e:d4:ed:28:67:d5:32:b5:30:19:2a:41:a7:d6"
+
+      # Get dependencies, generate, and build releases
+      - run: go get -u github.com/mjibson/esc
+      - run: go generate -x ./...
+      - run: go get -v -t -d ./...
+      - run:
+          command: make release VERSION=$(git describe --always --tags --dirty)
+          working_directory: /go/src/github.com/lanikai/alohartc/examples/alohacam
+
+      # Fetch upx, a binary compressor utility
+      - run:
+          command: curl -L https://github.com/upx/upx/releases/download/v3.95/upx-3.95-amd64_linux.tar.xz | tar Jx
+          working_directory: /tmp
+
+      # Compress binaries
+      - run:
+          command: find release -type f | xargs /tmp/upx-3.95-amd64_linux/upx
+          working_directory: /go/src/github.com/lanikai/alohartc/examples/alohacam
+
+      - persist_to_workspace:
+          root: /go/src/github.com/lanikai/alohartc
+          paths:
+            - examples/alohacam/release
+
+  deploy:
+    docker:
+      - image: 'circleci/python:2.7'
+    steps:
+      - attach_workspace:
+          at: /tmp/workspace
+
+      # Upload to S3
+      - aws-s3/sync:
+          from: /tmp/workspace/examples/alohacam/release/
+          to: s3://get.alohacam.io/release/
+
+workflows:
+  version: 2
+  build-deploy:
+    jobs:
+      - build:
+          filters:
+            tags:
+              only: /.*/
+      - build-release:
+          requires:
+            - build
+          filters:
+            tags:
+              only: /v[0-9]+\.[0-9]+\.[0-9]+$/
+      - deploy:
+          requires:
+            - build-release
+          filters:
+            tags:
+              only: /v[0-9]+\.[0-9]+\.[0-9]+$/
