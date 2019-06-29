@@ -1,7 +1,6 @@
 TOP := $(shell git rev-parse --show-cdup)
 
-GIT_REVISION_ID := $(shell git describe --always --dirty)
-BUILD_DATE := $(shell date)
+GIT_REVISION_ID := $(shell git describe --always --dirty --tags)
 
 # Default 'alohacam' target platform is Linux/ARMv7. Can be overridden on the
 # command line. (Note: these default values are ignored for release builds.)
@@ -15,7 +14,7 @@ GOOS ?= linux
 BUILDCMD = \
     CGO_ENABLED=$(CGO_ENABLED) GOARM=$(GOARM) GOARCH=$(GOARCH) GOFLAGS=$(GOFLAGS) GOOS=$(GOOS) \
     go build -v \
-	-ldflags '-s -w -X main.GitRevisionId=$(GIT_REVISION_ID) -X "main.BuildDate=$(BUILD_DATE)"' \
+	-ldflags '-s -w -X main.GitRevisionId=$(GIT_REVISION_ID)' \
 	-o $@ .
 
 
@@ -62,6 +61,7 @@ release: $(RELEASE_TARGETS)
 ifneq ($(VERSION), dev)
 BRANCH := $(shell git rev-parse --symbolic-full-name --abbrev-ref HEAD)
 checktree:
+ifndef CIRCLECI
 	if [ $(BRANCH) != master ]; then \
 	    echo "!! Versioned release binaries must be built from the master branch."; \
 	    exit 1; \
@@ -70,6 +70,7 @@ checktree:
 	    echo "!! Versioned release binaries must be built from a clean working tree."; \
 	    exit 1; \
 	fi
+endif
 endif
 
 

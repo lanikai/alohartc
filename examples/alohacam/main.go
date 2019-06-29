@@ -15,22 +15,13 @@ import (
 )
 
 // Populated via -ldflags="-X ...". See Makefile.
-var BuildDate string
 var GitRevisionId string
+var GitTag string
 
+// Print version information
 func version() {
-	fmt.Println("🌈 Alohacam")
-
-	if GitRevisionId != "" {
-		fmt.Println("Git revision:\t", GitRevisionId)
-	}
-
-	if BuildDate != "" {
-		fmt.Println("Build Date:\t", BuildDate)
-	}
-
+	fmt.Println("🌈 Alohacam", GitRevisionId)
 	fmt.Println("Copyright", time.Now().Year(), "Lanikai Labs LLC. All rights reserved.")
-
 	fmt.Println("")
 }
 
