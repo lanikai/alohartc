@@ -1,3 +1,10 @@
+<!--
+
+The caller initiates an RTCPeerConnection and receives video from the callee.
+
+Copyright (C) 2019 Chris Hiszpanski
+
+-->
 <!DOCTYPE html>
 <html lang="en">
   <head>
@@ -15,18 +22,26 @@
   <body>
     <h1>Caller</h1>
 
-    <div style="float:left;">
-      <video id="remoteVideo" autoplay muted></video>
-    </div>
-    <div style="float:right;">
-      <textarea cols="80" rows="24" id="channel"></textarea>
-    </div>
+    <video id="remoteVideo" autoplay controls></video>
+
+    <p>1. Copy following SDP offer to the callee:</p>
+    <textarea cols="80" rows="24" id="sdpOffer"></textarea>
+
+    <p>2. Paste SDP answer from callee here:</p>
+    <textarea cols="80" rows="24" id="sdpAnswer"></textarea>
+
+    <p>3. Copy local ICE candidates to callee:</p>
+    <textarea cols="80" rows="24" id="localIceCandidates"></textarea>
+
+    <p>4. Paste remote ICE candidates from callee:</p>
+    <textarea cols="80" rows="24" id="remoteIceCandidates"></textarea>
 
     <script src="js/adapter-latest.js"></script>
     <script>
       'use strict';
 
-      document.getElementById('channel').addEventListener('paste', handlePaste)
+      document.getElementById('sdpAnswer').addEventListener('paste', handleSdpAnswer);
+      document.getElementById('remoteIceCandidates').addEventListener('paste', handleRemoteIceCandidates);
   
       const remoteVideo = document.getElementById("remoteVideo")
   
@@ -37,32 +52,52 @@
         offerToReceiveVideo: true
       };
 
+      // Local media constraints: audio-only
+      const mediaConstraints = {
+        audio: true,
+        video: false
+      };
+
       window.onload = caller;
 
-      // Handle pasted data
-      function handlePaste(e) {
+      // Handle pasted SDP data
+      function handleSdpAnswer(e) {
         var clipboardData, pastedData;
 
         clipboardData = e.clipboardData || window.clipboardData;
         pastedData = clipboardData.getData('Text');
 
         let json = JSON.parse(pastedData)
-        switch (json.type) {
-        case "answer":
-          console.log(json);
+        console.log("received sdp: ", json);
 
-          // Use received SDP to set remote description
-          pc.setRemoteDescription(json).then(
-            onSetRemoteSuccess,
-            onSetSessionDescriptionError
-          );
+        // Use received SDP to set remote description
+        pc.setRemoteDescription(json).then(
+          onSetRemoteSuccess,
+          onSetSessionDescriptionError
+        );
+      }
 
-          break;
+      // Handle pasted ICE data
+      function handleRemoteIceCandidates(e) {
+        var clipboardData, pastedData;
 
-        case "ice":
-          console.log("ice");
-          break;
-        }
+        clipboardData = e.clipboardData || window.clipboardData;
+        pastedData = clipboardData.getData('Text');
+
+        pastedData.split('\n').forEach(function(candidate) {
+          if (candidate.length > 1) {
+            var c = JSON.parse(candidate)
+            pc.addIceCandidate(c).then(() => onAddIceCandidateSuccess(pc), err => onAddIceCandidateError(pc, err));
+          }
+        });
+      }
+
+      function onAddIceCandidateSuccess(pc) {
+        trace(`addIceCandidate success`);
+      }
+
+      function onAddIceCandidateError(pc, error) {
+        trace(`failed to add ICE Candidate: ${error.toString()}`);
       }
 
       function onSetRemoteSuccess(pc) {
@@ -75,27 +110,33 @@
       }
 
       function caller() {
+        // Create a new peer connection
         pc = new RTCPeerConnection();
+
+        // Register callbacks
         pc.onicecandidate = e => onIceCandidate(pc, e);
         pc.oniceconnectionstatechange = e => onIceStateChange(pc, e);
         pc.ontrack = gotRemoteStream;
-        pc.createOffer(offerOptions).then(
-          onCreateOfferSuccess,
-          onCreateSessionDescriptionError
-        );
-      }
 
-      function gotRemoteStream(e) {
-        if (remoteVideo.srcObject !== e.streams[0]) {
-          remoteVideo.srcObject = e.streams[0];
-          trace('received remote stream');
-        }
+        // Get local audio
+        navigator.mediaDevices.getUserMedia(mediaConstraints).then(function(stream) {
+          // Add local audio track to peer connection
+          stream.getAudioTracks().forEach(track => pc.addTrack(track, stream));
+
+          // Create offer with local audio source
+          pc.createOffer(offerOptions).then(
+            onCreateOfferSuccess,
+            onCreateSessionDescriptionError
+          );
+        }).catch(function(error) {
+          console.log("getUserMedia: ", error.message, error.name);
+        });
       }
 
       function onCreateOfferSuccess(desc) {
         trace(`Offer: ${desc.sdp}`);
         trace('setLocalDescription start');
-        document.getElementById("channel").value += JSON.stringify(desc);
+        document.getElementById("sdpOffer").value += JSON.stringify(desc);
         pc.setLocalDescription(desc).then(
           () => onSetLocalSuccess(pc),
           onSetSessionDescriptionError
@@ -118,9 +159,21 @@
         console.log(event.candidate);
         trace(`ICE candidate:\n${event.candidate ? event.candidate.candidate : '(null)'}`);
         if (event.candidate) {
-          let data = { "type": "ice", "data": event.candidate }
+          document.getElementById("localIceCandidates").value += JSON.stringify(event.candidate) + '\n';
+        }
+      }
 
-          document.getElementById("channel").value += JSON.stringify(data);
+      function onIceStateChange(pc, event) {
+        if (pc) {
+          trace(`ICE state: ${pc.iceConnectionState}`);
+          console.log('ICE state change event: ', event);
+        }
+      }
+
+      function gotRemoteStream(e) {
+        if (remoteVideo.srcObject !== e.streams[0]) {
+          remoteVideo.srcObject = e.streams[0];
+          trace('received remote stream');
         }
       }
 
@@ -132,12 +185,6 @@
         trace(`Failed to add ICE Candidate: ${error.toString()}`);
       }
 
-      function onIceStateChange(pc, event) {
-        if (pc) {
-          trace(`ICE state: ${pc.iceConnectionState}`);
-          console.log('ICE state change event: ', event);
-        }
-      }
     </script>
   </body>
 </html>
