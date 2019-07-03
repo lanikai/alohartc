@@ -23,7 +23,7 @@
   </style>
 </head>
 <body>
-  <video id="remoteVideo" autoplay controls muted playsinline></video>
+  <video id="remoteVideo" autoplay controls playsinline></video>
 
   <script src="/adapter-latest.js"></script>
   <script>
@@ -33,6 +33,8 @@
 
     // Create a websocket connection for exchanging SDP data
     const ws = new WebSocket('ws://' + location.host + '/ws');
+
+    console.log(navigator.mediaDevices);
 
     ws.addEventListener("message", function (event) {
       var msg = JSON.parse(event.data);
@@ -120,11 +122,20 @@
         }));
       }
 
-      // Create offer and send to callee
-      pc.createOffer({ offerToReceiveAudio: false, offerToReceiveVideo: true })
-        .then(onCreateOfferSuccess)
+      // Get local media (audio)
+      navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+        .then(function(stream) {
+          stream.getAudioTracks().forEach(track => pc.addTrack(track, stream));
+
+          // Create offer with local audio source
+          pc.createOffer({ offerToReceiveAudio: false, offerToReceiveVideo: true })
+            .then(onCreateOfferSuccess)
+            .catch(function(error) {
+              console.log("createOffer failure:", error);
+            });
+          })
         .catch(function(error) {
-          console.log("createOffer failure:", error);
+          console.log("getUserMedia: ", error.message, error.name);
         });
     });
   </script>

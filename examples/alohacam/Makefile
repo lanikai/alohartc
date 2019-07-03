@@ -8,7 +8,7 @@ GIT_REVISION_ID := $(shell git describe --always --tags)
 CGO_ENABLED ?= 0
 GOARM ?= 6
 GOARCH ?= arm
-GOFLAGS ?=
+GOFLAGS ?= -tags=localonly
 GOOS ?= linux
 
 # Command to build alohacam binary.
