@@ -9,7 +9,13 @@
 
 ## Setup
 
-Set a pre-commit hook to `go fmt` code (see https://tip.golang.org/misc/git/pre-commit)
+Set a pre-commit hook to `go fmt` code (see https://golang.org/misc/git/pre-commit)
+
+Translate `https://github.com/...` URLs to `ssh://git@github.com/...` when
+fetching Go dependencies, so that it uses our already-configured SSH key:
+```console
+git config --global url."ssh://git@github.com/".insteadOf "https://github.com/"
+```
 
 
 ## Building
