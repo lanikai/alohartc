@@ -8,7 +8,6 @@ executors:
   alohartc-executor:
     docker:
       - image: circleci/golang:latest
-    working_directory: /go/src/github.com/lanikai/alohartc
 
 orbs:
   aws-s3: circleci/aws-s3@1.0.0
@@ -26,11 +25,12 @@ jobs:
           fingerprints:
             - "13:39:6e:d4:ed:28:67:d5:32:b5:30:19:2a:41:a7:d6"
 
-      # Get dependencies, generate, and test
-      - run: go get -u github.com/mjibson/esc
+      # Generate code
+      - run: go get github.com/mjibson/esc
       - run: go generate -x ./...
-      - run: go get -v -t -d ./...
-      - run: go get -u github.com/kyoh86/richgo
+
+      # Run tests
+      - run: go get github.com/kyoh86/richgo
       - run: richgo test -v ./...
 
   build-release:
@@ -45,13 +45,13 @@ jobs:
           fingerprints:
             - "13:39:6e:d4:ed:28:67:d5:32:b5:30:19:2a:41:a7:d6"
 
-      # Get dependencies, generate, and build releases
-      - run: go get -u github.com/mjibson/esc
+      # Generate code
+      - run: go get github.com/mjibson/esc
       - run: go generate -x ./...
-      - run: go get -v -t -d ./...
+
+      # Build releases
       - run:
-          command: make release VERSION=$(git describe --always --tags --dirty)
-          working_directory: /go/src/github.com/lanikai/alohartc/examples/alohacam
+          command: make -C examples/alohacam/ release VERSION=$(git describe --always --tags --dirty)
 
       # Fetch upx, a binary compressor utility
       - run:
@@ -60,8 +60,7 @@ jobs:
 
       # Compress binaries
       - run:
-          command: find release -type f | xargs /tmp/upx-3.95-amd64_linux/upx
-          working_directory: /go/src/github.com/lanikai/alohartc/examples/alohacam
+          command: find examples/alohacam/release -type f | xargs /tmp/upx-3.95-amd64_linux/upx
 
       - persist_to_workspace:
           root: /go/src/github.com/lanikai/alohartc
