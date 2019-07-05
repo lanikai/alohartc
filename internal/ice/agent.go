@@ -134,8 +134,13 @@ func (a *Agent) addLocalCandidate(c Candidate) {
 }
 
 func (a *Agent) handleStun(msg *stunMessage, raddr net.Addr, base *Base) {
-	if msg.method != stunBindingMethod {
-		log.Fatalf("Unexpected STUN message: %s", msg)
+	allowedMethods := map[uint16]bool{
+		stunBindingMethod: true,
+		stunSendMethod:    true,
+	}
+	if !allowedMethods[msg.method] {
+		log.Debug("Unexpected STUN message: %s", msg)
+		return
 	}
 
 	switch msg.class {

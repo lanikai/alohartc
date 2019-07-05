@@ -116,7 +116,16 @@ const (
 	stunErrorResponse   = 3
 )
 
-const stunBindingMethod = 0x1
+const (
+	// 0, 2, and 5 are reserved
+	stunBindingMethod          = 1
+	stunAllocateMethod         = 3
+	stunRefreshMethod          = 4
+	stunSendMethod             = 6
+	stunDataMethod             = 7
+	stunCreatePermissionMethod = 8
+	stunChannelBindMethod      = 9
+)
 
 const stunHeaderLength = 20
 const stunMagicCookie = 0x2112A442
