@@ -224,12 +224,13 @@ func parseMedia(text string) (m Media, rtext string, err error) {
 
 	var typecode byte
 	var value string
+loop:
 	for text = more; text != ""; text = more {
 		line, more = nextLine(text)
 		typecode, value, err = splitTypeValue(line)
 		switch typecode {
 		case 'm':
-			break
+			break loop
 		case 'i':
 			m.Info = value
 		case 'c':
@@ -244,7 +245,7 @@ func parseMedia(text string) (m Media, rtext string, err error) {
 
 		if err != nil {
 			err = &sdpParseError{"media", line, err}
-			break
+			break loop
 		}
 	}
 	return m, text, err
@@ -295,6 +296,7 @@ func (s *Session) String() string {
 func ParseSession(text string) (s Session, err error) {
 	var typecode byte
 	var line, more, value string
+loop:
 	for ; text != ""; text = more {
 		line, more = nextLine(text)
 		typecode, value, err = splitTypeValue(line)
@@ -333,7 +335,7 @@ func ParseSession(text string) (s Session, err error) {
 
 		if err != nil {
 			return s, &sdpParseError{"session", line, err}
-			break
+			break loop
 		}
 	}
 	return
