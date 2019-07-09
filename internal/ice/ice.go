@@ -15,6 +15,9 @@ var (
 
 	// Host:port of STUN server
 	flagStunServer string
+
+	// Whether or not to enable loopback ICE candidates
+	flagEnableLoopback bool
 )
 
 var log = logging.DefaultLogger.WithTag("ice")
@@ -22,4 +25,5 @@ var log = logging.DefaultLogger.WithTag("ice")
 func init() {
 	flag.BoolVar(&flagEnableIPv6, "ipv6", true, "Allow IPv6 ICE candidates")
 	flag.StringVar(&flagStunServer, "stunServer", config.STUN_SERVER, "STUN server address")
+	flag.BoolVar(&flagEnableLoopback, "loopback", false, "Enable loopback ICE candidates")
 }

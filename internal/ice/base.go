@@ -54,10 +54,12 @@ func initializeBases(component int, sdpMid string) (bases []*Base, err error) {
 	}
 	for _, iface := range ifaces {
 		log.Debug("Interface %d: %s (%s)\n", iface.Index, iface.Name, iface.Flags)
-		if iface.Flags&net.FlagLoopback != 0 {
-			// Skip loopback interfaces to reduce the number of candidates.
-			// TODO: Probably we need these if we're not connected to any network.
-			continue
+		if !flagEnableLoopback {
+			if iface.Flags&net.FlagLoopback != 0 {
+				// Skip loopback interfaces to reduce the number of candidates.
+				// TODO: Probably we need these if we're not connected to any network.
+				continue
+			}
 		}
 
 		// Skip down interfaces

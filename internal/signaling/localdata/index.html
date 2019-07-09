@@ -41,6 +41,7 @@
       console.log("websocket message received:", msg)
       switch(msg.type) {
         case "answer":
+          console.log("answer:\n", msg.sdp)
           pc.setRemoteDescription({ "type": "answer", "sdp": msg.sdp })
           .then(function() {
             console.log("setRemoteDescription success");

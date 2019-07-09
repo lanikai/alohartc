@@ -30,7 +30,8 @@ import (
 )
 
 const (
-	sdpUsername = "lanikai"
+	sdpUsername = "AlohaRTC"
+	sdpUri      = "https://lanikailabs.com"
 
 	nalTypeSingleTimeAggregationPacketA = 24
 	nalReferenceIndicatorPriority1      = 1 << 5
@@ -128,8 +129,43 @@ func NewPeerConnectionWithContext(ctx context.Context, config Config) (*PeerConn
 	return pc, nil
 }
 
+// filterGroup returns bundle value for matching media types
+func filterGroup(sess sdp.Session, allowedTypes map[string]bool) string {
+	filtered := []string{"BUNDLE"}
+
+	for _, m := range sess.Media {
+		log.Println("type", m.Type)
+		if _, ok := allowedTypes[m.Type]; ok {
+			filtered = append(filtered, m.GetAttr("mid"))
+		}
+	}
+
+	return strings.Join(filtered, " ")
+}
+
+// makeIceCredentials generates a random ice-ufrag and ice-pwd
+func makeIceCredentials() (string, string, error) {
+	// Require 24 and 128 bits of randomness for ufrag and pwd, respectively
+	rnd := make([]byte, 3+16)
+	if _, err := rand.Read(rnd); err != nil {
+		return "", "", err
+	}
+
+	// Base64 encode ice-ufrag and ice-pwd
+	ufrag := base64.StdEncoding.EncodeToString(rnd[0:3])
+	pwd := base64.StdEncoding.EncodeToString(rnd[3:])
+
+	return ufrag, pwd, nil
+}
+
 // Create SDP answer. Only needs SDP offer, no ICE candidates.
 func (pc *PeerConnection) createAnswer() (sdp.Session, error) {
+	// Generate ice-ufrag and ice-pwd
+	ufrag, pwd, err := makeIceCredentials()
+	if err != nil {
+		return sdp.Session{}, err
+	}
+
 	s := sdp.Session{
 		Version: 0,
 		Origin: sdp.Origin{
@@ -140,126 +176,181 @@ func (pc *PeerConnection) createAnswer() (sdp.Session, error) {
 			AddressType:    "IP4",
 			Address:        "127.0.0.1",
 		},
+		Uri:  sdpUri,
 		Name: "-",
 		Time: []sdp.Time{
 			{nil, nil},
 		},
 		Attributes: []sdp.Attribute{
-			{"group", pc.remoteDescription.GetAttr("group")},
+			{"group", filterGroup(pc.remoteDescription, map[string]bool{"audio": true, "video": true})},
 		},
 	}
 
 	for _, remoteMedia := range pc.remoteDescription.Media {
 
-		// Select H.264 codec with packetization-mode=1 (only supported)
-		supportedPayloadTypes := make(map[int]interface{})
+		switch remoteMedia.Type {
 
-		// search rtpmap attributes for supported codecs
-		for _, attr := range remoteMedia.Attributes {
-			switch attr.Key {
-			case "rtpmap":
-				var payloadType int
-				var codec string
+		case "audio":
+			var supportedPayloadTypes map[int]interface{}
 
-				// parse rtpmap line
-				if _, err := fmt.Sscanf(
-					attr.Value, "%3d %s", &payloadType, &codec,
-				); err != nil {
-					log.Warn("malformed rtpmap")
-					break // switch
-				}
+			// search rtpmap attributes for supported codecs
+			for _, attr := range remoteMedia.Attributes {
+				switch attr.Key {
+				case "rtpmap":
+					var payloadType int
+					var codec string
 
-				// only H.264 codec supported
-				if "H264/90000" == codec {
-					supportedPayloadTypes[payloadType] = &sdp.H264FormatParameters{}
+					// parse rtpmap line
+					if _, err := fmt.Sscanf(
+						attr.Value, "%3d %s", &payloadType, &codec,
+					); err != nil {
+						log.Warn("malformed rtpmap")
+						break // switch
+					}
+
+					// only G.711 u-law (i.e. PCMU) codec supported
+					if "PCMU/8000" == codec {
+						supportedPayloadTypes[payloadType] = &sdp.PCMUFormatParameters{}
+					}
 				}
 			}
-		}
 
-		// search rtpmap attributes for supported format parameters
-		for _, attr := range remoteMedia.Attributes {
-			switch attr.Key {
-			case "fmtp":
-				var payloadType int
-				var params string
+			// choose first supported payload type
+			var payloadType int
+			for payloadType, _ = range supportedPayloadTypes {
+				break
+			}
 
-				// parse fmtp line
-				if _, err := fmt.Sscanf(
-					attr.Value, "%3d %s", &payloadType, &params,
-				); err != nil {
-					log.Warn("malformed fmtp")
-					break // switch
+			m := sdp.Media{
+				Type:   remoteMedia.Type,
+				Port:   9,
+				Proto:  "UDP/TLS/RTP/SAVPF",
+				Format: []string{strconv.Itoa(int(pc.DynamicType))},
+				Connection: &sdp.Connection{
+					NetworkType: "IN",
+					AddressType: "IP4",
+					Address:     "0.0.0.0",
+				},
+				Attributes: []sdp.Attribute{
+					{"fingerprint", "sha-256 " + strings.ToUpper(pc.fingerprint)},
+					{"ice-ufrag", ufrag},
+					{"ice-pwd", pwd},
+					{"ice-options", "trickle"},
+					{"ice-options", "ice2"},
+					{"mid", remoteMedia.GetAttr("mid")},
+					{"rtcp", "9 IN IP4 0.0.0.0"},
+					{"setup", "active"},
+					{"recvonly", ""},
+					{"rtcp-mux", ""},
+					{"rtcp-rsize", ""},
+					{"rtpmap", fmt.Sprintf("%d PCMU/8000", payloadType)},
+					{"msid", "SdWLKyaNRoUSWQ7BzkKGcbCWcuV7rScYxCAv e9b60276-a415-4a66-8395-28a893918d4c"},
+					{"ssrc", "3841098696 cname:cYhx/N8U7h7+3GW3"},
+				},
+			}
+			s.Media = append(s.Media, m)
+
+		case "video":
+			// Select H.264 codec with packetization-mode=1 (only supported)
+			supportedPayloadTypes := make(map[int]interface{})
+
+			// search rtpmap attributes for supported codecs
+			for _, attr := range remoteMedia.Attributes {
+				switch attr.Key {
+				case "rtpmap":
+					var payloadType int
+					var codec string
+
+					// parse rtpmap line
+					if _, err := fmt.Sscanf(
+						attr.Value, "%3d %s", &payloadType, &codec,
+					); err != nil {
+						log.Warn("malformed rtpmap")
+						break // switch
+					}
+
+					// only H.264 codec supported
+					if "H264/90000" == codec {
+						supportedPayloadTypes[payloadType] = &sdp.H264FormatParameters{}
+					}
 				}
+			}
 
-				// only packetization-mode=1 supported
-				if fmtp, ok := supportedPayloadTypes[payloadType]; ok {
-					switch fmtp.(type) {
-					case *sdp.H264FormatParameters:
-						log.Info("H264FormatParameters")
-						if err := fmtp.(*sdp.H264FormatParameters).Unmarshal(params); err != nil {
-							log.Warn(err.Error())
-						}
-						if 1 != fmtp.(*sdp.H264FormatParameters).PacketizationMode {
-							delete(supportedPayloadTypes, payloadType)
+			// search fmtp attributes for supported format parameters
+			for _, attr := range remoteMedia.Attributes {
+				switch attr.Key {
+				case "fmtp":
+					var payloadType int
+					var params string
+
+					// parse fmtp line
+					if _, err := fmt.Sscanf(
+						attr.Value, "%3d %s", &payloadType, &params,
+					); err != nil {
+						log.Warn("malformed fmtp")
+						break // switch
+					}
+
+					// only packetization-mode=1 supported
+					if fmtp, ok := supportedPayloadTypes[payloadType]; ok {
+						switch fmtp.(type) {
+						case *sdp.H264FormatParameters:
+							log.Info("H264FormatParameters")
+							if err := fmtp.(*sdp.H264FormatParameters).Unmarshal(params); err != nil {
+								log.Warn(err.Error())
+							}
+							if 1 != fmtp.(*sdp.H264FormatParameters).PacketizationMode {
+								delete(supportedPayloadTypes, payloadType)
+							}
 						}
 					}
 				}
 			}
-		}
 
-		// choose first supported payload type
-		var fmtp string
-		for payloadType, formatParameters := range supportedPayloadTypes {
-			switch formatParameters.(type) {
-			case *sdp.H264FormatParameters:
-				fmtp = formatParameters.(*sdp.H264FormatParameters).Marshal()
+			// choose first supported payload type
+			var fmtp string
+			for payloadType, formatParameters := range supportedPayloadTypes {
+				switch formatParameters.(type) {
+				case *sdp.H264FormatParameters:
+					fmtp = formatParameters.(*sdp.H264FormatParameters).Marshal()
+				}
+				pc.DynamicType = uint8(payloadType)
+				break
 			}
-			pc.DynamicType = uint8(payloadType)
-			break
-		}
 
-		// Require 24 and 128 bits of randomness for ufrag and pwd, respectively
-		rnd := make([]byte, 3+16)
-		if _, err := rand.Read(rnd); err != nil {
-			return sdp.Session{}, err
-		}
+			m := sdp.Media{
+				Type:   remoteMedia.Type,
+				Port:   9,
+				Proto:  "UDP/TLS/RTP/SAVPF",
+				Format: []string{strconv.Itoa(int(pc.DynamicType))},
+				Connection: &sdp.Connection{
+					NetworkType: "IN",
+					AddressType: "IP4",
+					Address:     "0.0.0.0",
+				},
+				Attributes: []sdp.Attribute{
+					{"fingerprint", "sha-256 " + strings.ToUpper(pc.fingerprint)},
+					{"ice-ufrag", ufrag},
+					{"ice-pwd", pwd},
+					{"ice-options", "trickle"},
+					{"ice-options", "ice2"},
+					{"mid", remoteMedia.GetAttr("mid")},
+					{"rtcp", "9 IN IP4 0.0.0.0"},
+					{"setup", "active"},
+					{"sendonly", ""},
+					{"rtcp-mux", ""},
+					{"rtcp-rsize", ""},
+					{"rtpmap", fmt.Sprintf("%d H264/90000", pc.DynamicType)},
+					{"fmtp", fmt.Sprintf("%d %s", pc.DynamicType, fmtp)},
+					// TODO: Randomize SSRC
+					{"ssrc", "2541098696 cname:cYhx/N8U7h7+3GW3"},
+				},
+			}
+			s.Media = append(s.Media, m)
 
-		// Base64 encode ice-ufrag and ice-pwd
-		ufrag := base64.StdEncoding.EncodeToString(rnd[0:3])
-		pwd := base64.StdEncoding.EncodeToString(rnd[3:])
-
-		m := sdp.Media{
-			Type:   "video",
-			Port:   9,
-			Proto:  "UDP/TLS/RTP/SAVPF",
-			Format: []string{strconv.Itoa(int(pc.DynamicType))},
-			Connection: &sdp.Connection{
-				NetworkType: "IN",
-				AddressType: "IP4",
-				Address:     "0.0.0.0",
-			},
-			Attributes: []sdp.Attribute{
-				{"mid", remoteMedia.GetAttr("mid")},
-				{"rtcp", "9 IN IP4 0.0.0.0"},
-				{"ice-ufrag", ufrag},
-				{"ice-pwd", pwd},
-				{"ice-options", "trickle"},
-				{"ice-options", "ice2"},
-				{"fingerprint", "sha-256 " + strings.ToUpper(pc.fingerprint)},
-				{"setup", "active"},
-				{"sendonly", ""},
-				{"rtcp-mux", ""},
-				{"rtcp-rsize", ""},
-				{"rtpmap", fmt.Sprintf("%d H264/90000", pc.DynamicType)},
-				{"fmtp", fmt.Sprintf("%d %s", pc.DynamicType, fmtp)},
-				// TODO: Randomize SSRC
-				{"ssrc", "2541098696 cname:cYhx/N8U7h7+3GW3"},
-				{"ssrc", "2541098696 msid:SdWLKyaNRoUSWQ7BzkKGcbCWcuV7rScYxCAv e9b60276-a415-4a66-8395-28a893918d4c"},
-				{"ssrc", "2541098696 mslabel:SdWLKyaNRoUSWQ7BzkKGcbCWcuV7rScYxCAv"},
-				{"ssrc", "2541098696 label:e9b60276-a415-4a66-8395-28a893918d4c"},
-			},
+		default:
+			log.Warn("unsupported media type")
 		}
-		s.Media = append(s.Media, m)
 	}
 
 	pc.localDescription = s
@@ -279,12 +370,12 @@ func (pc *PeerConnection) SetRemoteDescription(sdpOffer string) (sdpAnswer strin
 		return
 	}
 
-	mid := offer.Media[0].GetAttr("mid")
-	remoteUfrag := offer.Media[0].GetAttr("ice-ufrag")
-	localUfrag := answer.Media[0].GetAttr("ice-ufrag")
+	mid := offer.Media[1].GetAttr("mid")
+	remoteUfrag := offer.Media[1].GetAttr("ice-ufrag")
+	localUfrag := answer.Media[1].GetAttr("ice-ufrag")
 	username := remoteUfrag + ":" + localUfrag
-	localPassword := answer.Media[0].GetAttr("ice-pwd")
-	remotePassword := offer.Media[0].GetAttr("ice-pwd")
+	localPassword := answer.Media[1].GetAttr("ice-pwd")
+	remotePassword := offer.Media[1].GetAttr("ice-pwd")
 	pc.iceAgent.Configure(mid, username, localPassword, remotePassword)
 
 	// ICE gathering begins implicitly after offer/answer exchange.
