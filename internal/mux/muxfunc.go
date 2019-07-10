@@ -24,6 +24,17 @@ func MatchRange(lower, upper byte) MatchFunc {
 	}
 }
 
+// MatchSSRC returns a SSRC filter for RTP packets
+func MatchSSRC(ssrc uint32) MatchFunc {
+	return func(b []byte) bool {
+		// Not long enough to be a valid RTP packet
+		if len(b) < 12 {
+			return false
+		}
+		return ssrc == binary.BigEndian.Uint32(b[8:])
+	}
+}
+
 // MatchFuncs as described in RFC7983
 // https://tools.ietf.org/html/rfc7983
 //              +----------------+

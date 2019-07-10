@@ -214,3 +214,73 @@ func (c *Context) generateAuthTag(buf []byte, authTag []byte) ([]byte, error) {
 
 	return mac.Sum(nil)[0:10], nil
 }
+
+// decrypt packet in-place
+func (c *Context) decrypt(m *rtpMsg) bool {
+	state := c.getSSRCState(m.ssrc)
+	c.updateRolloverCount(m.sequenceNumber, state)
+
+	stream := cipher.NewCTR(c.srtpBlock, c.generateCounter(m.sequenceNumber, state.rolloverCounter, state.ssrc, c.srtpSessionSalt))
+	stream.XORKeyStream(m.payload, m.payload)
+
+	// TODO validate auth tag
+
+	return true
+}
+
+// encrypt packet in-place
+func (c *Context) encrypt(m *rtpMsg) bool {
+	s := c.getSSRCState(m.ssrc)
+
+	c.updateRolloverCount(m.sequenceNumber, s)
+
+	stream := cipher.NewCTR(c.srtpBlock, c.generateCounter(m.sequenceNumber, s.rolloverCounter, s.ssrc, c.srtpSessionSalt))
+	stream.XORKeyStream(m.payload, m.payload)
+
+	fullPkt := m.marshal()
+
+	fullPkt = append(fullPkt, make([]byte, 4)...)
+	binary.BigEndian.PutUint32(fullPkt[len(fullPkt)-4:], s.rolloverCounter)
+
+	authTag, err := c.generateAuthTag(fullPkt, c.srtpSessionAuthTag)
+	if err != nil {
+		return false
+	}
+
+	m.payload = append(m.payload, authTag...)
+	return true
+}
+
+// https://tools.ietf.org/html/rfc3550#appendix-A.1
+func (c *Context) updateRolloverCount(sequenceNumber uint16, s *ssrcState) {
+	if !s.rolloverHasProcessed {
+		s.rolloverHasProcessed = true
+	} else if sequenceNumber == 0 { // We exactly hit the rollover count
+
+		// Only update rolloverCounter if lastSequenceNumber is greater then maxROCDisorder
+		// otherwise we already incremented for disorder
+		if s.lastSequenceNumber > maxROCDisorder {
+			s.rolloverCounter++
+		}
+	} else if s.lastSequenceNumber < maxROCDisorder && sequenceNumber > (maxSequenceNumber-maxROCDisorder) {
+		// Our last sequence number incremented because we crossed 0, but then our current number was within maxROCDisorder of the max
+		// So we fell behind, drop to account for jitter
+		s.rolloverCounter--
+	} else if sequenceNumber < maxROCDisorder && s.lastSequenceNumber > (maxSequenceNumber-maxROCDisorder) {
+		// our current is within a maxROCDisorder of 0
+		// and our last sequence number was a high sequence number, increment to account for jitter
+		s.rolloverCounter++
+	}
+	s.lastSequenceNumber = sequenceNumber
+}
+
+func (c *Context) getSSRCState(ssrc uint32) *ssrcState {
+	s, ok := c.ssrcStates[ssrc]
+	if ok {
+		return s
+	}
+
+	s = &ssrcState{ssrc: ssrc}
+	c.ssrcStates[ssrc] = s
+	return s
+}

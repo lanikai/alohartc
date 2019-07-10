@@ -435,11 +435,24 @@ func (pc *PeerConnection) Stream() error {
 	// Instantiate a new endpoint for DTLS from multiplexer
 	dtlsEndpoint := dataMux.NewEndpoint(mux.MatchDTLS)
 
+	// Get remote audio SSRC
+	remoteAudioSSRC := uint32(0)
+	for _, media := range pc.remoteDescription.Media {
+		if "audio" == media.Type {
+			if ssrc, err := strconv.Atoi(strings.Fields(media.GetAttr("ssrc"))[0]); err != nil {
+				return err
+			} else {
+				remoteAudioSSRC = uint32(ssrc)
+			}
+		}
+	}
+
 	// Instantiate a new endpoint for SRTP from multiplexer
 	srtpEndpoint := dataMux.NewEndpoint(func(b []byte) bool {
 		// First byte looks like 10??????, representing RTP version 2.
 		return b[0]&0xb0 == 0x80
 	})
+	remoteAudioEndpoint := dataMux.NewEndpoint(mux.MatchSSRC(remoteAudioSSRC))
 
 	// Configuration for DTLS handshake, namely certificate and private key
 	config := &dtls.Config{Certificate: pc.certificate, PrivateKey: pc.privateKey}
@@ -499,6 +512,21 @@ func (pc *PeerConnection) Stream() error {
 	//if err != nil {
 	//	return err
 	//}
+
+	go func() {
+		audioBuffer := make([]byte, 1280)
+		sess, err := srtp.NewSession(remoteAudioEndpoint, 0, readKey, readSalt)
+		if err != nil {
+			log.Fatal(err)
+		}
+		for {
+			if n, err := sess.Read(audioBuffer); err != nil {
+				log.Fatal(err)
+			} else {
+				log.Println(audioBuffer[:n])
+			}
+		}
+	}()
 
 	// Start a goroutine for sending each video track to connected peer.
 	//if pc.localVideoTrack != nil {

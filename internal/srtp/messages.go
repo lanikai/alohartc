@@ -1,5 +1,10 @@
 package srtp
 
+import (
+	"encoding/binary"
+	"errors"
+)
+
 type rtpMsg struct {
 	marker         bool
 	payloadType    uint8
@@ -54,4 +59,53 @@ func (m *rtpMsg) marshal() []byte {
 	copy(b[12+4*len(m.csrc):], m.payload)
 
 	return b
+}
+
+func (m *rtpMsg) unmarshal(b []byte) error {
+	errMalformedPacket := errors.New("malformed packet")
+	errUnsupportedVersion := errors.New("unsupported version")
+
+	// Verify packet length is greater than RTP header
+	if len(b) < 12 {
+		return errMalformedPacket
+	}
+
+	// Check RTP version
+	if 2 != b[0]>>6 {
+		return errUnsupportedVersion
+	}
+
+	// Get expected number of CSRCs
+	csrcCount := int(b[0] & 0x0F)
+
+	// Verify that packet length sufficient for claimed number of CSRCs
+	if len(b) < 12+4*csrcCount {
+		return errMalformedPacket
+	}
+
+	// payload type
+	m.payloadType = uint8(b[1] & 0x7F)
+
+	// marker bit
+	m.marker = (0x80 == b[1]&0x80)
+
+	// sequence number
+	m.sequenceNumber = binary.BigEndian.Uint16(b[2:])
+
+	// timestamp
+	m.timestamp = binary.BigEndian.Uint32(b[4:])
+
+	// synchronization source identifier
+	m.ssrc = binary.BigEndian.Uint32(b[8:])
+
+	// contributing source identifiers
+	for i := 0; i < csrcCount; i++ {
+		m.csrc = append(m.csrc, binary.BigEndian.Uint32(b[12+4*i:]))
+	}
+
+	// copy payload
+	m.payload = make([]byte, len(b)-12-4*csrcCount)
+	copy(m.payload, b[12+4*csrcCount:])
+
+	return nil
 }
