@@ -1,8 +1,9 @@
+// Copyright 2019 Lanikai Labs. All rights reserved.
+
 package srtp
 
 import (
 	"encoding/binary"
-	"errors"
 )
 
 type rtpMsg struct {
@@ -15,6 +16,7 @@ type rtpMsg struct {
 	payload        []byte
 }
 
+// marshal RTP message into a byte slice
 func (m *rtpMsg) marshal() []byte {
 	length := 4*len(m.csrc) + len(m.payload)
 	b := make([]byte, 12+length)
@@ -61,10 +63,8 @@ func (m *rtpMsg) marshal() []byte {
 	return b
 }
 
+// unmarshal byte slice into RTP message
 func (m *rtpMsg) unmarshal(b []byte) error {
-	errMalformedPacket := errors.New("malformed packet")
-	errUnsupportedVersion := errors.New("unsupported version")
-
 	// Verify packet length is greater than RTP header
 	if len(b) < 12 {
 		return errMalformedPacket

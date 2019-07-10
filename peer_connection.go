@@ -16,6 +16,7 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -191,7 +192,8 @@ func (pc *PeerConnection) createAnswer() (sdp.Session, error) {
 		switch remoteMedia.Type {
 
 		case "audio":
-			var supportedPayloadTypes map[int]interface{}
+			// Select PCMU codec (only supported)
+			supportedPayloadTypes := make(map[int]interface{})
 
 			// search rtpmap attributes for supported codecs
 			for _, attr := range remoteMedia.Attributes {
@@ -514,17 +516,30 @@ func (pc *PeerConnection) Stream() error {
 	//}
 
 	go func() {
+		// create file for writing audio
+		file, err := os.Create("remoteAudio.raw")
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		// create audio buffer
 		audioBuffer := make([]byte, 1280)
+
+		// create srtp decryption context
 		sess, err := srtp.NewSession(remoteAudioEndpoint, 0, readKey, readSalt)
 		if err != nil {
 			log.Fatal(err)
 		}
+
 		for {
-			if n, err := sess.Read(audioBuffer); err != nil {
+			// read next audio packet
+			n, err := sess.Read(audioBuffer)
+			if err != nil {
 				log.Fatal(err)
-			} else {
-				log.Println(audioBuffer[:n])
 			}
+
+			// write audio packet to file
+			file.Write(audioBuffer[:n-10])
 		}
 	}()
 

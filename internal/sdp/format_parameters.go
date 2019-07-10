@@ -17,6 +17,9 @@ type H264FormatParameters struct {
 	SpropParameterSets    [][]byte
 }
 
+type PCMUFormatParameters struct {
+}
+
 // Marshal format parameters to string
 func (fmtp *H264FormatParameters) Marshal() string {
 	format := []string{
