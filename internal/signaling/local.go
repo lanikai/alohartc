@@ -11,7 +11,6 @@ import (
 	"net/http"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/gorilla/websocket"
 
@@ -98,10 +97,6 @@ func websocketHandler(w http.ResponseWriter, r *http.Request, handle SessionHand
 	//   { "type": "offer", "sdp": "..." }
 	//   { "type": "iceCandidate", "candidate": "...", "sdpMid": "..." }
 	for {
-		if err := ws.SetReadDeadline(time.Now().Add(30 * time.Second)); err != nil {
-			log.Warn("Failed to set websocket read deadline: %v", err)
-		}
-
 		msg := map[string]string{}
 		if err := ws.ReadJSON(&msg); err != nil {
 			log.Warn("Failed to read websocket message: %v", err)
