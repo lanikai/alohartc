@@ -152,50 +152,48 @@ func (pc *PeerConnection) createAnswer() (sdp.Session, error) {
 		// Select H.264 codec with packetization-mode=1 (only supported)
 		supportedPayloadTypes := make(map[int]interface{})
 
+		// search rtpmap attributes for supported codecs
 		for _, attr := range remoteMedia.Attributes {
 			switch attr.Key {
 			case "rtpmap":
-				// parse rtpmap line
-				fields := strings.Fields(attr.Value)
-				if len(fields) < 2 {
-					log.Warn("malformed rtpmap")
-					break
-				}
+				var payloadType int
+				var codec string
 
-				payloadType, err := strconv.Atoi(fields[0])
-				if err != nil {
+				// parse rtpmap line
+				if _, err := fmt.Sscanf(
+					attr.Value, "%3d %s", &payloadType, &codec,
+				); err != nil {
 					log.Warn("malformed rtpmap")
+					break // switch
 				}
-				codec := fields[1]
 
 				// only H.264 codec supported
-				if 0 == strings.Compare("H264/90000", codec) {
+				if "H264/90000" == codec {
 					supportedPayloadTypes[payloadType] = &sdp.H264FormatParameters{}
 				}
 			}
 		}
 
+		// search rtpmap attributes for supported format parameters
 		for _, attr := range remoteMedia.Attributes {
 			switch attr.Key {
 			case "fmtp":
-				// parse fmtp line
-				fields := strings.Fields(attr.Value)
-				if len(fields) < 2 {
-					log.Warn("malformed fmtp")
-					break
-				}
+				var payloadType int
+				var params string
 
-				// parse payload type and remainder
-				payloadType, err := strconv.Atoi(fields[0])
-				if err != nil {
+				// parse fmtp line
+				if _, err := fmt.Sscanf(
+					attr.Value, "%3d %s", &payloadType, &params,
+				); err != nil {
 					log.Warn("malformed fmtp")
+					break // switch
 				}
-				params := fields[1]
 
 				// only packetization-mode=1 supported
 				if fmtp, ok := supportedPayloadTypes[payloadType]; ok {
 					switch fmtp.(type) {
-					case sdp.H264FormatParameters:
+					case *sdp.H264FormatParameters:
+						log.Info("H264FormatParameters")
 						if err := fmtp.(*sdp.H264FormatParameters).Unmarshal(params); err != nil {
 							log.Warn(err.Error())
 						}
@@ -207,7 +205,13 @@ func (pc *PeerConnection) createAnswer() (sdp.Session, error) {
 			}
 		}
 
-		for payloadType, _ := range supportedPayloadTypes {
+		// choose first supported payload type
+		var fmtp string
+		for payloadType, formatParameters := range supportedPayloadTypes {
+			switch formatParameters.(type) {
+			case *sdp.H264FormatParameters:
+				fmtp = formatParameters.(*sdp.H264FormatParameters).Marshal()
+			}
 			pc.DynamicType = uint8(payloadType)
 			break
 		}
@@ -244,12 +248,7 @@ func (pc *PeerConnection) createAnswer() (sdp.Session, error) {
 				{"rtcp-mux", ""},
 				{"rtcp-rsize", ""},
 				{"rtpmap", fmt.Sprintf("%d H264/90000", pc.DynamicType)},
-				// Chrome offers following profile-level-id values:
-				// 42001f (baseline)
-				// 42e01f (constrained baseline)
-				// 4d0032 (main)
-				// 640032 (high)
-				{"fmtp", fmt.Sprintf("%d level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f", pc.DynamicType)},
+				{"fmtp", fmt.Sprintf("%d %s", pc.DynamicType, fmtp)},
 				// TODO: Randomize SSRC
 				{"ssrc", "2541098696 cname:cYhx/N8U7h7+3GW3"},
 				{"ssrc", "2541098696 msid:SdWLKyaNRoUSWQ7BzkKGcbCWcuV7rScYxCAv e9b60276-a415-4a66-8395-28a893918d4c"},
