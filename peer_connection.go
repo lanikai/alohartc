@@ -148,14 +148,68 @@ func (pc *PeerConnection) createAnswer() (sdp.Session, error) {
 	}
 
 	for _, remoteMedia := range pc.remoteDescription.Media {
+
+		// Select H.264 codec with packetization-mode=1 (only supported)
+		supportedPayloadTypes := make(map[int]interface{})
+
 		for _, attr := range remoteMedia.Attributes {
-			if attr.Key == "rtpmap" && strings.Contains(attr.Value, "H264/90000") {
-				// Choose smallest rtpmap entry
-				n, _ := strconv.Atoi(strings.Fields(attr.Value)[0])
-				if pc.DynamicType == 0 || uint8(n) < pc.DynamicType {
-					pc.DynamicType = uint8(n)
+			switch attr.Key {
+			case "rtpmap":
+				// parse rtpmap line
+				fields := strings.Fields(attr.Value)
+				if len(fields) < 2 {
+					log.Warn("malformed rtpmap")
+					break
+				}
+
+				payloadType, err := strconv.Atoi(fields[0])
+				if err != nil {
+					log.Warn("malformed rtpmap")
+				}
+				codec := fields[1]
+
+				// only H.264 codec supported
+				if 0 == strings.Compare("H264/90000", codec) {
+					supportedPayloadTypes[payloadType] = &sdp.H264FormatParameters{}
 				}
 			}
+		}
+
+		for _, attr := range remoteMedia.Attributes {
+			switch attr.Key {
+			case "fmtp":
+				// parse fmtp line
+				fields := strings.Fields(attr.Value)
+				if len(fields) < 2 {
+					log.Warn("malformed fmtp")
+					break
+				}
+
+				// parse payload type and remainder
+				payloadType, err := strconv.Atoi(fields[0])
+				if err != nil {
+					log.Warn("malformed fmtp")
+				}
+				params := fields[1]
+
+				// only packetization-mode=1 supported
+				if fmtp, ok := supportedPayloadTypes[payloadType]; ok {
+					switch fmtp.(type) {
+					case sdp.H264FormatParameters:
+						if err := fmtp.(*sdp.H264FormatParameters).Unmarshal(params); err != nil {
+							log.Warn(err.Error())
+						}
+						if 1 != fmtp.(*sdp.H264FormatParameters).PacketizationMode {
+							delete(supportedPayloadTypes, payloadType)
+						}
+					}
+				}
+			}
+		}
+
+		for payloadType, _ := range supportedPayloadTypes {
+			pc.DynamicType = uint8(payloadType)
+			break
 		}
 
 		// Require 24 and 128 bits of randomness for ufrag and pwd, respectively
