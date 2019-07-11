@@ -1,3 +1,5 @@
+// Copyright 2019 Lanikai Labs LLC. All rights reserved.
+
 package sdp
 
 import (
@@ -16,7 +18,7 @@ type H264FormatParameters struct {
 // Marshal format parameters to string
 func (fmtp *H264FormatParameters) Marshal() string {
 	format := []string{
-		fmt.Sprintf("profile-level-id=%03x", fmtp.ProfileLevelID),
+		fmt.Sprintf("profile-level-id=%06x", fmtp.ProfileLevelID),
 	}
 
 	if fmtp.LevelAsymmetryAllowed {
@@ -62,7 +64,7 @@ func (fmtp *H264FormatParameters) Unmarshal(format string) error {
 				return errMalformedFormatParameters
 			}
 		case "profile-level-id":
-			if _, err := fmt.Sscanf(pieces[1], "%03x", &fmtp.ProfileLevelID); err != nil {
+			if _, err := fmt.Sscanf(pieces[1], "%06x", &fmtp.ProfileLevelID); err != nil {
 				return errMalformedFormatParameters
 			}
 		}
