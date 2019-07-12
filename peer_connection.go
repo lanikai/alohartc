@@ -408,8 +408,8 @@ func (pc *PeerConnection) Close() {
 // sendVideoTrack transmits the local video track to the remote peer.
 // Terminates either on track read error or SRTP write error.
 func sendVideoTrack(conn *srtp.Conn, track Track) error {
-	switch track.(type) {
-	case *H264VideoTrack:
+	switch track.PayloadType() {
+	case "H264/90000":
 		var stap []byte
 		buf := make([]byte, 128*1024)
 		gotParameterSet := false
