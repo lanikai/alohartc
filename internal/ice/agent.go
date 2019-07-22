@@ -19,10 +19,17 @@ type Agent struct {
 
 	checklist Checklist
 
+	dataIn chan []byte
+
 	failure error
 
 	sync.Mutex
 }
+
+const (
+	// How many incoming packets can be enqueued before dropping data.
+	packetQueueLength = 64
+)
 
 func NewAgent() *Agent {
 	return new(Agent)
@@ -46,6 +53,7 @@ func (a *Agent) Configure(mid, username, localPassword, remotePassword string) {
 }
 
 func (a *Agent) Start(ctx context.Context, rcand <-chan Candidate) <-chan Candidate {
+	a.dataIn = make(chan []byte, packetQueueLength)
 	lcand := make(chan Candidate, 2)
 	go a.connect(ctx, rcand, lcand)
 	return lcand
@@ -63,7 +71,7 @@ func (a *Agent) connect(ctx context.Context, rcand <-chan Candidate, lcand chan<
 
 	// Start read loop for each base.
 	for _, base := range bases {
-		go base.readLoop(a.handleStun)
+		go base.readLoop(a.handleStun, a.dataIn)
 	}
 
 	// Process incoming remote candidates.
@@ -92,11 +100,25 @@ func (a *Agent) GetDataStream(ctx context.Context) (*DataStream, error) {
 	}
 
 	// Wait for a candidate pair to be selected.
-	p, err := a.checklist.getSelected(ctx)
+	p, err := a.checklist.getSelected(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
-	return p.getDataStream(), nil
+
+	ds := newDataStream(p, a.dataIn)
+
+	// Keep checking in case the selected pair changes, until ctx is canceled.
+	go func() {
+		for {
+			p, err = a.checklist.getSelected(ctx, p)
+			if err != nil {
+				return
+			}
+			ds.update(p)
+		}
+	}()
+
+	return ds, nil
 }
 
 func (a *Agent) addRemoteCandidate(c Candidate) {
@@ -116,7 +138,11 @@ func (a *Agent) addAllRemoteCandidates(ctx context.Context, rcand <-chan Candida
 			if !ok {
 				return
 			}
-			a.addRemoteCandidate(c)
+			if c.address.protocol == UDP {
+				a.addRemoteCandidate(c)
+			} else {
+				log.Debug("Ignoring non-UDP remote candidate: %s", c)
+			}
 		case <-ctx.Done():
 			return
 		}

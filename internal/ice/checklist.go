@@ -27,9 +27,6 @@ type Checklist struct {
 
 	triggeredQueue []*CandidatePair
 
-	// Valid list
-	valid []*CandidatePair
-
 	// Selected candidate pair
 	selected *CandidatePair
 
@@ -119,9 +116,6 @@ func isRedundant(p1, p2 *CandidatePair) bool {
 }
 
 func (cl *Checklist) run(ctx context.Context) {
-	lid, stateCh := cl.addListener()
-	defer cl.removeListener(lid)
-
 	go func() {
 		// Timer for periodic connectivity checks. This is stopped once a
 		// candidate pair has been selected.
@@ -137,21 +131,10 @@ func (cl *Checklist) run(ctx context.Context) {
 			case <-ctx.Done():
 				return
 
-			case newState := <-stateCh:
-				// Checklist state has changed.
-				log.Debug("Checklist state: %d", newState)
-				switch newState {
-				case checklistCompleted:
-					// TODO; Just end the run loop when the checklist completes.
-					Ta.Stop()
-				case checklistFailed:
-					log.Fatal("Failed to connect to remote peer")
-				}
-
 			case <-Ta.C:
 				// [RFC8445 §6.1.4.2] Periodic connectivity check.
 				if p := cl.nextPair(); p != nil {
-					log.Debug("Next candidate pair to check: %s\n", p)
+					log.Trace(4, "Next candidate pair to check: %s\n", p)
 					if err := cl.sendCheck(p); err != nil {
 						log.Warn("Failed to send connectivity check: %s", err)
 					}
@@ -167,15 +150,18 @@ func (cl *Checklist) run(ctx context.Context) {
 	}()
 }
 
-func (cl *Checklist) getSelected(ctx context.Context) (*CandidatePair, error) {
-	lid, stateCh := cl.addListener()
-	defer cl.removeListener(lid)
+// getSelected waits for the selected candidate pair to change from current.
+// Returns non-nil error only if the context is canceled.
+func (cl *Checklist) getSelected(ctx context.Context, current *CandidatePair) (*CandidatePair, error) {
+	id, stateCh := cl.addListener()
+	defer cl.removeListener(id)
 
 	for {
-		if cl.selected != nil {
+		if cl.selected != current {
 			return cl.selected, nil
 		}
 
+		// Wait for state to change, then check again.
 		select {
 		case <-stateCh:
 		case <-ctx.Done():
@@ -259,9 +245,14 @@ func (cl *Checklist) sendCheck(p *CandidatePair) error {
 	retransmit := time.AfterFunc(cl.rto(), func() {
 		// If we don't get a response within the RTO, then move the pair back to Waiting.
 		p.state = Waiting
+		// After too many failures, mark the pair failed.
+		p.failCount++
+		if p.failCount > 3 {
+			p.state = Failed
+		}
 	})
 
-	log.Debug("%s: Sending to %s from %s: %s\n", p.id, p.remote.address, p.local.address, req)
+	log.Trace(4, "%s: Sending to %s from %s: %s\n", p.id, p.remote.address, p.local.address, req)
 	return p.sendStun(req, func(resp *stunMessage, raddr net.Addr, base *Base) {
 		retransmit.Stop()
 		cl.processResponse(p, resp, raddr)
@@ -294,9 +285,6 @@ func (cl *Checklist) processResponse(p *CandidatePair, resp *stunMessage, raddr 
 	case stunSuccessResponse:
 		log.Debug("%s: Successful connectivity check", p.id)
 		p.state = Succeeded
-		cl.mutex.Lock()
-		cl.valid = append(cl.valid, p)
-		cl.mutex.Unlock()
 	case stunErrorResponse:
 		p.state = Failed
 		// TODO: Retries
@@ -304,7 +292,7 @@ func (cl *Checklist) processResponse(p *CandidatePair, resp *stunMessage, raddr 
 		log.Fatalf("Impossible")
 	}
 
-	cl.updateState()
+	cl.updateState(p)
 }
 
 func (cl *Checklist) nominate(p *CandidatePair) {
@@ -312,10 +300,11 @@ func (cl *Checklist) nominate(p *CandidatePair) {
 		p.state = Waiting
 	}
 	p.nominated = true
-	cl.updateState()
+	cl.updateState(p)
 }
 
-func (cl *Checklist) updateState() {
+// Update checklist state after a new result for the pair p.
+func (cl *Checklist) updateState(p *CandidatePair) {
 	cl.mutex.Lock()
 	defer cl.mutex.Unlock()
 
@@ -323,24 +312,19 @@ func (cl *Checklist) updateState() {
 		return
 	}
 
-	for _, p := range cl.valid {
-		if p.nominated {
+	if p.nominated && p.state == Succeeded {
+		// This pair is eligible for selection. However, to account for the
+		// aggressive nomination algorithm from RFC 5245, we only select it if
+		// it's higher priority than the current selected pair.
+		if cl.selected == nil || p.Priority() > cl.selected.Priority() {
 			log.Info("Selected %s", p)
 			cl.selected = p
-			cl.state = checklistCompleted
-			break
 		}
+		cl.state = checklistCompleted
+		go cl.notifyListeners()
 	}
 
 	// TODO: Handle checklist failure
-
-	// Notify listeners that the state has changed.
-	for _, ch := range cl.listeners {
-		select {
-		case ch <- cl.state:
-		default:
-		}
-	}
 }
 
 func (cl *Checklist) addListener() (int, <-chan checklistState) {
@@ -362,6 +346,15 @@ func (cl *Checklist) removeListener(id int) {
 	defer cl.mutex.Unlock()
 
 	delete(cl.listeners, id)
+}
+
+func (cl *Checklist) notifyListeners() {
+	cl.mutex.Lock()
+	defer cl.mutex.Unlock()
+
+	for _, ch := range cl.listeners {
+		ch <- cl.state
+	}
 }
 
 // findPair returns first candidate pair matching the base and remote address

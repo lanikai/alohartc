@@ -36,6 +36,31 @@ type DataStream struct {
 	notify chan struct{}
 }
 
+// Create a new DataStream for the selected candidate pair.
+func newDataStream(p *CandidatePair, dataIn <-chan []byte) *DataStream {
+	base := p.local.base
+	return &DataStream{
+		conn:  base,
+		raddr: p.remote.address.netAddr(),
+		in:    dataIn,
+		dead:  base.dead,
+		cause: func() error {
+			return base.err
+		},
+	}
+}
+
+// Update a data stream with the new selected candidate pair.
+func (s *DataStream) update(p *CandidatePair) {
+	base := p.local.base
+	s.conn = base
+	s.raddr = p.remote.address.netAddr()
+	s.dead = base.dead
+	s.cause = func() error {
+		return base.err
+	}
+}
+
 // Return a channel that fires when the data session is severed.
 func (s *DataStream) Done() <-chan struct{} {
 	return s.dead
