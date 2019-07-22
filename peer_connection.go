@@ -99,11 +99,12 @@ func NewPeerConnectionWithContext(ctx context.Context, config Config) (*PeerConn
 
 	// Create new peer connection (with local audio and video)
 	pc := &PeerConnection{
-		ctx:             ctx,
-		cancel:          cancel,
-		localVideoTrack: config.VideoTrack,
-		localAudioTrack: config.AudioTrack,
-		iceAgent:        ice.NewAgent(),
+		ctx:              ctx,
+		cancel:           cancel,
+		localVideoTrack:  config.VideoTrack,
+		localAudioTrack:  config.AudioTrack,
+		iceAgent:         ice.NewAgent(),
+		remoteCandidates: make(chan ice.Candidate, 4),
 
 		// Set initial dummy handler for local ICE candidates.
 		OnIceCandidate: func(c *ice.Candidate) {
@@ -292,7 +293,7 @@ func (pc *PeerConnection) SetRemoteDescription(sdpOffer string) (sdpAnswer strin
 }
 
 func (pc *PeerConnection) startGathering() {
-	pc.remoteCandidates = make(chan ice.Candidate, 4)
+	log.Debug("Starting ICE gathering")
 	lcand := pc.iceAgent.Start(pc.ctx, pc.remoteCandidates)
 	for {
 		select {
@@ -311,9 +312,6 @@ func (pc *PeerConnection) startGathering() {
 
 // AddIceCandidate adds a remote ICE candidate.
 func (pc *PeerConnection) AddIceCandidate(c *ice.Candidate) {
-	if pc.remoteCandidates == nil {
-		return
-	}
 	if c == nil {
 		// nil means end-of-candidates.
 		close(pc.remoteCandidates)
