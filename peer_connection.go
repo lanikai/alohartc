@@ -242,6 +242,7 @@ func (pc *PeerConnection) createAnswer() (sdp.Session, error) {
 				{"ice-ufrag", ufrag},
 				{"ice-pwd", pwd},
 				{"ice-options", "trickle"},
+				{"ice-options", "ice2"},
 				{"fingerprint", "sha-256 " + strings.ToUpper(pc.fingerprint)},
 				{"setup", "active"},
 				{"sendonly", ""},

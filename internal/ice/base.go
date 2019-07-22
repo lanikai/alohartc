@@ -17,9 +17,6 @@ const (
 	// discovered, but 1500 is typically a safe value.
 	sizeMaximumTransmissionUnit = 1500
 
-	// How many incoming packets can be enqueued before dropping data.
-	packetQueueLength = 64
-
 	// Timeout for querying STUN server.
 	timeoutQuerySTUNServer = 5 * time.Second
 
@@ -38,9 +35,6 @@ type Base struct {
 
 	// STUN response handlers for transactions sent from this base, keyed by transaction ID.
 	handlers transactionHandlers
-
-	// Queue of incoming packets, initialized when the read loop begins.
-	bufin chan []byte
 
 	// Single-fire channel used to indicate that the read loop has died.
 	dead chan struct{}
@@ -210,13 +204,12 @@ func (base *Base) sendStun(msg *stunMessage, raddr net.Addr, responseHandler stu
 }
 
 // Read incoming packets from the underlying PacketConn, until an error occurs.
-// STUN messages are handled, the rest are sent to the bufin channel.
-func (base *Base) readLoop(defaultHandler stunHandler) {
+// STUN messages are handled, the rest are sent to the dataIn channel.
+func (base *Base) readLoop(defaultHandler stunHandler, dataIn chan []byte) {
 	if base.dead != nil {
 		panic("Base read loop already started")
 	}
 
-	base.bufin = make(chan []byte, packetQueueLength)
 	base.dead = make(chan struct{})
 	defer close(base.dead)
 
@@ -278,27 +271,15 @@ func (base *Base) readLoop(defaultHandler stunHandler) {
 				handler(msg, raddr, base)
 			}
 		} else {
-			// Pass data packets (non-STUN) to the bufin channel.
+			// Pass data packets (non-STUN) to the dataIn channel.
 			select {
-			case base.bufin <- data:
+			case dataIn <- data:
 			default:
 				logOnce.Do(func() {
 					log.Warn("Dropping data packet (first byte %x) because reader cannot keep up", data[0])
 				})
 			}
 		}
-	}
-}
-
-func (base *Base) makeDataStream(raddr net.Addr) *DataStream {
-	return &DataStream{
-		conn:  base,
-		raddr: raddr,
-		in:    base.bufin,
-		dead:  base.dead,
-		cause: func() error {
-			return base.err
-		},
 	}
 }
 

@@ -13,6 +13,9 @@ type CandidatePair struct {
 
 	state     CandidatePairState
 	nominated bool
+
+	// Number of failed connectivity checks for this pair.
+	failCount int
 }
 
 // Candidate pair states
@@ -57,10 +60,6 @@ func newCandidatePair(seq int, local, remote Candidate) *CandidatePair {
 		component:  local.component,
 		state:      Frozen,
 	}
-}
-
-func (p *CandidatePair) getDataStream() *DataStream {
-	return p.local.base.makeDataStream(p.remote.address.netAddr())
 }
 
 func (p *CandidatePair) sendStun(msg *stunMessage, handler stunHandler) error {
