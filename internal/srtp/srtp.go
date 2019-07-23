@@ -1,6 +1,7 @@
 package srtp
 
 import (
+	"math/rand"
 	"net"
 )
 
@@ -28,8 +29,8 @@ func NewSession(conn net.Conn, dynamicType uint8, masterKey, masterSalt []byte) 
 		conn:    conn,
 		typ:     dynamicType,
 		ssrc:    2541098696, // must match SDP answer (hard-coded for now)
-		seq:     5984,
-		time:    3309803758,
+		seq:     uint16(rand.Intn(1 << 16)),
+		time:    uint32(rand.Intn(1 << 32)),
 		context: ctx,
 	}, nil
 }
