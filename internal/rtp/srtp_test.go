@@ -75,7 +75,7 @@ func TestEncryptRTCP(t *testing.T) {
 	if !bytes.Equal(payload, payloadOut) {
 		t.Errorf("RTCP encrypt/decrypt failure: %s", payloadOut)
 	}
-	if uint32(index) != indexOut {
+	if index != indexOut {
 		t.Errorf("RTCP index mismatch: %d", indexOut)
 	}
 }

@@ -134,9 +134,9 @@ func (c *cryptoContext) encryptAndSignRTCP(p *packet.Writer, index uint64) error
 	return p.WriteSlice(tag)
 }
 
-// Verify the auth tag of the SRTCP packet, then decrypt and return the payload
+// Verify the auth tag of the SRTCP packet, then decrypt and return the packet
 // along with the SRTCP index. This is the inverse of encryptAndSignRTCP().
-func (c *cryptoContext) verifyAndDecryptRTCP(buf []byte) ([]byte, uint32, error) {
+func (c *cryptoContext) verifyAndDecryptRTCP(buf []byte) ([]byte, uint64, error) {
 	tagStart := len(buf) - authTagLength
 	indexStart := tagStart - 4
 	if indexStart < 0 {
@@ -150,7 +150,7 @@ func (c *cryptoContext) verifyAndDecryptRTCP(buf []byte) ([]byte, uint32, error)
 	}
 
 	// Extract the SRTCP index.
-	index := binary.BigEndian.Uint32(buf[indexStart:])
+	index := uint64(binary.BigEndian.Uint32(buf[indexStart:]))
 	if index&eFlagMask == 0 {
 		// E-flag is 0. Packet is not encrypted.
 		return buf[8:indexStart], index, nil
@@ -160,7 +160,7 @@ func (c *cryptoContext) verifyAndDecryptRTCP(buf []byte) ([]byte, uint32, error)
 	// Now decrypt the payload. (Note the encryption transform is symmetric.)
 	ssrc := binary.BigEndian.Uint32(buf[4:8])
 	payload := buf[8:indexStart]
-	c.encryptSRTCP(payload, ssrc, uint64(index))
+	c.encryptSRTCP(payload, ssrc, index)
 	return payload, index, nil
 }
 
