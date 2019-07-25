@@ -8,7 +8,12 @@
 
 package alohartc
 
+import (
+	"github.com/lanikai/alohartc/internal/media"
+)
+
 type Config struct {
-	AudioTrack Track
-	VideoTrack Track
+	LocalVideo media.VideoSource
+	//AudioTrack Track
+	//VideoTrack Track
 }

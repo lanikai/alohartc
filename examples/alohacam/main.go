@@ -6,11 +6,12 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"strings"
+	//"strings"
 	"time"
 
 	"github.com/lanikai/alohartc"
 	"github.com/lanikai/alohartc/internal/ice"
+	"github.com/lanikai/alohartc/internal/media"
 	"github.com/lanikai/alohartc/internal/signaling"
 )
 
@@ -25,16 +26,17 @@ func version() {
 	fmt.Println("")
 }
 
-var source alohartc.MediaSource
+//var source alohartc.MediaSource
+var videoSource media.VideoSource
 
 func main() {
 	// Define and parse optional flags
 	input := flag.String("i", "/dev/video0", "video input ('-' for stdin)")
-	bitrate := flag.Uint("bitrate", 1500e3, "set video bitrate")
-	width := flag.Uint("width", 1280, "set video width")
-	height := flag.Uint("height", 720, "set video height")
-	hflip := flag.Bool("hflip", false, "flip video horizontally")
-	vflip := flag.Bool("vflip", false, "flip video vertically")
+	//bitrate := flag.Uint("bitrate", 1500e3, "set video bitrate")
+	//width := flag.Uint("width", 1280, "set video width")
+	//height := flag.Uint("height", 720, "set video height")
+	//hflip := flag.Bool("hflip", false, "flip video horizontally")
+	//vflip := flag.Bool("vflip", false, "flip video vertically")
 	flag.Parse()
 
 	// Always print version information
@@ -43,28 +45,36 @@ func main() {
 	// Configure logging
 	log.SetFlags(log.LstdFlags | log.Lshortfile | log.Lmicroseconds)
 
-	// Open media source
-	{
-		var err error
-		if strings.HasPrefix(*input, "/dev/video") {
-			source, err = alohartc.NewV4L2MediaSource(
-				*input,
-				*width,
-				*height,
-				*bitrate,
-				*hflip,
-				*vflip,
-			)
-		} else {
-			source, err = alohartc.NewFileMediaSource(*input)
-		}
+	/*
+		// Open media source
+		{
+			var err error
+			if strings.HasPrefix(*input, "/dev/video") {
+				source, err = alohartc.NewV4L2MediaSource(
+					*input,
+					*width,
+					*height,
+					*bitrate,
+					*hflip,
+					*vflip,
+				)
+			} else {
+				source, err = alohartc.NewFileMediaSource(*input)
+			}
 
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Cannot open %s (%s)\n", *input, err)
-			os.Exit(1)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Cannot open %s (%s)\n", *input, err)
+				os.Exit(1)
+			}
 		}
+		defer source.Close()
+	*/
+
+	var err error
+	videoSource, err = media.OpenMP4(*input)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Cannot open %s: %s\n", *input, err)
 	}
-	defer source.Close()
 
 	signaling.Listen(doPeerSession)
 }
@@ -74,14 +84,14 @@ func doPeerSession(ss *signaling.Session) {
 	defer cancel()
 
 	// Get new track from media source. Close it when session ends.
-	track := source.GetTrack()
-	defer source.CloseTrack(track)
+	//track := source.GetTrack()
+	//defer source.CloseTrack(track)
 
 	// Create peer connection with one video track
 	pc := alohartc.Must(alohartc.NewPeerConnectionWithContext(
 		ctx,
 		alohartc.Config{
-			VideoTrack: track,
+			LocalVideo: videoSource,
 		}))
 	defer pc.Close()
 
@@ -95,10 +105,12 @@ func doPeerSession(ss *signaling.Session) {
 	// Wait for SDP offer from remote peer, then send our answer.
 	select {
 	case offer := <-ss.Offer:
+		fmt.Printf("Offer: %s\n", offer)
 		answer, err := pc.SetRemoteDescription(offer)
 		if err != nil {
 			log.Fatal(err)
 		}
+		fmt.Printf("Answer: %s\n", answer)
 
 		if err := ss.SendAnswer(answer); err != nil {
 			log.Fatal(err)

@@ -9,6 +9,7 @@
 package alohartc
 
 import (
+	"bytes"
 	"context"
 	"crypto"
 	"crypto/rand"
@@ -21,7 +22,9 @@ import (
 
 	"github.com/lanikai/alohartc/internal/dtls" // subtree merged pions/dtls
 	"github.com/lanikai/alohartc/internal/ice"
+	"github.com/lanikai/alohartc/internal/media"
 	"github.com/lanikai/alohartc/internal/mux"
+	"github.com/lanikai/alohartc/internal/rtp"
 	"github.com/lanikai/alohartc/internal/sdp"
 	"github.com/lanikai/alohartc/internal/srtp"
 )
@@ -70,10 +73,13 @@ type PeerConnection struct {
 	fingerprint string
 
 	// Media tracks
-	localVideoTrack  Track
-	remoteVideoTrack Track // not implemented
-	localAudioTrack  Track // not implemented
-	remoteAudioTrack Track // not implemented
+	localVideo media.VideoSource
+
+	// Media tracks
+	//localVideoTrack  Track
+	//remoteVideoTrack Track // not implemented
+	//localAudioTrack  Track // not implemented
+	//remoteAudioTrack Track // not implemented
 }
 
 // Must is a helper that wraps a call to a function returning
@@ -99,10 +105,11 @@ func NewPeerConnectionWithContext(ctx context.Context, config Config) (*PeerConn
 
 	// Create new peer connection (with local audio and video)
 	pc := &PeerConnection{
-		ctx:              ctx,
-		cancel:           cancel,
-		localVideoTrack:  config.VideoTrack,
-		localAudioTrack:  config.AudioTrack,
+		ctx:        ctx,
+		cancel:     cancel,
+		localVideo: config.LocalVideo,
+		//localVideoTrack: config.VideoTrack,
+		//localAudioTrack: config.AudioTrack,
 		iceAgent:         ice.NewAgent(),
 		remoteCandidates: make(chan ice.Candidate, 4),
 
@@ -344,7 +351,10 @@ func (pc *PeerConnection) Stream() error {
 	dtlsEndpoint := dataMux.NewEndpoint(mux.MatchDTLS)
 
 	// Instantiate a new endpoint for SRTP from multiplexer
-	srtpEndpoint := dataMux.NewEndpoint(mux.MatchSRTP)
+	srtpEndpoint := dataMux.NewEndpoint(func(b []byte) bool {
+		// First byte looks like 10??????, representing RTP version 2.
+		return b[0]&0xb0 == 0x80
+	})
 
 	// Configuration for DTLS handshake, namely certificate and private key
 	config := &dtls.Config{Certificate: pc.certificate, PrivateKey: pc.privateKey}
@@ -356,32 +366,47 @@ func (pc *PeerConnection) Stream() error {
 	}
 
 	// Create SRTP keys from DTLS handshake (see RFC5764 Section 4.2)
-	material, err := dtlsConn.ExportKeyingMaterial("EXTRACTOR-dtls_srtp", nil, 2*keyLen+2*saltLen)
+	keys, err := dtlsConn.ExportKeyingMaterial("EXTRACTOR-dtls_srtp", nil, 2*keyLen+2*saltLen)
 	if err != nil {
 		return err
 	}
-	offset := 0
-	writeKey := append([]byte{}, material[offset:offset+keyLen]...)
-	offset += keyLen
-	readKey := append([]byte{}, material[offset:offset+keyLen]...)
-	offset += keyLen
-	writeSalt := append([]byte{}, material[offset:offset+saltLen]...)
-	offset += saltLen
-	readSalt := append([]byte{}, material[offset:offset+saltLen]...)
+	keyReader := bytes.NewBuffer(keys)
+	writeKey := keyReader.Next(keyLen)
+	readKey := keyReader.Next(keyLen)
+	writeSalt := keyReader.Next(saltLen)
+	readSalt := keyReader.Next(saltLen)
+
+	rtpSession := rtp.NewSession(srtpEndpoint, rtp.SessionOptions{
+		ReadKey:   readKey,
+		ReadSalt:  readSalt,
+		WriteKey:  writeKey,
+		WriteSalt: writeSalt,
+	})
+
+	rtpStream := rtpSession.AddStream(rtp.StreamOptions{
+		// TODO: Extract these from the SDP instead of hard-coding.
+		LocalSSRC:  2541098696,
+		LocalCNAME: "cYhx/N8U7h7+3GW3",
+		Direction:  "sendonly",
+	})
+	go rtpStream.SendVideo(pc.ctx, pc.DynamicType, pc.localVideo)
+
+	//rtpSession, err := rtp.NewSecureSession(rtpEndpoint, readKey, readSalt, writeKey, writeSalt)
+	//go streamH264(pc.ctx, pc.localVideoTrack, rtpSession.NewH264Stream(ssrc, cname))
 
 	// Start goroutine for processing incoming SRTCP packets
-	go srtcpReaderRunloop(dataMux, readKey, readSalt)
+	//go srtcpReaderRunloop(dataMux, readKey, readSalt)
 
 	// Begin a new SRTP session
-	srtpSession, err := srtp.NewSession(srtpEndpoint, pc.DynamicType, writeKey, writeSalt)
-	if err != nil {
-		return err
-	}
+	//srtpSession, err := srtp.NewSession(srtpEndpoint, pc.DynamicType, writeKey, writeSalt)
+	//if err != nil {
+	//	return err
+	//}
 
 	// Start a goroutine for sending each video track to connected peer.
-	if pc.localVideoTrack != nil {
-		go sendVideoTrack(srtpSession, pc.localVideoTrack)
-	}
+	//if pc.localVideoTrack != nil {
+	//	go sendVideoTrack(srtpSession, pc.localVideoTrack)
+	//}
 
 	// There are two termination conditions that we need to deal with here:
 	// 1. Context cancellation. If Close() is called explicitly, or if the

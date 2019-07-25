@@ -104,6 +104,7 @@ type rtpWriter struct {
 	// SRTP cryptographic context.
 	crypto cryptoContext
 
+	// Prevent simultaneous writes from multiple goroutines.
 	sync.Mutex
 }
 
@@ -112,7 +113,7 @@ func newRTPWriter(conn net.Conn, ssrc uint32, crypto *cryptoContext) *rtpWriter 
 	w.conn = conn
 	w.ssrc = ssrc
 	w.sequenceStart = 1                // TODO: Randomize initial sequence number.
-	w.buf = packet.NewWriterSize(1280) // TODO: Determine from MTU
+	w.buf = packet.NewWriterSize(1500) // TODO: Determine from MTU
 	w.crypto = *crypto                 // By value so that we have our own copy
 	return w
 }
@@ -165,4 +166,72 @@ func (w *rtpWriter) sequenceNumber() uint16 {
 // the 16-bit sequence number rolls over.
 func (w *rtpWriter) rolloverCounter() uint32 {
 	return uint32(w.index() / 65536)
+}
+
+// rtpReader maintains state necessary for receiving RTP data packets.
+type rtpReader struct {
+	ssrc uint32
+
+	// Most recent observed sequence number.
+	lastSequence uint16
+
+	// Estimate of the sender's RTP packet index, based on the most recent
+	// observed sequence number and the number of times it has rolled over.
+	lastIndex uint64
+
+	// Number of RTP packets received.
+	count uint64
+
+	// Total number of payload bytes received.
+	totalBytes uint64
+
+	// SRTP cryptographic context.
+	crypto cryptoContext
+
+	// Payload consumer. This function should return quickly to avoid blocking
+	// the RTP read loop. If it needs needs the payload bytes for longer than
+	// the lifetime of the function call, it *must* make a copy.
+	consumer func(payload []byte, timestamp uint32, marker bool) error
+}
+
+func newRTPReader(ssrc uint32, crypto *cryptoContext) *rtpReader {
+	r := new(rtpReader)
+	r.ssrc = ssrc
+	r.crypto = *crypto // By value so that we have our own copy
+	return r
+}
+
+// Read and process a single RTP packet. buf contains the serialized packet,
+// which will be decrypted in place.
+func (r *rtpReader) readPacket(buf []byte) error {
+	if r == nil || r.consumer == nil {
+		// No point in processing the packet if nobody's interested.
+		return nil
+	}
+
+	p := packet.NewReader(buf)
+	var hdr rtpHeader
+	if err := hdr.readFrom(p); err != nil {
+		return err
+	}
+
+	index := r.updateIndex(hdr.sequence)
+
+	payload, err := r.crypto.verifyAndDecryptRTP(buf, &hdr, index)
+	if err != nil {
+		return err
+	}
+
+	r.count += 1
+	r.totalBytes += uint64(len(payload))
+
+	r.consumer(payload, hdr.timestamp, hdr.marker)
+	return nil
+}
+
+func (r *rtpReader) updateIndex(sequence uint16) uint64 {
+	// TODO: Compute index: https://tools.ietf.org/html/rfc3711#section-3.3.1
+	r.lastSequence = sequence
+	r.lastIndex = uint64(sequence)
+	return r.lastIndex
 }
