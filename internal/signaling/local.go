@@ -53,8 +53,11 @@ func localWebsocketListener(handle SessionHandler) error {
 		url += fmt.Sprintf(":%d", flagPort)
 	}
 
-	fmt.Printf("Open http://%s/ in a browser\n", url)
-	return server.ListenAndServe()
+	// Generate self-signed certificate (HTTPS required by browser for audio)
+	generateCert()
+
+	fmt.Printf("Open https://%s/ in a browser\n", url)
+	return server.ListenAndServeTLS("cert.pem", "key.pem")
 }
 
 func websocketHandler(w http.ResponseWriter, r *http.Request, handle SessionHandler) {

@@ -16,7 +16,7 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"fmt"
-	"os"
+	"io"
 	"strconv"
 	"strings"
 	"time"
@@ -28,6 +28,9 @@ import (
 	"github.com/lanikai/alohartc/internal/rtp"
 	"github.com/lanikai/alohartc/internal/sdp"
 	"github.com/lanikai/alohartc/internal/srtp"
+
+	"github.com/hajimehoshi/oto" // sound card interface
+	"github.com/pd0mz/go-g711"   // g.711 decoding
 )
 
 const (
@@ -516,11 +519,22 @@ func (pc *PeerConnection) Stream() error {
 	//}
 
 	go func() {
-		// create file for writing audio
-		file, err := os.Create("remoteAudio.raw")
+		// create audio context
+		audioCtx, err := oto.NewContext(8000, 1, 2, 4096)
 		if err != nil {
 			log.Fatal(err)
 		}
+		defer audioCtx.Close()
+
+		// create new player for context (??)
+		player := audioCtx.NewPlayer()
+		defer player.Close()
+
+		// create file for writing audio
+		//file, err := os.Create("remoteAudio.raw")
+		//if err != nil {
+		//	log.Fatal(err)
+		//}
 
 		// create audio buffer
 		audioBuffer := make([]byte, 1280)
@@ -538,8 +552,21 @@ func (pc *PeerConnection) Stream() error {
 				log.Fatal(err)
 			}
 
+			decoded := g711.MLawDecode([]uint8(audioBuffer[:n-10]))
+			decodedBytes := make([]byte, (2 * len(decoded)))
+
+			for i, val := range decoded {
+				decodedBytes[2*i] = byte(val)
+				decodedBytes[2*i+1] = byte(val >> 8)
+			}
+
+			buffer := bytes.NewBuffer(decodedBytes)
+
+			// write audio packet to sound card
+			io.Copy(player, buffer)
+
 			// write audio packet to file
-			file.Write(audioBuffer[:n-10])
+			//file.Write(audioBuffer[:n-10])
 		}
 	}()
 

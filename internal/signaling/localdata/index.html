@@ -32,7 +32,7 @@
     const remoteVideo = document.getElementById("remoteVideo");
 
     // Create a websocket connection for exchanging SDP data
-    const ws = new WebSocket('ws://' + location.host + '/ws');
+    const ws = new WebSocket('wss://' + location.host + '/ws');
 
     console.log(navigator.mediaDevices);
 

@@ -5,7 +5,7 @@ GIT_REVISION_ID := $(shell git describe --always --tags)
 # Default 'alohacam' target platform is Linux/ARMv6 (Raspberry Pi Zero). Can
 # be overridden on the command line.
 # NOTE: These default values are ignored for release builds.
-CGO_ENABLED ?= 0
+CGO_ENABLED ?= 1
 GOARM ?= 6
 GOARCH ?= arm
 GOFLAGS ?=
