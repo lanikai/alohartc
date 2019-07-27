@@ -42,24 +42,24 @@ func NewSharedBuffer(data []byte, release func()) *SharedBuffer {
 	return &SharedBuffer{data, 1, release}
 }
 
-// Bytes returns the underlying byte buffer. It must not be modified.
+// Bytes returns the underlying byte buffer.
 func (buf *SharedBuffer) Bytes() []byte {
 	return buf.data
 }
 
+// Increments the hold count.
 func (buf *SharedBuffer) Hold() {
 	atomic.AddInt32(&buf.count, 1)
 }
 
-// Release the current loan on the shared buffer. This may be called multiple
-// times, and is safe to call on a nil value.
+// Decrements the hold count. When the hold count reaches zero, the underlying
+// byte buffer will be released.
 func (buf *SharedBuffer) Release() {
-	if buf == nil || buf.release == nil {
+	if buf == nil {
 		return
 	}
 	newCount := atomic.AddInt32(&buf.count, -1)
 	if newCount == 0 && buf.release != nil {
 		buf.release()
 	}
-	buf.data = nil
 }

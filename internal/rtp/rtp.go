@@ -99,7 +99,7 @@ type rtpWriter struct {
 	totalBytes uint64
 
 	// Buffer used for serializing packets.
-	buf *packet.Writer
+	buf []byte
 
 	// SRTP cryptographic context.
 	crypto cryptoContext
@@ -112,19 +112,16 @@ func newRTPWriter(conn net.Conn, ssrc uint32, crypto *cryptoContext) *rtpWriter 
 	w := new(rtpWriter)
 	w.conn = conn
 	w.ssrc = ssrc
-	w.sequenceStart = 1                // TODO: Randomize initial sequence number.
-	w.buf = packet.NewWriterSize(1500) // TODO: Determine from MTU
-	w.crypto = *crypto                 // By value so that we have our own copy
+	w.sequenceStart = 1        // TODO: Randomize initial sequence number.
+	w.buf = make([]byte, 1500) // TODO: Determine from MTU
+	w.crypto = *crypto         // By value so that we have our own copy
 	return w
 }
 
-// Send a single RTP packet.
+// Send a single RTP packet to the remote peer.
 func (w *rtpWriter) writePacket(payloadType byte, marker bool, timestamp uint32, payload []byte) error {
 	w.Lock()
 	defer w.Unlock()
-
-	p := w.buf
-	p.Reset()
 
 	index := w.index()
 	hdr := rtpHeader{
@@ -134,6 +131,8 @@ func (w *rtpWriter) writePacket(payloadType byte, marker bool, timestamp uint32,
 		timestamp:   timestamp,
 		ssrc:        w.ssrc,
 	}
+
+	p := packet.NewWriter(w.buf)
 	hdr.writeTo(p)
 
 	if err := p.WriteSlice(payload); err != nil {
@@ -165,7 +164,7 @@ func (w *rtpWriter) sequenceNumber() uint16 {
 // Compute the rollover counter, which starts at 0 and increases by 1 every time
 // the 16-bit sequence number rolls over.
 func (w *rtpWriter) rolloverCounter() uint32 {
-	return uint32(w.index() / 65536)
+	return uint32(w.index() >> 16)
 }
 
 // rtpReader maintains state necessary for receiving RTP data packets.
@@ -189,8 +188,8 @@ type rtpReader struct {
 	crypto cryptoContext
 
 	// Payload consumer. This function should return quickly to avoid blocking
-	// the RTP read loop. If it needs needs the payload bytes for longer than
-	// the lifetime of the function call, it *must* make a copy.
+	// the RTP read loop. If it needs the payload bytes for longer than the
+	// lifetime of the function call, it *must* make a copy.
 	consumer func(payload []byte, timestamp uint32, marker bool) error
 }
 

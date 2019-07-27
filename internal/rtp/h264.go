@@ -12,7 +12,7 @@ import (
 // RTP packetization of H.264 video streams.
 // See [RFC 6184](https://tools.ietf.org/html/rfc6184).
 
-func (s *Stream) SendVideo(ctx context.Context, payloadType byte, src media.VideoSource) error {
+func (s *Stream) SendVideo(ctx context.Context, payloadType byte, localVideo media.VideoSource) error {
 	initialTimestamp := uint32(0) // TODO: randomize timestamp
 
 	w := h264Writer{
@@ -21,16 +21,16 @@ func (s *Stream) SendVideo(ctx context.Context, payloadType byte, src media.Vide
 		timestamp:   initialTimestamp,
 	}
 
-	videoIn := src.NewConsumer()
-	defer videoIn.Stop()
+	localVideoCh := localVideo.StartReceiving()
+	defer localVideo.StopReceiving(localVideoCh)
 
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case buf, more := <-videoIn.NextBuffer():
+		case buf, more := <-localVideoCh:
 			if !more {
-				log.Debug("Received EOF from video source: %v", src)
+				log.Debug("Received EOF from video source: %v", localVideo)
 				return io.EOF
 			}
 			if err := w.consume(buf); err != nil {

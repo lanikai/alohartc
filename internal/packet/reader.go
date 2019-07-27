@@ -1,18 +1,16 @@
 package packet
 
 import (
-	"encoding/binary"
 	"fmt"
 )
 
 type Reader struct {
 	buffer []byte
 	offset int
-	endian binary.ByteOrder
 }
 
 func NewReader(buffer []byte) *Reader {
-	return &Reader{buffer, 0, binary.BigEndian}
+	return &Reader{buffer, 0}
 }
 
 func (r *Reader) ReadByte() byte {
@@ -22,7 +20,7 @@ func (r *Reader) ReadByte() byte {
 }
 
 func (r *Reader) ReadUint16() uint16 {
-	v := r.endian.Uint16(r.buffer[r.offset:])
+	v := networkOrder.Uint16(r.buffer[r.offset:])
 	r.offset += 2
 	return v
 }
@@ -35,7 +33,7 @@ func (r *Reader) ReadUint24() uint32 {
 }
 
 func (r *Reader) ReadUint32() uint32 {
-	v := r.endian.Uint32(r.buffer[r.offset:])
+	v := networkOrder.Uint32(r.buffer[r.offset:])
 	r.offset += 4
 	return v
 }
@@ -51,6 +49,10 @@ func (r *Reader) ReadSlice(n int) []byte {
 	v := r.buffer[r.offset : r.offset+n]
 	r.offset += n
 	return v
+}
+
+func (r *Reader) Skip(n int) {
+	r.offset += n
 }
 
 func (r *Reader) ReadRemaining() []byte {
