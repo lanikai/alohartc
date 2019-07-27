@@ -5,14 +5,15 @@ import (
 	"fmt"
 )
 
+var networkOrder = binary.BigEndian
+
 type Writer struct {
 	buffer []byte
 	offset int
-	endian binary.ByteOrder
 }
 
 func NewWriter(buffer []byte) *Writer {
-	return &Writer{buffer, 0, binary.BigEndian}
+	return &Writer{buffer, 0}
 }
 
 func NewWriterSize(n int) *Writer {
@@ -25,7 +26,7 @@ func (w *Writer) WriteByte(v byte) {
 }
 
 func (w *Writer) WriteUint16(v uint16) {
-	w.endian.PutUint16(w.buffer[w.offset:], v)
+	networkOrder.PutUint16(w.buffer[w.offset:], v)
 	w.offset += 2
 }
 
@@ -36,7 +37,7 @@ func (w *Writer) WriteUint24(v uint32) {
 }
 
 func (w *Writer) WriteUint32(v uint32) {
-	w.endian.PutUint32(w.buffer[w.offset:], v)
+	networkOrder.PutUint32(w.buffer[w.offset:], v)
 	w.offset += 4
 }
 

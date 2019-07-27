@@ -3,9 +3,11 @@
 package media
 
 import (
-	"errors"
 	"io"
+	"sync"
 	"time"
+
+	errors "golang.org/x/xerrors"
 
 	"github.com/nareix/joy4/av"
 	"github.com/nareix/joy4/av/avutil"
@@ -37,10 +39,16 @@ func OpenMP4(filename string) (VideoSource, error) {
 		return nil, errors.New("No compatible video stream found")
 	}
 
+	interval, err := determineFrameInterval(file)
+	if err != nil {
+		return nil, err
+	}
+
 	return &mp4VideoSource{
 		filename: filename,
 		file:     file,
 		info:     info,
+		interval: interval,
 	}, nil
 }
 
@@ -56,14 +64,21 @@ type mp4VideoSource struct {
 	filename string
 	file     av.DemuxCloser
 	info     av.VideoCodecData
+	interval time.Duration
+
+	readLoopLock sync.Mutex
 }
 
-func (ms *mp4VideoSource) NewConsumer() *BufferConsumer {
-	consumer, n := ms.newConsumer()
+func (ms *mp4VideoSource) StartReceiving() <-chan *SharedBuffer {
+	bufCh, n := ms.startRecv(0)
 	if n == 1 {
 		go ms.readLoop()
 	}
-	return consumer
+	return bufCh
+}
+
+func (ms *mp4VideoSource) StopReceiving(bufCh <-chan *SharedBuffer) {
+	ms.stopRecv(bufCh)
 }
 
 func (ms *mp4VideoSource) Close() error {
@@ -82,16 +97,14 @@ func (ms *mp4VideoSource) Height() int {
 	return ms.info.Height()
 }
 
-// readLoop reads repeatedly from the source file and forwards frames to each
-// track. It exits when the file is closed or the last track is removed.
 func (ms *mp4VideoSource) readLoop() {
-	// When playback started.
+	ms.readLoopLock.Lock()
+	defer ms.readLoopLock.Unlock()
+
+	// Wall clock time when playback started.
 	start := time.Now()
 
-	// Time in between each frame, e.g. 40ms for 25 FPS video.
-	var interval time.Duration
-
-	// Total number of frames delivered so far.
+	// Total number of packets processed so far.
 	count := 0
 
 	write := func(data []byte) {
@@ -100,8 +113,8 @@ func (ms *mp4VideoSource) readLoop() {
 	}
 
 	for {
-		if ms.numConsumers() == 0 {
-			// No consumers left, so no point in continuing.
+		if ms.numReceivers() == 0 {
+			// No point in continuing if there are no receivers.
 			return
 		}
 
@@ -121,13 +134,8 @@ func (ms *mp4VideoSource) readLoop() {
 			continue
 		}
 
-		if interval == 0 {
-			// Set frame interval based on time between first and second frame.
-			interval = pkt.Time
-		}
-
 		// Sleep until ready for next frame: start + count*interval
-		delta := time.Until(start.Add(time.Duration(count) * interval))
+		delta := time.Until(start.Add(time.Duration(count) * ms.interval))
 		time.Sleep(delta)
 
 		var data = pkt.Data[4:]
@@ -147,7 +155,7 @@ func (ms *mp4VideoSource) readLoop() {
 
 		count++
 
-		log.Debug("Packet: %7d bytes, starting with %02x", len(data), data[0:4])
+		log.Debug("Packet: %6d bytes, starting with %02x", len(data), data[0:4])
 	}
 }
 
@@ -163,6 +171,30 @@ func (ms *mp4VideoSource) reset() {
 	} else {
 		log.Error("Expected a mp4.Demuxer, not %T", h.Demuxer)
 	}
+}
+
+// Read the first few packets of the MP4 file to identify the frame interval.
+func determineFrameInterval(file av.Demuxer) (time.Duration, error) {
+	h := file.(*avutil.HandlerDemuxer)
+	d, ok := h.Demuxer.(*mp4.Demuxer)
+	if !ok {
+		return 0, errors.Errorf("Expected a mp4.Demuxer, not %T", h.Demuxer)
+	}
+
+	interval := time.Duration(0)
+	for interval == 0 {
+		pkt, err := d.ReadPacket()
+		if err != nil {
+			return 0, err
+		}
+		interval = pkt.Time
+	}
+
+	if err := d.SeekToTime(0); err != nil {
+		return 0, errors.Errorf("Seek failed: %v", err)
+	}
+
+	return interval, nil
 }
 
 // Skip past the SEI (if present) in a H.264 data packet.

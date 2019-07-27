@@ -5,73 +5,55 @@ import (
 )
 
 type Source interface {
-	NewConsumer() *BufferConsumer
+	StartReceiving() <-chan *SharedBuffer
+	StopReceiving(bufCh <-chan *SharedBuffer)
 
 	Close() error
 }
 
-// A BufferConsumer receives output buffers from a media Source.
-type BufferConsumer struct {
-	bufCh chan *SharedBuffer
-
-	stop func()
-}
-
-// NextBuffer returns a channel providing the next shared buffer. The channel
-// will be closed when the source is exhausted.
-func (bc *BufferConsumer) NextBuffer() <-chan *SharedBuffer {
-	return bc.bufCh
-}
-
-// Stop receiving buffers. Once stopped, furthers calls to Stop() do nothing.
-func (bc *BufferConsumer) Stop() {
-	if bc == nil || bc.stop == nil {
-		return
-	}
-	bc.stop()
-	bc.stop = nil
-}
-
 // baseSource is a helper to manage consumers of a Source.
 type baseSource struct {
-	consumers map[int]*BufferConsumer
-	nextID    int
+	receivers []chan *SharedBuffer
 	sync.Mutex
 }
 
-func (s *baseSource) newConsumer() (*BufferConsumer, int) {
+func (s *baseSource) startRecv(size int) (<-chan *SharedBuffer, int) {
 	s.Lock()
 	defer s.Unlock()
 
-	if s.consumers == nil {
-		s.consumers = make(map[int]*BufferConsumer)
-	}
-
-	id := s.nextID
-	bufCh := make(chan *SharedBuffer)
-	consumer := &BufferConsumer{
-		bufCh: bufCh,
-		stop: func() {
-			s.Lock()
-			delete(s.consumers, id)
-			close(bufCh)
-			s.Unlock()
-		},
-	}
-	s.consumers[id] = consumer
-	s.nextID++
-	return consumer, len(s.consumers)
+	r := make(chan *SharedBuffer, size)
+	s.receivers = append(s.receivers, r)
+	return r, len(s.receivers)
 }
 
-func (s *baseSource) numConsumers() int {
-	return len(s.consumers)
+func (s *baseSource) stopRecv(bufCh <-chan *SharedBuffer) int {
+	s.Lock()
+	defer s.Unlock()
+
+	// Find and delete bufCh from receivers list.
+	// See https://github.com/golang/go/wiki/SliceTricks
+	n := len(s.receivers)
+	for i, r := range s.receivers {
+		if r == bufCh {
+			copy(s.receivers[i:], s.receivers[i+1:])
+			s.receivers[n-1] = nil
+			s.receivers = s.receivers[:n-1]
+			close(r)
+			break
+		}
+	}
+	return len(s.receivers)
+}
+
+func (s *baseSource) numReceivers() int {
+	return len(s.receivers)
 }
 
 func (s *baseSource) putBuffer(buf *SharedBuffer) {
 	s.Lock()
 	defer s.Unlock()
 
-	for _, consumer := range s.consumers {
-		consumer.bufCh <- buf
+	for _, r := range s.receivers {
+		r <- buf
 	}
 }
