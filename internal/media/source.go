@@ -17,13 +17,13 @@ type baseSource struct {
 	sync.Mutex
 }
 
-func (s *baseSource) startRecv(size int) (<-chan *SharedBuffer, int) {
+func (s *baseSource) startRecv() <-chan *SharedBuffer {
 	s.Lock()
 	defer s.Unlock()
 
-	r := make(chan *SharedBuffer, size)
+	r := make(chan *SharedBuffer)
 	s.receivers = append(s.receivers, r)
-	return r, len(s.receivers)
+	return r
 }
 
 func (s *baseSource) stopRecv(bufCh <-chan *SharedBuffer) int {
@@ -49,11 +49,11 @@ func (s *baseSource) numReceivers() int {
 	return len(s.receivers)
 }
 
-func (s *baseSource) putBuffer(buf *SharedBuffer) {
+func (s *baseSource) putBuffer(buf []byte, release func()) {
 	s.Lock()
 	defer s.Unlock()
 
 	for _, r := range s.receivers {
-		r <- buf
+		r <- NewSharedBuffer(buf, release)
 	}
 }

@@ -3,7 +3,6 @@
 package media
 
 import (
-	"container/list"
 	"io"
 	"os"
 	"sync"
@@ -26,114 +25,128 @@ func OpenMP4(filename string) (VideoSource, error) {
 
 	demuxer := mp4.NewDemuxer(file)
 
-	streams, err := demuxer.Streams()
+	codecs, err := demuxer.Streams()
 	if err != nil {
 		return nil, err
 	}
 
-	var info av.VideoCodecData
-	for _, stream := range streams {
-		if stream.Type() == av.H264 {
-			info = stream.(av.VideoCodecData)
+	f := &mp4File{
+		file:    file,
+		demuxer: demuxer,
+		codecs:  codecs,
+	}
+
+	var video *mp4VideoSource
+	for _, codec := range codecs {
+		switch codec.Type() {
+		case av.H264:
+			info := codec.(av.VideoCodecData)
 			log.Info("%v stream: %dx%d", info.Type(), info.Width(), info.Height())
-		} else {
-			log.Debug("Skipping %v stream", stream.Type())
+			video = &mp4VideoSource{f: f, info: info}
+			f.sources = append(f.sources, &video.baseSource)
+		default:
+			log.Debug("Skipping %v stream", codec.Type())
+			f.sources = append(f.sources, nil)
 		}
 	}
-	if info == nil {
+
+	if video == nil {
 		return nil, errors.New("No compatible video stream found")
 	}
-
-	f := &mp4File{
-		file:      file,
-		demuxer:   demuxer,
-		readahead: newPacketQueue(),
-	}
-
-	return &mp4VideoSource{
-		f:    f,
-		idx:  0,
-		info: info,
-	}, nil
-}
-
-const maxReadahead = 16
-
-type packetQueue struct {
-	*list.List
-	maxLen int
-}
-
-func newPacketQueue() packetQueue {
-	return packetQueue{list.New()}
-}
-
-func (q *packetQueue) push(pkt *av.Packet) {
-	if q.Len() < maxReadahead {
-		// Add new pkt to the end of the queue.
-		q.PushBack(pkt)
-	} else {
-		// Prevent unbounded queue growth by replacing the oldest element (the
-		// front) with the new pkt.
-		e := q.Front()
-		e.Value = pkt
-		q.MoveToBack(e)
-	}
-}
-
-// Pop the first packet with the given stream index, or nil if none found.
-func (q *packetQueue) pop(streamIdx int8) *av.Packet {
-	for e := q.Front(); e != nil; e = e.Next() {
-		pkt := e.Value.(*av.Packet)
-		if pkt.Idx == streamIdx {
-			q.Remove(e)
-			return pkt
-		}
-	}
-	return nil
+	return video, nil
 }
 
 type mp4File struct {
 	file    *os.File
 	demuxer *mp4.Demuxer
 
-	// Bitmask of streams we care about.
-	//streamMask uint32
+	codecs  []av.CodecData
+	sources []*baseSource
 
-	// Readahead queue of audio/video packets.
-	readahead packetQueue
-
-	sync.Mutex
+	readLoopRunning bool
+	readLoopGuard   sync.Mutex
 }
 
-func (f *mp4File) readNext(streamIdx int8) *av.Packet {
-	f.Lock()
-	defer f.Unlock()
-
-	// Check readahead queue in case we already have a packet ready.
-	pkt := f.readahead.pop(streamIdx)
-	if pkt != nil {
-		return pkt
+// Start the read loop if it's not already running.
+func (f *mp4File) startReadLoop() {
+	f.readLoopGuard.Lock()
+	if !f.readLoopRunning {
+		f.readLoopRunning = true
+		go f.readLoop()
 	}
+	f.readLoopGuard.Unlock()
+}
 
-	// Otherwise, read from the demuxer until we find a packet.
+func (f *mp4File) readLoop() {
+	// Wall clock time when the stream started.
+	var start time.Time
+
 	for {
+		// Break the read loop if we have no receivers.
+		f.readLoopGuard.Lock()
+		if f.totalReceivers() == 0 {
+			f.readLoopRunning = false
+			return
+		}
+		f.readLoopGuard.Unlock()
+
+		// Read the next packet in the file.
 		pkt, err := f.demuxer.ReadPacket()
+
 		if err == io.EOF {
+			// Add a 50 millisecond delay, then play the file again.
 			f.demuxer.SeekToTime(0)
+			start = time.Now().Add(50 * time.Millisecond)
 			continue
 		} else if err != nil {
 			log.Error("Error reading packet from %s: %v", f.file.Name(), err)
-			return nil
+			return
 		}
 
-		if pkt.Idx == streamIdx {
-			return &pkt
+		codec := f.codecs[pkt.Idx]
+		src := f.sources[pkt.Idx]
+		if src == nil {
+			continue
+		}
+
+		if start.IsZero() {
+			// The read loop might start in the middle of the file, so
+			// initialize the start offset accordingly. This first packet will
+			// be presented immediately.
+			start = time.Now().Add(-pkt.Time)
 		} else {
-			// Leave other packets on the readahead queue.
-			f.readahead.push(&pkt)
+			// Sleep until this packet is ready to be presented.
+			time.Sleep(time.Until(start.Add(pkt.Time)))
+		}
+
+		data := pkt.Data[4:]
+
+		if pkt.IsKeyFrame {
+			// Codec-specific processing.
+			switch cd := codec.(type) {
+			case h264parser.CodecData:
+				// Send SPS and PPS along with key frame.
+				src.putBuffer(cd.SPS(), nil)
+				src.putBuffer(cd.PPS(), nil)
+				data = skipSEI(data)
+			}
+		}
+
+		src.putBuffer(data, nil)
+
+		log.Debug("Packet: %6d bytes, starting with %02x", len(data), data[0:4])
+	}
+}
+
+// Total number of receivers across all MP4 streams.
+func (f *mp4File) totalReceivers() int {
+	n := 0
+	for _, s := range f.sources {
+		if s != nil {
+			n += s.numReceivers()
 		}
 	}
+	return n
 }
 
 type mp4AudioSource struct {
@@ -141,21 +154,16 @@ type mp4AudioSource struct {
 }
 
 type mp4VideoSource struct {
+	baseSource
+
 	f *mp4File
 
-	// Stream index of this video stream.
-	idx int8
-
-	baseSource
-	info     av.VideoCodecData
-	interval time.Duration
+	info av.VideoCodecData
 }
 
 func (vs *mp4VideoSource) StartReceiving() <-chan *SharedBuffer {
-	bufCh, n := vs.startRecv(0)
-	if n == 1 {
-		go vs.readLoop()
-	}
+	bufCh := vs.startRecv()
+	vs.f.startReadLoop()
 	return bufCh
 }
 
@@ -178,80 +186,6 @@ func (vs *mp4VideoSource) Width() int {
 
 func (vs *mp4VideoSource) Height() int {
 	return vs.info.Height()
-}
-
-func (vs *mp4VideoSource) readLoop() {
-	// Last packet to be processed.
-	var lastPkt *av.Packet
-
-	// Wall clock time when the last packet was due to be sent.
-	var lastTime time.Time
-
-	write := func(data []byte) {
-		buf := NewSharedBuffer(data, nil)
-		vs.putBuffer(buf)
-	}
-
-	for {
-		if vs.numReceivers() == 0 {
-			// No point in continuing if there are no receivers.
-			return
-		}
-
-		pkt := vs.f.readNext(vs.idx)
-		if pkt == nil {
-			return
-		}
-
-		if lastPkt != nil && pkt.Time > lastPkt.Time {
-			// Sleep until it's time for this packet. (The first packet is
-			// processed right away.)
-			frameTime := lastTime.Add(pkt.Time - lastPkt.Time)
-			time.Sleep(time.Until(frameTime))
-			lastTime = frameTime
-		} else {
-			// First packet, or MP4 file looped back to the beginning.
-			lastTime = time.Now()
-		}
-		lastPkt = pkt
-
-		var data = pkt.Data[4:]
-		if pkt.IsKeyFrame {
-			switch info := vs.info.(type) {
-			case h264parser.CodecData:
-				// Send SPS and PPS along with key frame.
-				write(info.SPS())
-				write(info.PPS())
-				data = skipSEI(data)
-			default:
-				log.Warn("Unrecognized video codec: %T", vs.info)
-			}
-		}
-
-		write(data)
-
-		log.Debug("Packet: %6d bytes, starting with %02x", len(data), data[0:4])
-	}
-}
-
-// Read the first few packets of the MP4 file to identify the frame interval.
-func determineFrameInterval(demuxer *mp4.Demuxer) (time.Duration, error) {
-	interval := time.Duration(0)
-	for interval == 0 {
-		pkt, err := demuxer.ReadPacket()
-		if err != nil {
-			return 0, err
-		}
-		if pkt.Idx == 0 {
-			interval = pkt.Time
-		}
-	}
-
-	if err := demuxer.SeekToTime(0); err != nil {
-		return 0, errors.Errorf("Seek failed: %v", err)
-	}
-
-	return interval, nil
 }
 
 // Skip past the SEI (if present) in a H.264 data packet.
