@@ -1,12 +1,12 @@
 package media
 
-type VideoSource interface {
+type AudioSource interface {
 	Source
 
 	Codec() string
 
-	Width() int
-	Height() int
+	SampleRate() int
+	BytesPerSample() int
 
 	//GetFramerate() float32
 	//GetBitrate() int
