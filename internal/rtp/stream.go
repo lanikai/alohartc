@@ -40,13 +40,14 @@ type Stream struct {
 
 	session *Session
 
-	// RTP sender state for outgoing data streams.
+	// RTP state for outgoing data streams.
 	rtpOut *rtpWriter
 
-	// RTP receiver state for incoming data streams.
+	// RTP state for incoming data streams.
 	rtpIn *rtpReader
 
-	// RTCP send state
+	// RTCP state for incoming control packets.
+	rtcpOut *rtcpWriter
 
 	// RTCP receive state
 }
@@ -62,6 +63,7 @@ func newStream(session *Session, opts StreamOptions) *Stream {
 	if opts.Direction == "recvonly" || opts.Direction == "sendrecv" {
 		s.rtpIn = newRTPReader(opts.RemoteSSRC, session.readContext)
 	}
+	s.rtcpOut = newRTCPWriter(session.conn, opts.LocalSSRC, session.writeContext)
 	return s
 }
 

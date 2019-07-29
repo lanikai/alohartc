@@ -13,7 +13,6 @@ import (
 )
 
 type Config struct {
+	LocalAudio media.AudioSource
 	LocalVideo media.VideoSource
-	//AudioTrack Track
-	//VideoTrack Track
 }

@@ -73,6 +73,7 @@ type PeerConnection struct {
 	fingerprint string
 
 	// Media tracks
+	localAudio media.AudioSource
 	localVideo media.VideoSource
 
 	// Media tracks
@@ -105,11 +106,10 @@ func NewPeerConnectionWithContext(ctx context.Context, config Config) (*PeerConn
 
 	// Create new peer connection (with local audio and video)
 	pc := &PeerConnection{
-		ctx:        ctx,
-		cancel:     cancel,
-		localVideo: config.LocalVideo,
-		//localVideoTrack: config.VideoTrack,
-		//localAudioTrack: config.AudioTrack,
+		ctx:              ctx,
+		cancel:           cancel,
+		localAudio:       config.LocalAudio,
+		localVideo:       config.LocalVideo,
 		iceAgent:         ice.NewAgent(),
 		remoteCandidates: make(chan ice.Candidate, 4),
 

@@ -1,7 +1,8 @@
 package rtp
 
 import (
-	"io"
+	"net"
+	"sync"
 
 	errors "golang.org/x/xerrors"
 
@@ -51,8 +52,8 @@ func (h *rtcpHeader) readFrom(r *packet.Reader) error {
 }
 
 func (h *rtcpHeader) writeTo(w *packet.Writer) error {
-	if w.Capacity() < rtcpHeaderSize {
-		return io.ErrShortBuffer
+	if err := w.CheckCapacity(rtcpHeaderSize); err != nil {
+		return errors.Errorf("insufficient buffer for RTCP header: %v", err)
 	}
 	w.WriteByte(joinByte215(rtpVersion, h.padding, byte(h.count)))
 	w.WriteByte(h.packetType)
@@ -61,8 +62,7 @@ func (h *rtcpHeader) writeTo(w *packet.Writer) error {
 }
 
 type rtcpPacket interface {
-	// Write the RTCP packet to the provided buffer. Return the number of bytes
-	// written.
+	// Write the RTCP packet to the provided writer.
 	writeTo(w *packet.Writer) error
 }
 
@@ -94,21 +94,30 @@ func (cp *rtcpCompoundPacket) readFrom(r *packet.Reader) error {
 			if 4*h.length != 4+h.count*rtcpReportSize {
 				return errors.Errorf("invalid Receiver Report: length = %d, count = %d", h.length, h.count)
 			}
-			p := new(RTCPReceiverReport)
+			p := new(rtcpReceiverReport)
 			p.readFrom(r, h.count)
 			cp.packets = append(cp.packets, p)
 		default:
 			log.Info("Skipping unimplemented RTCP packet type: %d", h.packetType)
-			r.ReadSlice(4 * h.length)
+			r.Skip(4 * h.length)
 		}
 	}
 
 	return nil
 }
 
-// Report block for sender and receiver reports. See
-// https://tools.ietf.org/html/rfc3550#section-6.4.1.
-type RTCPReport struct {
+func (cp *rtcpCompoundPacket) writeTo(w *packet.Writer) error {
+	for _, p := range cp.packets {
+		if err := p.writeTo(w); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Report block for sender and receiver reports.
+// See https://tools.ietf.org/html/rfc3550#section-6.4.1
+type rtcpReport struct {
 	// The source that this report refers to.
 	Source uint32
 
@@ -132,7 +141,7 @@ type RTCPReport struct {
 	LastSenderReportDelay uint32
 }
 
-func (report RTCPReport) writeTo(w *packet.Writer) {
+func (report rtcpReport) writeTo(w *packet.Writer) {
 	w.WriteUint32(uint32(report.Source))
 	w.WriteByte(byte(report.FractionLost * 256))
 	w.WriteUint24(uint32(report.TotalLost))
@@ -142,7 +151,7 @@ func (report RTCPReport) writeTo(w *packet.Writer) {
 	w.WriteUint32(report.LastSenderReportDelay)
 }
 
-func (report *RTCPReport) readFrom(r *packet.Reader) {
+func (report *rtcpReport) readFrom(r *packet.Reader) {
 	report.Source = r.ReadUint32()
 	report.FractionLost = float32(r.ReadByte()) / 256
 	report.TotalLost = int(r.ReadUint24())
@@ -152,36 +161,91 @@ func (report *RTCPReport) readFrom(r *packet.Reader) {
 	report.LastSenderReportDelay = r.ReadUint32()
 }
 
-type RTCPReceiverReport struct {
-	Sender  uint32
-	Reports []RTCPReport
+type rtcpReceiverReport struct {
+	sender  uint32
+	reports []rtcpReport
 }
 
-func (p *RTCPReceiverReport) writeTo(w *packet.Writer) error {
+func (p *rtcpReceiverReport) writeTo(w *packet.Writer) error {
 	h := rtcpHeader{
-		count:      len(p.Reports),
 		packetType: rtcpReceiverReportType,
-		length:     1 + 6*len(p.Reports),
+		count:      len(p.reports),
+		length:     (4 + len(p.reports)*rtcpReportSize) / 4,
 	}
 	if err := h.writeTo(w); err != nil {
 		return err
 	}
 
-	if err := w.CheckCapacity(4 * h.length); err != nil {
-		return errors.Errorf("short ReceiverReport: %v", err)
+	if err := w.CheckCapacity(4 + len(p.reports)*rtcpReportSize); err != nil {
+		return errors.Errorf("insufficient buffer for ReceiverReport: %v", err)
 	}
-	w.WriteUint32(uint32(p.Sender))
-	for i := range p.Reports {
-		p.Reports[i].writeTo(w)
+	w.WriteUint32(uint32(p.sender))
+	for i := range p.reports {
+		p.reports[i].writeTo(w)
 	}
 	return nil
 }
 
-func (p *RTCPReceiverReport) readFrom(r *packet.Reader, count int) {
-	p.Sender = r.ReadUint32()
-	var report RTCPReport
+func (p *rtcpReceiverReport) readFrom(r *packet.Reader, count int) {
+	p.sender = r.ReadUint32()
+	var report rtcpReport
 	for i := 0; i < count; i++ {
 		report.readFrom(r)
-		p.Reports = append(p.Reports, report)
+		p.reports = append(p.reports, report)
 	}
+}
+
+// rtcpWriter maintains state necessary for sending RTCP packets.
+type rtcpWriter struct {
+	conn net.Conn
+	ssrc uint32
+
+	// Number of RTCP packets sent.
+	count uint64
+
+	// Total number of RTCP bytes sent.
+	totalBytes uint64
+
+	// Reusable buffer for serializing packets.
+	buf []byte
+
+	// SRTP cryptographic context.
+	crypto cryptoContext
+
+	// Prevent simultaneous writes from multiple goroutines.
+	sync.Mutex
+}
+
+func newRTCPWriter(conn net.Conn, ssrc uint32, crypto *cryptoContext) *rtcpWriter {
+	w := new(rtcpWriter)
+	w.conn = conn
+	w.ssrc = ssrc
+	w.buf = make([]byte, 1500) // TODO: Determine from MTU
+	w.crypto = *crypto         // By value so that we have our own copy
+	return w
+}
+
+func (w *rtcpWriter) index() uint64 {
+	return w.count
+}
+
+func (w *rtcpWriter) writePacket(p rtcpPacket) error {
+	w.Lock()
+	defer w.Unlock()
+
+	b := packet.NewWriter(w.buf)
+	if err := p.writeTo(b); err != nil {
+		return err
+	}
+
+	index := w.index()
+	if err := w.crypto.encryptAndSignRTCP(b, index); err != nil {
+		return err
+	}
+
+	w.count += 1
+	w.totalBytes += uint64(b.Length())
+
+	_, err := w.conn.Write(b.Bytes())
+	return err
 }
