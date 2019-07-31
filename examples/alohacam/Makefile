@@ -1,6 +1,6 @@
 TOP := $(shell git rev-parse --show-cdup)
 
-GIT_REVISION_ID := $(shell git describe --always --dirty --tags)
+GIT_REVISION_ID := $(shell git describe --always --tags)
 
 # Default 'alohacam' target platform is Linux/ARMv7. Can be overridden on the
 # command line. (Note: these default values are ignored for release builds.)
