@@ -136,7 +136,7 @@ func (c *Conn) Send(b []byte) error {
 		mark := false
 		for i := 1; i < len(b); i += maxSize {
 			tail := i + maxSize
-			if tail > len(b) {
+			if tail >= len(b) {
 				end = 0x40
 				tail = len(b)
 			}
