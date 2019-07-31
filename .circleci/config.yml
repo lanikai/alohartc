@@ -51,7 +51,7 @@ jobs:
 
       # Build releases
       - run:
-          command: make -C examples/alohacam/ release VERSION=$(git describe --always --tags --dirty)
+          command: make -C examples/alohacam/ release VERSION=$(git describe --always --tags)
 
       # Fetch upx, a binary compressor utility
       - run:
@@ -63,7 +63,7 @@ jobs:
           command: find examples/alohacam/release -type f | xargs /tmp/upx-3.95-amd64_linux/upx
 
       - persist_to_workspace:
-          root: /go/src/github.com/lanikai/alohartc
+          root: /home/circleci/project
           paths:
             - examples/alohacam/release
 
