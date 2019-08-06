@@ -21,10 +21,16 @@ import (
 var (
 	// HTTP port on which to listen
 	flagPort int
+
+	// HTTPS self-signed certificate and key. Run HTTPS if provided.
+	flagHTTPSCert string
+	flagHTTPSKey  string
 )
 
 func init() {
 	flag.IntVar(&flagPort, "p", 8000, "HTTP port on which to listen")
+	flag.StringVar(&flagHTTPSCert, "httpsCert", "", "HTTPS server certificate")
+	flag.StringVar(&flagHTTPSKey, "httpsKey", "", "HTTPS server private key")
 
 	RegisterListener(localWebsocketListener)
 }
@@ -53,11 +59,14 @@ func localWebsocketListener(handle SessionHandler) error {
 		url += fmt.Sprintf(":%d", flagPort)
 	}
 
-	// Generate self-signed certificate (HTTPS required by browser for audio)
-	generateCert()
-
-	fmt.Printf("Open https://%s/ in a browser\n", url)
-	return server.ListenAndServeTLS("cert.pem", "key.pem")
+	// If HTTPS certificate and key provided, start HTTPS server, else HTTP
+	if len(flagHTTPSCert) > 0 && len(flagHTTPSKey) > 0 {
+		fmt.Printf("Open https://%s/\n", url)
+		return server.ListenAndServeTLS(flagHTTPSCert, flagHTTPSKey)
+	} else {
+		fmt.Printf("Open http://%s/ in a browser\n", url)
+		return server.ListenAndServe()
+	}
 }
 
 func websocketHandler(w http.ResponseWriter, r *http.Request, handle SessionHandler) {

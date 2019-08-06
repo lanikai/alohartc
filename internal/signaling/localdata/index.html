@@ -129,7 +129,7 @@
           stream.getAudioTracks().forEach(track => pc.addTrack(track, stream));
 
           // Create offer with local audio source
-          pc.createOffer({ offerToReceiveAudio: false, offerToReceiveVideo: true })
+          pc.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: true })
             .then(onCreateOfferSuccess)
             .catch(function(error) {
               console.log("createOffer failure:", error);

@@ -29,8 +29,8 @@ func NewSession(conn net.Conn, dynamicType uint8, masterKey, masterSalt []byte) 
 		conn:    conn,
 		typ:     dynamicType,
 		ssrc:    2541098696, // must match SDP answer (hard-coded for now)
-		seq:     uint16(rand.Intn(1 << 16)),
-		time:    uint32(rand.Intn(1 << 32)),
+		seq:     uint16(rand.Uint32()),
+		time:    uint32(rand.Uint32()),
 		context: ctx,
 	}, nil
 }

@@ -444,7 +444,7 @@ func (pc *PeerConnection) Stream() error {
 	remoteAudioSSRC := uint32(0)
 	for _, media := range pc.remoteDescription.Media {
 		if "audio" == media.Type {
-			if ssrc, err := strconv.Atoi(strings.Fields(media.GetAttr("ssrc"))[0]); err != nil {
+			if ssrc, err := strconv.ParseUint(strings.Fields(media.GetAttr("ssrc"))[0], 0, 32); err != nil {
 				return err
 			} else {
 				remoteAudioSSRC = uint32(ssrc)
