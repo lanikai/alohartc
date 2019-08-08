@@ -300,7 +300,6 @@ func (pc *PeerConnection) createAnswer() (sdp.Session, error) {
 					if fmtp, ok := supportedPayloadTypes[payloadType]; ok {
 						switch fmtp.(type) {
 						case *sdp.H264FormatParameters:
-							log.Info("H264FormatParameters")
 							if err := fmtp.(*sdp.H264FormatParameters).Unmarshal(params); err != nil {
 								log.Warn(err.Error())
 							}
