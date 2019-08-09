@@ -4,9 +4,10 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"os"
-	//"strings"
+	"strings"
 	"time"
 
 	"github.com/lanikai/alohartc"
@@ -45,35 +46,30 @@ func main() {
 	// Configure logging
 	log.SetFlags(log.LstdFlags | log.Lshortfile | log.Lmicroseconds)
 
-	/*
-		// Open media source
-		{
-			var err error
-			if strings.HasPrefix(*input, "/dev/video") {
-				source, err = alohartc.NewV4L2MediaSource(
-					*input,
-					*width,
-					*height,
-					*bitrate,
-					*hflip,
-					*vflip,
-				)
-			} else {
-				source, err = alohartc.NewFileMediaSource(*input)
-			}
-
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Cannot open %s (%s)\n", *input, err)
-				os.Exit(1)
-			}
+	// Open media source
+	{
+		err := fmt.Errorf("unsupported input: %s", *input)
+		if strings.HasPrefix(*input, "/dev/video") {
+			//source, err = alohartc.NewV4L2MediaSource(
+			//	*input,
+			//	*width,
+			//	*height,
+			//	*bitrate,
+			//	*hflip,
+			//	*vflip,
+			//)
+		} else if strings.HasSuffix(*input, ".mp4") {
+			videoSource, err = media.OpenMP4(*input)
 		}
-		defer source.Close()
-	*/
 
-	var err error
-	videoSource, err = media.OpenMP4(*input)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Cannot open %s: %s\n", *input, err)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Cannot open %s (%s)\n", *input, err)
+			os.Exit(1)
+		}
+	}
+
+	if closer, ok := videoSource.(io.Closer); ok {
+		defer closer.Close()
 	}
 
 	signaling.Listen(doPeerSession)

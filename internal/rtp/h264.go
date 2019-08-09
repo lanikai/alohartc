@@ -21,14 +21,14 @@ func (s *Stream) SendVideo(ctx context.Context, payloadType byte, localVideo med
 		timestamp:   initialTimestamp,
 	}
 
-	localVideoCh := localVideo.StartReceiving()
-	defer localVideo.StopReceiving(localVideoCh)
+	videoCh := localVideo.AddReceiver(4)
+	defer localVideo.RemoveReceiver(videoCh)
 
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case buf, more := <-localVideoCh:
+		case buf, more := <-videoCh:
 			if !more {
 				log.Debug("Received EOF from video source: %v", localVideo)
 				return io.EOF

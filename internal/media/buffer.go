@@ -9,6 +9,10 @@ consumer function, the consumer should process the bytes and Release() the
 buffer as quickly as possible. If the bytes cannot be processed quickly, the
 consumer should make a copy, Release(), then continue processing its local copy.
 
+Sharing is managed by reference counting. Hold() increments the reference count
+by 1, Release() decrements it by 1. The done function is called when the count
+reaches 0.
+
 Example usage:
 
 	func consumer(buf *SharedBuffer) {
@@ -19,13 +23,13 @@ Example usage:
 
 	func producer() {
 		data := generateData()
-		var wg sync.WaitGroup
-		buf := NewSharedBuffer(data, wg.Done)
-		wg.Add(len(consumers))
-		for , consume := consumers {
-			consume(buf)
+		doneCh := make(chan struct{})
+		buf := NewSharedBuffer(data, len(consumers), func() { close(doneCh) })
+		for _, consume := consumers {
+			go consume(buf)
 		}
-		wg.Wait()
+		// Wait for all consumers to finish.
+		<-doneCh
 	}
 
 The goal is to avoid extraneous allocations/copies when a potentially large
@@ -34,12 +38,12 @@ byte buffer needs to be consumed by multiple goroutines.
 type SharedBuffer struct {
 	data []byte
 
-	count   int32
-	release func()
+	count int32
+	done  func()
 }
 
-func NewSharedBuffer(data []byte, release func()) *SharedBuffer {
-	return &SharedBuffer{data, 1, release}
+func NewSharedBuffer(data []byte, count int, done func()) *SharedBuffer {
+	return &SharedBuffer{data, int32(count), done}
 }
 
 // Bytes returns the underlying byte buffer.
@@ -59,7 +63,8 @@ func (buf *SharedBuffer) Release() {
 		return
 	}
 	newCount := atomic.AddInt32(&buf.count, -1)
-	if newCount == 0 && buf.release != nil {
-		buf.release()
+	if newCount == 0 && buf.done != nil {
+		buf.done()
+		buf.data = nil
 	}
 }
