@@ -154,7 +154,7 @@ type AudioProducer interface {
 	// track should tell the consumer no more reads will occur.
 	//
 	// Multiple simultaneous subscribers must be supported.
-	AudioTrack() (*io.ReadCloser, error)
+	GetAudioTrack() (*AudioTrack, error)
 
 	// SetSamplerate for the audio source. Not to be called mid-stream.
 	SetSampleRate(sr int) error
@@ -166,7 +166,8 @@ type AudioProducer interface {
 	SetSampleSize(ss int) error
 }
 
-type AudioTrackProducer interface {
+type AudioTrack interface {
+	io.ReadCloser
 }
 
 // VideoProducer is the interface that extends the basic MediaProducer
@@ -197,14 +198,6 @@ type VideoTrack interface {
 	// SetFramesize for the video source. May be called mid-stream.
 	// If not supported, return errNotSupported.
 	SetFrameSize(fs int) error
-}
-
-type ALSAAudioProducer struct {
-	AudioProducer
-}
-
-func NewALSAAudioProducer() (*ALSAAudioProducer, error) {
-	return nil, errNotImplemented
 }
 
 type V4L2VideoProducer struct {
@@ -272,7 +265,8 @@ func NewALSAAudioConsumer(numChannels, sampleRate, sampleSize int) *ALSAAudioCon
 
 // MediaSource is the interface
 type MediaSource interface {
-	Close() error
+	io.Closer
+
 	GetTrack() Track
 	CloseTrack(Track)
 }
