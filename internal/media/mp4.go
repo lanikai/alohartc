@@ -3,12 +3,10 @@
 package media
 
 import (
+	"errors"
 	"io"
 	"os"
-	"sync"
 	"time"
-
-	errors "golang.org/x/xerrors"
 
 	"github.com/nareix/joy4/av"
 	"github.com/nareix/joy4/codec/h264parser"
@@ -16,6 +14,7 @@ import (
 )
 
 // Open an MP4 file and return the video stream as a VideoSource.
+// TODO: Return an AudioSource as well.
 func OpenMP4(filename string) (VideoSource, error) {
 	log.Info("Opening file %s", filename)
 	file, err := os.Open(filename)
@@ -53,6 +52,13 @@ func OpenMP4(filename string) (VideoSource, error) {
 	if video == nil {
 		return nil, errors.New("No compatible video stream found")
 	}
+
+	loop := &singletonLoop{
+		run: f.readLoop,
+	}
+	video.start = loop.start
+	video.stop = loop.stop
+
 	return video, nil
 }
 
@@ -62,35 +68,20 @@ type mp4File struct {
 
 	codecs  []av.CodecData
 	sources []*baseSource
-
-	readLoopRunning bool
-	readLoopGuard   sync.Mutex
 }
 
-// Start the read loop if it's not already running.
-func (f *mp4File) startReadLoop() {
-	f.readLoopGuard.Lock()
-	if !f.readLoopRunning {
-		f.readLoopRunning = true
-		go f.readLoop()
-	}
-	f.readLoopGuard.Unlock()
-}
-
-func (f *mp4File) readLoop() {
-	// Wall clock time when the stream started.
+func (f *mp4File) readLoop(quit <-chan struct{}) {
+	// Wall clock offset to the first packet in the file.
 	var start time.Time
 
 	for {
-		// Break the read loop if we have no receivers.
-		f.readLoopGuard.Lock()
-		if f.totalReceivers() == 0 {
-			f.readLoopRunning = false
+		select {
+		case <-quit:
 			return
+		default:
 		}
-		f.readLoopGuard.Unlock()
 
-		// Read the next packet in the file.
+		// Read the next packet from the file.
 		pkt, err := f.demuxer.ReadPacket()
 
 		if err == io.EOF {
@@ -138,17 +129,6 @@ func (f *mp4File) readLoop() {
 	}
 }
 
-// Total number of receivers across all MP4 streams.
-func (f *mp4File) totalReceivers() int {
-	n := 0
-	for _, s := range f.sources {
-		if s != nil {
-			n += s.numReceivers()
-		}
-	}
-	return n
-}
-
 type mp4AudioSource struct {
 	// TODO
 }
@@ -159,21 +139,6 @@ type mp4VideoSource struct {
 	f *mp4File
 
 	info av.VideoCodecData
-}
-
-func (vs *mp4VideoSource) StartReceiving() <-chan *SharedBuffer {
-	bufCh := vs.startRecv()
-	vs.f.startReadLoop()
-	return bufCh
-}
-
-func (vs *mp4VideoSource) StopReceiving(bufCh <-chan *SharedBuffer) {
-	vs.stopRecv(bufCh)
-}
-
-func (vs *mp4VideoSource) Close() error {
-	// TODO
-	return nil
 }
 
 func (vs *mp4VideoSource) Codec() string {
