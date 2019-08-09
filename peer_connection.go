@@ -186,7 +186,13 @@ func (pc *PeerConnection) createAnswer() (sdp.Session, error) {
 			{nil, nil},
 		},
 		Attributes: []sdp.Attribute{
-			{"group", filterGroup(pc.remoteDescription, map[string]bool{"audio": true, "video": true})},
+			{
+				"group",
+				filterGroup(
+					pc.remoteDescription,
+					map[string]bool{"audio": true, "video": true},
+				),
+			},
 		},
 	}
 
@@ -245,7 +251,7 @@ func (pc *PeerConnection) createAnswer() (sdp.Session, error) {
 					{"mid", remoteMedia.GetAttr("mid")},
 					{"rtcp", "9 IN IP4 0.0.0.0"},
 					{"setup", "active"},
-					{"recvonly", ""},
+					{"sendrecv", ""},
 					{"rtcp-mux", ""},
 					{"rtcp-rsize", ""},
 					{"rtpmap", fmt.Sprintf("%d PCMU/8000", payloadType)},
