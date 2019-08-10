@@ -1,0 +1,151 @@
+//////////////////////////////////////////////////////////////////////////////
+//
+// Media sources unique to Linux:
+//
+// * ALSAAudioSource: Advanced Linux Sound Architecture (ALSA) audio source
+// * V4L2VideoSource: Video4Linux2 video source
+//
+// Copyright 2019 Lanikai Labs. All rights reserved.
+//
+//////////////////////////////////////////////////////////////////////////////
+
+// +build linux
+
+package alohartc
+
+// #cgo pkg-config: alsa
+// #include <stdlib.h>
+// #include <alsa/asoundlib.h>
+import "C"
+import (
+	"errors"
+	"unsafe"
+)
+
+// ALSAAudioSource captures audio from an ALSA soundcard
+type ALSAAudioSource struct {
+	handle *C.struct__snd_pcm
+}
+
+// NewALSAAudioSource opens a specific capture device
+// Use "default" for devname to open the default capture device.
+// Use "hw:1" for devname to open the seeed-2mic-voicecard on a RPi as
+// "hw:0" is the on-board soundcard, which does not support capture.
+func NewALSAAudioSource(devname string) (*ALSAAudioSource, error) {
+	as := &ALSAAudioSource{}
+
+	// Open ALSA capture device
+	name := C.CString(devname)
+	err := C.snd_pcm_open(&as.handle, name, C.SND_PCM_STREAM_CAPTURE, 0)
+	C.free(unsafe.Pointer(name))
+	if err < 0 {
+		return nil, errors.New(C.GoString(C.snd_strerror(err)))
+	}
+
+	return as, nil
+}
+
+// Configure ALSA capture device
+func (as *ALSAAudioSource) Configure(rate, channels, format int) error {
+	var hwparams *C.struct__snd_pcm_hw_params
+
+	// Allocate hardware parameters structure
+	if err := C.snd_pcm_hw_params_malloc(&hwparams); err < 0 {
+		return errors.New(C.GoString(C.snd_strerror(err)))
+	}
+
+	// Initialize hardware parameters structure
+	if err := C.snd_pcm_hw_params_any(as.handle, hwparams); err < 0 {
+		return errors.New(C.GoString(C.snd_strerror(err)))
+	}
+
+	// Set access type
+	if err := C.snd_pcm_hw_params_set_access(
+		as.handle,
+		hwparams,
+		C.SND_PCM_ACCESS_RW_INTERLEAVED,
+	); err < 0 {
+		return errors.New(C.GoString(C.snd_strerror(err)))
+	}
+
+	// Set format
+	switch format {
+	case S8:
+		if err := C.snd_pcm_hw_params_set_format(
+			as.handle,
+			hwparams,
+			C.SND_PCM_FORMAT_S8,
+		); err < 0 {
+			return errors.New(C.GoString(C.snd_strerror(err)))
+		}
+	case U8:
+		if err := C.snd_pcm_hw_params_set_format(
+			as.handle,
+			hwparams,
+			C.SND_PCM_FORMAT_U8,
+		); err < 0 {
+			return errors.New(C.GoString(C.snd_strerror(err)))
+		}
+	case S16LE:
+		if err := C.snd_pcm_hw_params_set_format(
+			as.handle,
+			hwparams,
+			C.SND_PCM_FORMAT_S16_LE,
+		); err < 0 {
+			return errors.New(C.GoString(C.snd_strerror(err)))
+		}
+	default:
+		return errNotImplemented
+	}
+
+	// Set number of channels
+	if err := C.snd_pcm_hw_params_set_channels(
+		as.handle,
+		hwparams,
+		C.uint(channels),
+	); err < 0 {
+		return errors.New(C.GoString(C.snd_strerror(err)))
+	}
+
+	// Set sample rate
+	if err := C.snd_pcm_hw_params_set_rate(
+		as.handle,
+		hwparams,
+		C.uint(rate),
+		0,
+	); err < 0 {
+		return errors.New(C.GoString(C.snd_strerror(err)))
+	}
+
+	// Free hardware parameters struct
+	C.snd_pcm_hw_params_free(hwparams)
+
+	// Prepare for use
+	if err := C.snd_pcm_prepare(as.handle); err < 0 {
+		return errors.New(C.GoString(C.snd_strerror(err)))
+	}
+
+	return nil
+}
+
+// Close ALSA capture device
+func (as *ALSAAudioSource) Close() error {
+	// Close capture device
+	if err := C.snd_pcm_close(as.handle); err < 0 {
+		return errors.New(C.GoString(C.snd_strerror(err)))
+	}
+	return nil
+}
+
+type V4L2VideoSource struct {
+	VideoSourcer
+}
+
+// NOTE Since we need a cross-compiler now for anyhow for libaudio2.h and
+//      libopus.h, we might as well use cgo for V4L2 as well -- the
+//      cross-compiler toolchains include linux/videodev2.h and it would
+//      be more robust than the current "hardcoded magic values" used
+//      currently in unix.Syscall.
+func NewV4L2VideoSource(devname string) (*V4L2VideoSource, error) {
+	return nil, errNotImplemented
+}

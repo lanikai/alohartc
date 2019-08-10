@@ -16,7 +16,6 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"fmt"
-	"io"
 	"strconv"
 	"strings"
 	"time"
@@ -28,9 +27,6 @@ import (
 	"github.com/lanikai/alohartc/internal/rtp"
 	"github.com/lanikai/alohartc/internal/sdp"
 	"github.com/lanikai/alohartc/internal/srtp"
-
-	"github.com/hajimehoshi/oto" // sound card interface
-	"github.com/pd0mz/go-g711"   // g.711 decoding
 )
 
 const (
@@ -78,8 +74,10 @@ type PeerConnection struct {
 	fingerprint string
 
 	// Media tracks
-	localAudio media.AudioSource
-	localVideo media.VideoSource
+	localAudio  media.AudioSource
+	localVideo  media.VideoSource
+	remoteAudio media.AudioSource
+	remoteVideo media.VideoSource // not implemented
 }
 
 // Must is a helper that wraps a call to a function returning
@@ -524,22 +522,15 @@ func (pc *PeerConnection) Stream() error {
 	//}
 
 	go func() {
-		// create audio context
-		audioCtx, err := oto.NewContext(8000, 1, 2, 4096)
+		as, err := NewALSAAudioSink("default")
 		if err != nil {
 			log.Fatal(err)
 		}
-		defer audioCtx.Close()
+		defer as.Close()
 
-		// create new player for context (??)
-		player := audioCtx.NewPlayer()
-		defer player.Close()
-
-		// create file for writing audio
-		//file, err := os.Create("remoteAudio.raw")
-		//if err != nil {
-		//	log.Fatal(err)
-		//}
+		if err := as.Configure(8000, 1, S16LE); err != nil {
+			log.Fatal(err)
+		}
 
 		// create audio buffer
 		audioBuffer := make([]byte, 1280)
@@ -550,6 +541,8 @@ func (pc *PeerConnection) Stream() error {
 			log.Fatal(err)
 		}
 
+		decoder := NewPCMUDecoder()
+
 		for {
 			// read next audio packet
 			n, err := sess.Read(audioBuffer)
@@ -557,21 +550,11 @@ func (pc *PeerConnection) Stream() error {
 				log.Fatal(err)
 			}
 
-			decoded := g711.MLawDecode([]uint8(audioBuffer[:n-10]))
-			decodedBytes := make([]byte, (2 * len(decoded)))
+			decoded, _ := decoder.Decode(audioBuffer[:n-10])
 
-			for i, val := range decoded {
-				decodedBytes[2*i] = byte(val)
-				decodedBytes[2*i+1] = byte(val >> 8)
+			if n, err := as.Write(decoded); err != nil {
+				log.Println(n, err)
 			}
-
-			buffer := bytes.NewBuffer(decodedBytes)
-
-			// write audio packet to sound card
-			io.Copy(player, buffer)
-
-			// write audio packet to file
-			//file.Write(audioBuffer[:n-10])
 		}
 	}()
 
@@ -579,6 +562,11 @@ func (pc *PeerConnection) Stream() error {
 	//if pc.localVideoTrack != nil {
 	//	go sendVideoTrack(srtpSession, pc.localVideoTrack)
 	//}
+
+	// Goroutine for sending local audio track to remote peer
+	//	if pc.localAudioTrack != nil {
+	//		go sendAudioTrack(srtpSession, pc.localAudioTrack)
+	//	}
 
 	// There are two termination conditions that we need to deal with here:
 	// 1. Context cancellation. If Close() is called explicitly, or if the
@@ -672,3 +660,19 @@ func sendVideoTrack(conn *srtp.Conn, track Track) error {
 
 	panic("should never get here")
 }
+
+// sendAudioTrack transmits the local audio track to remote peer
+// Terminates either on track read error or SRTP write error.
+//func sendAudioTrack(ctx context.Context, conn *srtp.Conn, track *AudioTrack) error {
+//	buf := make([]byte, 128*1024)
+//	gotParameterSet := false
+//
+//	for {
+//		// Read next NAL unit from H.264 video track
+//		n, err := track.Read(buf)
+//		if err != nil {
+//			return err
+//		}
+//		nalu := buf[:n]
+//	}
+//}
