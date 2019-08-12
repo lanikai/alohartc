@@ -218,7 +218,7 @@ func (pc *PeerConnection) createAnswer() (sdp.Session, error) {
 					}
 
 					// only G.711 u-law (i.e. PCMU) codec supported
-					if "PCMU/8000" == codec {
+					if "opus/48000/2" == codec {
 						supportedPayloadTypes[payloadType] = &sdp.PCMUFormatParameters{}
 					}
 				}
@@ -234,7 +234,7 @@ func (pc *PeerConnection) createAnswer() (sdp.Session, error) {
 				Type:   remoteMedia.Type,
 				Port:   9,
 				Proto:  "UDP/TLS/RTP/SAVPF",
-				Format: []string{strconv.Itoa(int(pc.DynamicType))},
+				Format: []string{strconv.Itoa(int(payloadType))},
 				Connection: &sdp.Connection{
 					NetworkType: "IN",
 					AddressType: "IP4",
@@ -252,9 +252,11 @@ func (pc *PeerConnection) createAnswer() (sdp.Session, error) {
 					{"sendrecv", ""},
 					{"rtcp-mux", ""},
 					{"rtcp-rsize", ""},
-					{"rtpmap", fmt.Sprintf("%d PCMU/8000", payloadType)},
-					{"msid", "SdWLKyaNRoUSWQ7BzkKGcbCWcuV7rScYxCAv e9b60276-a415-4a66-8395-28a893918d4c"},
-					{"ssrc", "3841098696 cname:cYhx/N8U7h7+3GW3"},
+					{"rtpmap", fmt.Sprintf("%d opus/48000/2", payloadType)},
+					{"fmtp", fmt.Sprintf("%d minptime=10; useinbandfec=1", payloadType)},
+					{"ptime", "20"},
+					//					{"msid", "SdWLKyaNRoUSWQ7BzkKGcbCWcuV7rScYxCAv e9b60276-a415-4a66-8395-28a893918d4c"},
+					//					{"ssrc", "3841098696 cname:cYhx/N8U7h7+3GW3"},
 				},
 			}
 			s.Media = append(s.Media, m)
@@ -522,13 +524,13 @@ func (pc *PeerConnection) Stream() error {
 	//}
 
 	go func() {
-		as, err := NewALSAAudioSink("default")
+		as, err := NewALSAAudioSink("hw:seeed2micvoicec")
 		if err != nil {
 			log.Fatal(err)
 		}
 		defer as.Close()
 
-		if err := as.Configure(8000, 1, S16LE); err != nil {
+		if err := as.Configure(48000, 2, S16LE); err != nil {
 			log.Fatal(err)
 		}
 
@@ -541,7 +543,10 @@ func (pc *PeerConnection) Stream() error {
 			log.Fatal(err)
 		}
 
-		decoder := NewPCMUDecoder()
+		decoder, err := NewOpusDecoder(false)
+		if err != nil {
+			log.Fatal(err)
+		}
 
 		for {
 			// read next audio packet
@@ -550,7 +555,10 @@ func (pc *PeerConnection) Stream() error {
 				log.Fatal(err)
 			}
 
-			decoded, _ := decoder.Decode(audioBuffer[:n-10])
+			decoded, err := decoder.Decode(audioBuffer[:n-10])
+			if err != nil {
+				log.Fatal(err)
+			}
 
 			if n, err := as.Write(decoded); err != nil {
 				log.Println(n, err)
