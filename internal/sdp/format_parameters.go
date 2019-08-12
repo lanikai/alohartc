@@ -17,6 +17,9 @@ type H264FormatParameters struct {
 	SpropParameterSets    [][]byte
 }
 
+type OpusFormatParameters struct {
+}
+
 type PCMUFormatParameters struct {
 }
 

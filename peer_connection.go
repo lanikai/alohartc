@@ -199,7 +199,7 @@ func (pc *PeerConnection) createAnswer() (sdp.Session, error) {
 		switch remoteMedia.Type {
 
 		case "audio":
-			// Select PCMU codec (only supported)
+			// Select Opus codec (only supported)
 			supportedPayloadTypes := make(map[int]interface{})
 
 			// search rtpmap attributes for supported codecs
@@ -217,9 +217,9 @@ func (pc *PeerConnection) createAnswer() (sdp.Session, error) {
 						break // switch
 					}
 
-					// only G.711 u-law (i.e. PCMU) codec supported
+					// only Opus 48KHz stereo codec supported
 					if "opus/48000/2" == codec {
-						supportedPayloadTypes[payloadType] = &sdp.PCMUFormatParameters{}
+						supportedPayloadTypes[payloadType] = &sdp.OpusFormatParameters{}
 					}
 				}
 			}
@@ -255,8 +255,6 @@ func (pc *PeerConnection) createAnswer() (sdp.Session, error) {
 					{"rtpmap", fmt.Sprintf("%d opus/48000/2", payloadType)},
 					{"fmtp", fmt.Sprintf("%d minptime=10; useinbandfec=1", payloadType)},
 					{"ptime", "20"},
-					//					{"msid", "SdWLKyaNRoUSWQ7BzkKGcbCWcuV7rScYxCAv e9b60276-a415-4a66-8395-28a893918d4c"},
-					//					{"ssrc", "3841098696 cname:cYhx/N8U7h7+3GW3"},
 				},
 			}
 			s.Media = append(s.Media, m)
@@ -530,6 +528,7 @@ func (pc *PeerConnection) Stream() error {
 		}
 		defer as.Close()
 
+		// configure soundcard for opus codec
 		if err := as.Configure(48000, 2, S16LE); err != nil {
 			log.Fatal(err)
 		}
@@ -543,23 +542,26 @@ func (pc *PeerConnection) Stream() error {
 			log.Fatal(err)
 		}
 
+		// instantiate decoder
 		decoder, err := NewOpusDecoder(false)
 		if err != nil {
 			log.Fatal(err)
 		}
 
 		for {
-			// read next audio packet
+			// read next audio packet (opus sends one frame per packet)
 			n, err := sess.Read(audioBuffer)
 			if err != nil {
 				log.Fatal(err)
 			}
 
+			// decode packet
 			decoded, err := decoder.Decode(audioBuffer[:n-10])
 			if err != nil {
 				log.Fatal(err)
 			}
 
+			// write decoded packet to soundcard
 			if n, err := as.Write(decoded); err != nil {
 				log.Println(n, err)
 			}
