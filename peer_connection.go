@@ -107,6 +107,8 @@ func NewPeerConnectionWithContext(ctx context.Context, config Config) (*PeerConn
 		cancel:           cancel,
 		localAudio:       config.LocalAudio,
 		localVideo:       config.LocalVideo,
+		remoteAudio:      config.RemoteAudio,
+		remoteVideo:      config.RemoteVideo,
 		iceAgent:         ice.NewAgent(),
 		remoteCandidates: make(chan ice.Candidate, 4),
 
@@ -668,21 +670,30 @@ func sendVideoTrack(conn *srtp.Conn, track Track) error {
 		panic("unsupported video track")
 	}
 
-	panic("should never get here")
+	panic("logic error")
 }
 
 // sendAudioTrack transmits the local audio track to remote peer
 // Terminates either on track read error or SRTP write error.
-//func sendAudioTrack(ctx context.Context, conn *srtp.Conn, track *AudioTrack) error {
-//	buf := make([]byte, 128*1024)
-//	gotParameterSet := false
-//
-//	for {
-//		// Read next NAL unit from H.264 video track
-//		n, err := track.Read(buf)
-//		if err != nil {
-//			return err
-//		}
-//		nalu := buf[:n]
-//	}
-//}
+func sendAudioTrack(ctx context.Context, conn *srtp.Conn, as AudioSourcer) error {
+	audio := as.Subscribe(10)
+
+	for {
+		select {
+		// Read audio (already encoded with selected codec)
+		case p, ok := <-audio:
+			if err := conn.Send(p); err != nil {
+				return err
+			}
+		// Abort on context termination
+		case <-ctx.Done():
+			if err := as.Unsubscribe(audio); err != nil {
+				return err
+			}
+
+			return nil
+		}
+	}
+
+	panic("logic error")
+}

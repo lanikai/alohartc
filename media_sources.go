@@ -28,12 +28,11 @@ import (
 // source content from the time they join. How much content is buffered if
 // a reader fails to read in time is left to the implementation.
 type MediaSourcer interface {
+	Subscriber
 	io.Closer
 
 	// Codec returns the codec used by the producer
 	Codec() string
-
-	Subscribe()
 }
 
 const (
@@ -45,48 +44,16 @@ const (
 
 // AudioSourcer is the interface that extends the basic MediaSourcer
 // interface for audio sources.
-//
-// TODO Can we get away with encoding once? For instance, say we're using
-//      Opus, which supports error correction. Say there are multiple
-//      viewers. Can the same encoded byte stream support all viewers?
-//      Or does each viewer (i.e. each Track) need own encoder?
 type AudioSourcer interface {
 	MediaSourcer
-
-	// AudioTrack get a new audio track from the producer. Closing the
-	// track should tell the consumer no more reads will occur.
-	//
-	// Multiple simultaneous subscribers must be supported.
-	Audio() (*AudioTrack, error)
 
 	Configure(rate, channels, format int) error
 }
 
-type AudioTrack interface {
-	io.ReadCloser
-
-	// SetSamplerate for the audio source. Not to be called mid-stream.
-	SetSampleRate(sr int) error
-
-	// SetNumChannels for the audio source. Not to be called mid-stream.
-	SetNumChannels(nc int) error
-
-	// SetSampleSize for the audio source. Not to be called mid-stream.
-	SetSampleFormat(ss int) error
-}
-
-// VideoProducer is the interface that extends the basic MediaProducer
+// VideoSourcer is the interface that extends the basic MediaSourcer
 // interface for video producers.
 type VideoSourcer interface {
 	MediaSourcer
-
-	// VideoTrack get a new audio track from the producer. Closing the
-	// track should tell the consumer no more reads will occur.
-	Video() (*VideoTrack, error)
-}
-
-type VideoTrack interface {
-	io.ReadCloser
 
 	// Force video source to produce an IDR rate.
 	// If not supported, return errNotSupported.

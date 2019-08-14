@@ -24,7 +24,10 @@ import (
 
 // ALSAAudioSource captures audio from an ALSA soundcard
 type ALSAAudioSource struct {
-	handle *C.struct__snd_pcm
+	bcast          *Broadcaster
+	handle         *C.struct__snd_pcm
+	stop           chan bool
+	numSubscribers int
 }
 
 // NewALSAAudioSource opens a specific capture device
@@ -32,7 +35,10 @@ type ALSAAudioSource struct {
 // Use "hw:1" for devname to open the seeed-2mic-voicecard on a RPi as
 // "hw:0" is the on-board soundcard, which does not support capture.
 func NewALSAAudioSource(devname string) (*ALSAAudioSource, error) {
-	as := &ALSAAudioSource{}
+	as := &ALSAAudioSource{
+		bcast: NewBroadcaster(),
+		stop:  make(chan bool),
+	}
 
 	// Open ALSA capture device
 	name := C.CString(devname)
@@ -134,18 +140,62 @@ func (as *ALSAAudioSource) Close() error {
 	if err := C.snd_pcm_close(as.handle); err < 0 {
 		return errors.New(C.GoString(C.snd_strerror(err)))
 	}
-	return nil
+	return as.bcast.Close()
 }
 
+// Subscribe to frames from capture device. Returned buffered channel will
+// receive frames from capture device, buffering up to n frames. Underlying
+// frame data is shared amongst all other subscribers -- do not modify.
+func (as *ALSAAudioSource) Subscribe(n int) <-chan []byte {
+	// Start capturing if first subscriber
+	if 0 == as.numSubscribers {
+		go as.capture()
+	}
+	as.numSubscribers++
+
+	return as.bcast.Subscribe(n)
+}
+
+// Unsubscribe from capture device. Channel will receive no more frames.
+func (as *ALSAAudioSource) Unsubscribe(ch <-chan []byte) error {
+	as.numSubscribers--
+	if 0 == as.numSubscribers {
+		as.stop <- true
+	}
+	return as.bcast.Unsubscribe(ch)
+}
+
+// capture buffers from device and write to broadcaster
+func (as *ALSAAudioSource) capture() {
+	for {
+		select {
+		case <-as.stop:
+			return
+		default:
+			// Capture
+			out := C.malloc(bytesPerSample * numChannels * numFrames)
+			n := C.snd_pcm_readi(
+				as.handle,
+				unsafe.Pointer(out),
+				C.snd_pcm_uframes_t(numFrames),
+			)
+			if n < 0 {
+				log.Println(C.GoString(C.snd_strerror(C.int(n))))
+			}
+			raw := C.GoBytes(out, bytesPerSample*numChannels*n)
+			C.free(unsafe.Pointer(out))
+
+			// Encode
+			encoded := raw
+
+			// Broadcast
+			as.bcast.Write(encoded)
+		}
+	}
+}
+
+// TODO Port v4l2 module to a cgo-based source using videodev2.h. More
+//      robust, and now need cgo anyhow for libasound2 and libopus.
 type V4L2VideoSource struct {
 	VideoSourcer
-}
-
-// NOTE Since we need a cross-compiler now for anyhow for libaudio2.h and
-//      libopus.h, we might as well use cgo for V4L2 as well -- the
-//      cross-compiler toolchains include linux/videodev2.h and it would
-//      be more robust than the current "hardcoded magic values" used
-//      currently in unix.Syscall.
-func NewV4L2VideoSource(devname string) (*V4L2VideoSource, error) {
-	return nil, errNotImplemented
 }
