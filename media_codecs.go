@@ -97,7 +97,7 @@ func (d *OpusDecoder) Decode(b []byte) ([]byte, error) {
 
 	// Decode
 	maxFrameSize := (opusMaxDurationMs * opusSampleRate / 1000)
-	out := C.malloc(opusBytesPerSample * opusNumChannels * C.uint(maxFrameSize))
+	out := C.malloc(opusBytesPerSample * opusNumChannels * C.ulong(maxFrameSize))
 	defer C.free(unsafe.Pointer(out))
 	if nil == b {
 		frameSize = C.opus_decode(

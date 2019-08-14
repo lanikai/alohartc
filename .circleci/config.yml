@@ -25,6 +25,10 @@ jobs:
           fingerprints:
             - "13:39:6e:d4:ed:28:67:d5:32:b5:30:19:2a:41:a7:d6"
 
+      # Install alsa and opus libraries (dependencies)
+      - run: sudo apt-get update
+      - run: sudo apt-get install libasound2-dev libopus-dev
+
       # Generate code
       - run: go get github.com/mjibson/esc
       - run: go generate -x ./...
