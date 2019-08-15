@@ -30,9 +30,6 @@ import (
 type MediaSourcer interface {
 	Subscriber
 	io.Closer
-
-	// Codec returns the codec used by the producer
-	Codec() string
 }
 
 const (

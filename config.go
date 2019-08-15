@@ -8,9 +8,15 @@
 
 package alohartc
 
+<<<<<<< HEAD
 import (
 	"github.com/lanikai/alohartc/internal/media"
 )
+=======
+type Config struct {
+	AudioSink   *AudioSinker
+	AudioSource AudioSourcer
+>>>>>>> Two-way audio functional
 
 type Config struct {
 	LocalAudio  media.AudioSource

@@ -25,9 +25,10 @@ import (
 // ALSAAudioSource captures audio from an ALSA soundcard
 type ALSAAudioSource struct {
 	bcast          *Broadcaster
+	encoder        Encoder
 	handle         *C.struct__snd_pcm
-	stop           chan bool
 	numSubscribers int
+	stop           chan bool
 }
 
 // NewALSAAudioSource opens a specific capture device
@@ -38,6 +39,12 @@ func NewALSAAudioSource(devname string) (*ALSAAudioSource, error) {
 	as := &ALSAAudioSource{
 		bcast: NewBroadcaster(),
 		stop:  make(chan bool),
+	}
+
+	// Static Opus encoder
+	// TODO Allow encoder to be dynamically specified from a set of options
+	if encoder, err := NewOpusEncoder(); err == nil {
+		as.encoder = encoder
 	}
 
 	// Open ALSA capture device
@@ -123,6 +130,11 @@ func (as *ALSAAudioSource) Configure(rate, channels, format int) error {
 		return errors.New(C.GoString(C.snd_strerror(err)))
 	}
 
+	// Set capture device parameters
+	if err := C.snd_pcm_hw_params(as.handle, hwparams); err < 0 {
+		return errors.New(C.GoString(C.snd_strerror(err)))
+	}
+
 	// Free hardware parameters struct
 	C.snd_pcm_hw_params_free(hwparams)
 
@@ -167,13 +179,17 @@ func (as *ALSAAudioSource) Unsubscribe(ch <-chan []byte) error {
 
 // capture buffers from device and write to broadcaster
 func (as *ALSAAudioSource) capture() {
+	bytesPerSample := 2
+	numChannels := 2
+	numFrames := 960
+
 	for {
 		select {
 		case <-as.stop:
 			return
 		default:
 			// Capture
-			out := C.malloc(bytesPerSample * numChannels * numFrames)
+			out := C.malloc(C.uint(bytesPerSample * numChannels * numFrames))
 			n := C.snd_pcm_readi(
 				as.handle,
 				unsafe.Pointer(out),
@@ -182,14 +198,23 @@ func (as *ALSAAudioSource) capture() {
 			if n < 0 {
 				log.Println(C.GoString(C.snd_strerror(C.int(n))))
 			}
-			raw := C.GoBytes(out, bytesPerSample*numChannels*n)
+			captured := C.GoBytes(out, (C.int(bytesPerSample) * C.int(numChannels) * C.int(n)))
 			C.free(unsafe.Pointer(out))
 
-			// Encode
-			encoded := raw
+			// Encode (if encoder specified)
+			encoded := captured
+			if nil != as.encoder {
+				if e, err := as.encoder.Encode(captured); nil != err {
+					log.Println(err)
+				} else {
+					encoded = e
+				}
+			}
 
 			// Broadcast
-			as.bcast.Write(encoded)
+			if _, err := as.bcast.Write(encoded); nil != err {
+				log.Println(err)
+			}
 		}
 	}
 }

@@ -75,6 +75,18 @@ func main() {
 		defer closer.Close()
 	}
 
+	// Open audio source
+	as, err := alohartc.NewALSAAudioSource("hw:seeed2micvoicec")
+	if nil != err {
+		log.Fatal(err)
+	}
+
+	// Configure soundcard for Opus codec
+	if err := as.Configure(48000, 2, alohartc.S16LE); err != nil {
+		log.Fatal(err)
+	}
+	audioSource = as
+
 	signaling.Listen(doPeerSession)
 }
 
@@ -87,6 +99,7 @@ func doPeerSession(ss *signaling.Session) {
 		ctx,
 		alohartc.Config{
 			LocalVideo: videoSource,
+			LocalAudio: audioSource,
 		}))
 	defer pc.Close()
 

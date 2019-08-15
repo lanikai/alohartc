@@ -15,6 +15,7 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -138,7 +139,6 @@ func filterGroup(sess sdp.Session, allowedTypes map[string]bool) string {
 	filtered := []string{"BUNDLE"}
 
 	for _, m := range sess.Media {
-		log.Println("type", m.Type)
 		if _, ok := allowedTypes[m.Type]; ok {
 			filtered = append(filtered, m.GetAttr("mid"))
 		}
@@ -257,6 +257,7 @@ func (pc *PeerConnection) createAnswer() (sdp.Session, error) {
 					{"rtpmap", fmt.Sprintf("%d opus/48000/2", payloadType)},
 					{"fmtp", fmt.Sprintf("%d minptime=10; useinbandfec=1", payloadType)},
 					{"ptime", "20"},
+					{"ssrc", "2541098698 cname:cYhx/N8U7h7+3GW5"},
 				},
 			}
 			s.Media = append(s.Media, m)
@@ -576,9 +577,15 @@ func (pc *PeerConnection) Stream() error {
 	//}
 
 	// Goroutine for sending local audio track to remote peer
-	//	if pc.localAudioTrack != nil {
-	//		go sendAudioTrack(srtpSession, pc.localAudioTrack)
-	//	}
+	if nil != pc.audioSource {
+		// create srtp decryption context
+		sess, err := srtp.NewAudioSession(remoteAudioEndpoint, 111, writeKey, writeSalt)
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		go sendAudioTrack(pc.ctx, sess, pc.audioSource)
+	}
 
 	// There are two termination conditions that we need to deal with here:
 	// 1. Context cancellation. If Close() is called explicitly, or if the
@@ -675,13 +682,16 @@ func sendVideoTrack(conn *srtp.Conn, track Track) error {
 
 // sendAudioTrack transmits the local audio track to remote peer
 // Terminates either on track read error or SRTP write error.
-func sendAudioTrack(ctx context.Context, conn *srtp.Conn, as AudioSourcer) error {
+func sendAudioTrack(ctx context.Context, conn *srtp.AudioConn, as AudioSourcer) error {
 	audio := as.Subscribe(10)
 
 	for {
 		select {
 		// Read audio (already encoded with selected codec)
 		case p, ok := <-audio:
+			if !ok {
+				return errors.New("audio source closed")
+			}
 			if err := conn.Send(p); err != nil {
 				return err
 			}
