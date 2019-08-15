@@ -38,21 +38,24 @@ func (r *Reader) ReadUint32() uint32 {
 	return v
 }
 
-// Read into the provided buffer. See io.Reader. Always returns nil error.
-//func (r *Reader) Read(p []byte) (n int, err error) {
-//	n = copy(p, r.buffer[r.offset:])
-//	r.offset += n
-//	return
-//}
-
 func (r *Reader) ReadSlice(n int) []byte {
 	v := r.buffer[r.offset : r.offset+n]
 	r.offset += n
 	return v
 }
 
+func (r *Reader) ReadString(n int) string {
+	return string(r.ReadSlice(n))
+}
+
 func (r *Reader) Skip(n int) {
 	r.offset += n
+}
+
+// Discard bytes up to the next multiple of width, e.g. Align(4) skips ahead
+// until the next aligned 4-byte boundary.
+func (r *Reader) Align(width int) {
+	r.offset = width * ((r.offset + width - 1) / width)
 }
 
 func (r *Reader) ReadRemaining() []byte {

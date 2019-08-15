@@ -13,6 +13,7 @@ import (
 	"github.com/lanikai/alohartc"
 	"github.com/lanikai/alohartc/internal/ice"
 	"github.com/lanikai/alohartc/internal/media"
+	"github.com/lanikai/alohartc/internal/media/rtsp"
 	"github.com/lanikai/alohartc/internal/signaling"
 )
 
@@ -58,6 +59,8 @@ func main() {
 			//	*hflip,
 			//	*vflip,
 			//)
+		} else if strings.HasPrefix(*input, "rtsp://") {
+			videoSource, err = rtsp.Open(*input)
 		} else if strings.HasSuffix(*input, ".mp4") {
 			videoSource, err = media.OpenMP4(*input)
 		}

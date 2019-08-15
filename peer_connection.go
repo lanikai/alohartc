@@ -389,7 +389,11 @@ func (pc *PeerConnection) Stream() error {
 		LocalCNAME: "cYhx/N8U7h7+3GW3",
 		Direction:  "sendonly",
 	})
-	go rtpStream.SendVideo(pc.ctx, pc.DynamicType, pc.localVideo)
+	go func() {
+		videoCh := pc.localVideo.AddReceiver(16)
+		defer pc.localVideo.RemoveReceiver(videoCh)
+		rtpStream.SendVideo(pc.ctx.Done(), pc.DynamicType, videoCh)
+	}()
 
 	//rtpSession, err := rtp.NewSecureSession(rtpEndpoint, readKey, readSalt, writeKey, writeSalt)
 	//go streamH264(pc.ctx, pc.localVideoTrack, rtpSession.NewH264Stream(ssrc, cname))

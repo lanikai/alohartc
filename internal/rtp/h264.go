@@ -1,45 +1,15 @@
 package rtp
 
 import (
-	"context"
+	"bytes"
 	"io"
+	"time"
 
-	"github.com/lanikai/alohartc/internal/media"
-	"github.com/lanikai/alohartc/internal/media/h264"
 	"github.com/lanikai/alohartc/internal/packet"
 )
 
 // RTP packetization of H.264 video streams.
 // See [RFC 6184](https://tools.ietf.org/html/rfc6184).
-
-func (s *Stream) SendVideo(ctx context.Context, payloadType byte, localVideo media.VideoSource) error {
-	initialTimestamp := uint32(0) // TODO: randomize timestamp
-
-	w := h264Writer{
-		rtpWriter:   s.rtpOut,
-		payloadType: payloadType,
-		timestamp:   initialTimestamp,
-	}
-
-	videoCh := localVideo.AddReceiver(4)
-	defer localVideo.RemoveReceiver(videoCh)
-
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case buf, more := <-videoCh:
-			if !more {
-				log.Debug("Received EOF from video source: %v", localVideo)
-				return io.EOF
-			}
-			if err := w.consume(buf); err != nil {
-				return err
-			}
-		}
-		// TODO: Sender reports, RTCP feedback, etc.
-	}
-}
 
 const (
 	// NAL unit types. See https://tools.ietf.org/html/rfc6184#section-5.2
@@ -50,9 +20,58 @@ const (
 	naluTypeFU_A   = 28
 )
 
-// TODO: Generalize h264Writer.
-type videoWriter interface {
-	consume(buf *media.SharedBuffer) error
+func (s *Stream) SendVideo(quit <-chan struct{}, payloadType byte, src <-chan *packet.SharedBuffer) error {
+	initialTimestamp := uint32(0) // TODO: randomize timestamp
+
+	w := h264Writer{
+		rtpWriter:   s.rtpOut,
+		payloadType: payloadType,
+		timestamp:   initialTimestamp,
+	}
+	for {
+		select {
+		case <-quit:
+			return nil
+		case buf, more := <-src:
+			if !more {
+				log.Debug("Received EOF from video source: %d", payloadType)
+				return io.EOF
+			}
+			if err := w.consume(buf); err != nil {
+				return err
+			}
+		}
+		// TODO: Sender reports, RTCP feedback, etc.
+	}
+}
+
+func (s *Stream) ReceiveVideo(quit <-chan struct{}, consume func(buf *packet.SharedBuffer) error) error {
+	r := h264Reader{
+		rtpReader: s.rtpIn,
+		ch:        make(chan *packet.SharedBuffer, 4),
+	}
+	s.rtpIn.handler = r.handlePacket
+
+	receiverReportTicker := time.NewTicker(2 * time.Second)
+	defer receiverReportTicker.Stop()
+
+	for {
+		select {
+		case <-quit:
+			return nil
+		case buf, more := <-r.ch:
+			if !more {
+				return io.EOF
+			}
+
+			if err := consume(buf); err != nil {
+				return err
+			}
+		case <-receiverReportTicker.C:
+			log.Debug("sending Receiver Report for remote SSRC %02x", s.RemoteSSRC)
+			s.sendReceiverReport()
+		}
+	}
 }
 
 type h264Writer struct {
@@ -66,38 +85,18 @@ type h264Writer struct {
 	stap []byte
 }
 
-func (w *h264Writer) consume(buf *media.SharedBuffer) error {
+func (w *h264Writer) consume(buf *packet.SharedBuffer) error {
 	defer buf.Release()
 
-	nalu := h264.NALU(buf.Bytes())
-	switch nalu.Type() {
+	nalu := buf.Bytes()
+	naluType := nalu[0] & 0x1f
+	switch naluType {
 	case naluTypeSEI, naluTypeSPS, naluTypePPS:
 		// Merge consecutive SEI/SPS/PPS into a single STAP-A packet.
-		w.appendSTAP(nalu)
+		w.stap = appendSTAP(w.stap, nalu)
 		return nil
 	default:
 		return w.packetize(nalu)
-	}
-}
-
-// See https://tools.ietf.org/html/rfc6184#section-5.7.1
-func (w *h264Writer) appendSTAP(nalu h264.NALU) {
-	n := len(nalu)
-	if len(w.stap) == 0 {
-		// Initialize NALU of type STAP-A, with F and NRI set to 0.
-		w.stap = append(w.stap, naluTypeSTAP_A)
-	}
-	w.stap = append(w.stap, byte(n>>8), byte(n))
-	w.stap = append(w.stap, nalu...)
-
-	// STAP-A forbidden bit is bitwise-OR of all forbidden bits.
-	w.stap[0] |= nalu[0] & 0x80
-
-	// STAP-A NRI value is maximum of all NRI values.
-	nri := nalu[0] & 0x60
-	stapNRI := w.stap[0] & 0x60
-	if nri > stapNRI {
-		w.stap[0] = (w.stap[0] &^ 0x60) | nri
 	}
 }
 
@@ -106,7 +105,7 @@ func (w *h264Writer) advanceTimestamp() {
 	w.timestamp += 3000
 }
 
-func (w *h264Writer) packetize(nalu h264.NALU) error {
+func (w *h264Writer) packetize(nalu []byte) error {
 	// First send STAP-A packet, if present.
 	if len(w.stap) > 0 {
 		if err := w.writePacket(w.payloadType, false, w.timestamp, w.stap); err != nil {
@@ -132,7 +131,7 @@ func (w *h264Writer) packetize(nalu h264.NALU) error {
 	indicator := nalu[0]&0xe0 | naluTypeFU_A
 	start := byte(0x80)
 	end := byte(0)
-	typ := nalu.Type()
+	naluType := nalu[0] & 0x1f
 	p := packet.NewWriterSize(maxSize) // TODO: sync.Pool
 	for i := 1; i < len(nalu); i += maxSize - 2 {
 		tail := i + maxSize - 2
@@ -141,16 +140,117 @@ func (w *h264Writer) packetize(nalu h264.NALU) error {
 			end = 0x40
 		}
 
-		p.WriteByte(indicator)         // FU indicator
-		p.WriteByte(start | end | typ) // FU header
+		p.Reset()
+		p.WriteByte(indicator)              // FU indicator
+		p.WriteByte(start | end | naluType) // FU header
 		p.WriteSlice(nalu[i:tail])
 
 		if err := w.writePacket(w.payloadType, end != 0, w.timestamp, p.Bytes()); err != nil {
 			return err
 		}
 
-		p.Reset()
 		start = 0
 	}
 	return nil
+}
+
+type h264Reader struct {
+	*rtpReader
+
+	// Channel for received NAL units.
+	ch chan *packet.SharedBuffer
+
+	// Buffer for assembling FU-A packets into a complete NALU.
+	buf *bytes.Buffer
+}
+
+func copyBytes(buf []byte) []byte {
+	return append([]byte(nil), buf...)
+}
+
+func (r *h264Reader) handlePacket(hdr rtpHeader, payload []byte) error {
+	log.Trace(4, "Received RTP payload: %d", len(payload))
+
+	// Assemble RTP packets into full NAL units.
+	naluType := payload[0] & 0x1f
+	switch naluType {
+	case naluTypeSTAP_A:
+		// STAP-A packet potentially contains SEI, SPS, and PPS.
+		payload = copyBytes(payload)
+		nalus, err := splitSTAP(payload)
+		if err != nil {
+			return err
+		}
+		for _, nalu := range nalus {
+			r.ch <- packet.NewSharedBuffer(nalu, 1, nil)
+		}
+	case naluTypeFU_A:
+		// Reassemble a sequence of FU-A packets.
+		// See https://tools.ietf.org/html/rfc6184#section-5.8
+		indicator := payload[0]
+		header := payload[1]
+		start := header & 0x80
+		end := header & 0x40
+		if start != 0 {
+			r.buf = new(bytes.Buffer) // TODO: sync.Pool
+			fnri := indicator & 0xe0
+			naluType := header & 0x1f
+			r.buf.WriteByte(fnri | naluType)
+		} else if r.buf == nil {
+			// Wait for the start of the next NALU.
+			break
+		}
+		r.buf.Write(payload[2:])
+		if end != 0 {
+			r.ch <- packet.NewSharedBuffer(r.buf.Bytes(), 1, nil)
+			r.buf = nil
+		}
+	default:
+		// Payload is a single NALU.
+		payload = copyBytes(payload)
+		r.ch <- packet.NewSharedBuffer(payload, 1, nil)
+	}
+	return nil
+}
+
+// See https://tools.ietf.org/html/rfc6184#section-5.7.1
+func appendSTAP(stap, nalu []byte) []byte {
+	if len(stap) == 0 {
+		// Initialize NALU of type STAP-A, with F and NRI set to 0.
+		stap = append(stap, naluTypeSTAP_A)
+	}
+
+	n := len(nalu)
+	stap = append(stap, byte(n>>8), byte(n))
+	stap = append(stap, nalu...)
+
+	// STAP-A forbidden bit is bitwise-OR of all forbidden bits.
+	stap[0] |= nalu[0] & 0x80
+
+	// STAP-A NRI value is maximum of all NRI values.
+	nri := nalu[0] & 0x60
+	stapNRI := stap[0] & 0x60
+	if nri > stapNRI {
+		stap[0] = (stap[0] &^ 0x60) | nri
+	}
+
+	return stap
+}
+
+// Split a STAP-A packet into individual NAL units.
+func splitSTAP(buf []byte) ([][]byte, error) {
+	var nalus [][]byte
+	p := packet.NewReader(buf)
+	p.Skip(1)
+	for p.Remaining() > 0 {
+		if err := p.CheckRemaining(2); err != nil {
+			return nil, err
+		}
+		n := p.ReadUint16()
+		if err := p.CheckRemaining(int(n)); err != nil {
+			return nil, err
+		}
+		nalus = append(nalus, p.ReadSlice(int(n)))
+	}
+	return nalus, nil
 }

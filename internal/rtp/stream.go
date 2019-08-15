@@ -40,16 +40,17 @@ type Stream struct {
 
 	session *Session
 
-	// RTP state for outgoing data streams.
+	// RTP state for outgoing data.
 	rtpOut *rtpWriter
 
-	// RTP state for incoming data streams.
+	// RTP state for incoming data.
 	rtpIn *rtpReader
 
-	// RTCP state for incoming control packets.
+	// RTCP state for outgoing control packets.
 	rtcpOut *rtcpWriter
 
-	// RTCP receive state
+	// RTCP state for incoming control packets.
+	//rtcpIn *rtcpReader
 }
 
 func newStream(session *Session, opts StreamOptions) *Stream {
@@ -64,6 +65,7 @@ func newStream(session *Session, opts StreamOptions) *Stream {
 		s.rtpIn = newRTPReader(opts.RemoteSSRC, session.readContext)
 	}
 	s.rtcpOut = newRTCPWriter(session.conn, opts.LocalSSRC, session.writeContext)
+	//s.rtcpIn = newRTCPReader(session.conn, opts.LocalSSRC, session.readContext)
 	return s
 }
 
@@ -77,6 +79,22 @@ func (s *Stream) Close() error {
 	}
 	s.rtpIn = nil
 	return nil
+}
+
+func (s *Stream) sendReceiverReport() error {
+	rr := &rtcpReceiverReport{
+		receiver: s.LocalSSRC,
+		reports: []rtcpReport{{
+			Source:       s.RemoteSSRC,
+			LastReceived: uint32(s.rtpIn.lastIndex),
+		}},
+	}
+
+	sdes := &rtcpSourceDescription{
+		ssrc: s.LocalSSRC,
+	}
+
+	return s.rtcpOut.writePackets(rr, sdes)
 }
 
 // TODO; rtpIn/rtcpIn consumers

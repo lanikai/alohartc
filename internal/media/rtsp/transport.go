@@ -1,33 +1,27 @@
+// +build rtsp
+
 package rtsp
 
 import (
-	"encoding/binary"
-	"encoding/hex"
 	"fmt"
 	"net"
 	"strings"
 )
 
 type Transport struct {
-	rtpPort  int
-	rtcpPort int
+	RTP  *net.UDPConn
+	RTCP *net.UDPConn
 
-	rtpConn  *net.UDPConn
-	rtcpConn *net.UDPConn
-
-	rtpServerAddr  *net.UDPAddr
-	rtcpServerAddr *net.UDPAddr
-
-	ssrc uint32
-	mode string
+	SSRC uint32
+	Mode string
 }
 
 func (tr *Transport) Close() error {
-	if tr.rtpConn != nil {
-		tr.rtpConn.Close()
+	if tr.RTP != nil {
+		tr.RTP.Close()
 	}
-	if tr.rtcpConn != nil {
-		tr.rtcpConn.Close()
+	if tr.RTCP != nil {
+		tr.RTCP.Close()
 	}
 	return nil
 }
@@ -39,41 +33,44 @@ func NewTransport() (*Transport, error) {
 	}
 
 	return &Transport{
-		rtpPort:  even.LocalAddr().(*net.UDPAddr).Port,
-		rtcpPort: odd.LocalAddr().(*net.UDPAddr).Port,
-		rtpConn:  even,
-		rtcpConn: odd,
+		RTP:  even,
+		RTCP: odd,
 	}, nil
 }
 
 func (tr *Transport) ClientHeader() string {
-	return fmt.Sprintf("RTP/AVP/UDP;unicast;client_port=%d-%d", tr.rtpPort, tr.rtcpPort)
+	rtpPort := getPort(tr.RTP.LocalAddr())
+	rtcpPort := getPort(tr.RTCP.LocalAddr())
+	return fmt.Sprintf("RTP/AVP/UDP;unicast;client_port=%d-%d", rtpPort, rtcpPort)
 }
 
 func (tr *Transport) Header() string {
 	s := tr.ClientHeader()
-	if tr.rtpServerAddr != nil {
-		s += fmt.Sprintf(";server_port=%d-%d", tr.rtpServerAddr.Port, tr.rtcpServerAddr.Port)
+
+	rtpServerPort := getPort(tr.RTP.RemoteAddr())
+	rtcpServerPort := getPort(tr.RTCP.RemoteAddr())
+	if rtpServerPort > 0 && rtcpServerPort > 0 {
+		s += fmt.Sprintf(";server_port=%d-%d", rtpServerPort, rtcpServerPort)
+	}
+	if tr.SSRC != 0 {
+		s += fmt.Sprintf(";ssrc=%08X", tr.SSRC)
+	}
+	if tr.Mode != "" {
+		s += ";mode=" + tr.Mode
 	}
 	return s
 }
 
-func (tr *Transport) ParseServerResponse(transportHeader string, serverIP net.IP) error {
-	fmt.Println(transportHeader)
-
+func (tr *Transport) parseServerResponse(transportHeader string, serverIP net.IP) error {
 	// See https://tools.ietf.org/html/rfc2326#section-12.39
 	var spec string
 	params := make(map[string]string)
-	for i, param := range strings.Split(transportHeader, ";") {
+	for i, s := range strings.Split(transportHeader, ";") {
 		if i == 0 {
-			spec = param
+			spec = s
 		} else {
-			kv := strings.SplitN(param, "=", 2)
-			if len(kv) == 2 {
-				params[kv[0]] = kv[1]
-			} else {
-				params[kv[0]] = ""
-			}
+			name, value := split2(s, '=')
+			params[name] = value
 		}
 	}
 
@@ -90,32 +87,42 @@ func (tr *Transport) ParseServerResponse(transportHeader string, serverIP net.IP
 	}
 
 	if serverPort, ok := params["server_port"]; ok {
-		evenOdd := strings.Split(serverPort, "-")
-		if len(evenOdd) != 2 {
+		// Parse server RTP-RTCP port.
+		rtpPort, rtcpPort := split2(serverPort, '-')
+		if rtcpPort == "" {
 			return fmt.Errorf("invalid server_port value: %s", serverPort)
 		}
-		var err error
-		tr.rtpServerAddr, err = net.ResolveUDPAddr("udp", source+":"+evenOdd[0])
+
+		rtpServerAddr, err := net.ResolveUDPAddr("udp4", source+":"+rtpPort)
 		if err != nil {
 			return err
 		}
-		tr.rtcpServerAddr, err = net.ResolveUDPAddr("udp", source+":"+evenOdd[1])
+		if tr.RTP, err = rebindUDP(tr.RTP, rtpServerAddr); err != nil {
+			return err
+		}
+
+		rtcpServerAddr, err := net.ResolveUDPAddr("udp4", source+":"+rtcpPort)
 		if err != nil {
+			return err
+		}
+		if tr.RTCP, err = rebindUDP(tr.RTCP, rtcpServerAddr); err != nil {
 			return err
 		}
 	}
 
-	if ssrc, ok := params["ssrc"]; ok {
-		buf, err := hex.DecodeString(ssrc)
-		if err != nil {
-			return err
-		}
-		tr.ssrc = binary.BigEndian.Uint32(buf)
-	}
-
-	tr.mode = strings.ToUpper(params["mode"])
+	fmt.Sscanf(params["ssrc"], "%x", &tr.SSRC)
+	tr.Mode = strings.ToUpper(params["mode"])
 
 	return nil
+}
+
+// Split a string into 2 parts, separated by c.
+func split2(s string, c byte) (string, string) {
+	i := strings.IndexByte(s, c)
+	if i < 0 {
+		return s, ""
+	}
+	return s[0:i], s[i+1:]
 }
 
 // Bind consecutive local UDP ports for RTP and RTCP.
@@ -157,4 +164,22 @@ func tryBindUDPPair() (even, odd *net.UDPConn, err error) {
 		conn.Close()
 	}
 	return
+}
+
+// Rebind a listening UDPConn to a remote address.
+func rebindUDP(c *net.UDPConn, raddr *net.UDPAddr) (*net.UDPConn, error) {
+	laddr := c.LocalAddr().(*net.UDPAddr)
+	c.Close()
+	return net.DialUDP("udp4", laddr, raddr)
+}
+
+func getPort(addr net.Addr) int {
+	switch a := addr.(type) {
+	case *net.UDPAddr:
+		return a.Port
+	case *net.TCPAddr:
+		return a.Port
+	default:
+		return 0
+	}
 }

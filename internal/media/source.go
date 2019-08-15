@@ -2,6 +2,8 @@ package media
 
 import (
 	"sync"
+
+	"github.com/lanikai/alohartc/internal/packet"
 )
 
 /*
@@ -9,8 +11,8 @@ A Source is a stream of media data that can have multiple consumers. The media
 data is chunked into packets (which may represent discrete video frames, or
 spans of multiple audio frames). Consumer functions request a "receiver"
 channel, to which the Source sends packets. Each packet is delivered as a
-*SharedBuffer instance, which the consuming function must process and then
-release.
+*packet.SharedBuffer instance, which the consuming function must process and
+then release.
 
 The Source interface represents only the consumer-facing side of a media stream;
 it makes no assumptions about how the data is produced. Nor does it describe the
@@ -40,17 +42,17 @@ type Source interface {
 	//
 	// Callers must ensure that the receiver is removed when processing is
 	// complete (e.g. a defer statement immediately following AddReceiver()).
-	AddReceiver(capacity int) (r <-chan *SharedBuffer)
+	AddReceiver(capacity int) (r <-chan *packet.SharedBuffer)
 
 	// RemoveReceiver tells the source to stop passing data buffers to r. Upon
 	// return, it is guaranteed r will not receive any more data.
-	RemoveReceiver(r <-chan *SharedBuffer)
+	RemoveReceiver(r <-chan *packet.SharedBuffer)
 }
 
 // An implementation of Source that can be embedded into a struct.
 type baseSource struct {
 	sync.Mutex
-	receivers []chan *SharedBuffer
+	receivers []chan *packet.SharedBuffer
 
 	// start is called when the first receiver is added.
 	start func()
@@ -59,7 +61,7 @@ type baseSource struct {
 	stop func()
 }
 
-func (s *baseSource) AddReceiver(capacity int) <-chan *SharedBuffer {
+func (s *baseSource) AddReceiver(capacity int) <-chan *packet.SharedBuffer {
 	s.Lock()
 	defer s.Unlock()
 
@@ -67,7 +69,7 @@ func (s *baseSource) AddReceiver(capacity int) <-chan *SharedBuffer {
 		panic("media.Source: receiver capacity must be nonzero")
 	}
 
-	r := make(chan *SharedBuffer, capacity)
+	r := make(chan *packet.SharedBuffer, capacity)
 	s.receivers = append(s.receivers, r)
 	if s.start != nil && len(s.receivers) == 1 {
 		go s.start()
@@ -75,7 +77,7 @@ func (s *baseSource) AddReceiver(capacity int) <-chan *SharedBuffer {
 	return r
 }
 
-func (s *baseSource) RemoveReceiver(r <-chan *SharedBuffer) {
+func (s *baseSource) RemoveReceiver(r <-chan *packet.SharedBuffer) {
 	s.Lock()
 	defer s.Unlock()
 
@@ -97,20 +99,12 @@ func (s *baseSource) RemoveReceiver(r <-chan *SharedBuffer) {
 	}
 }
 
-func closeAndDrain(r chan *SharedBuffer) {
-	close(r)
-	for buf := range r {
-		buf.Release()
-	}
-}
-
-// TODO: Should this be exported?
-func (s *baseSource) putBuffer(data []byte, done func()) {
+func (s *baseSource) put(buf *packet.SharedBuffer) {
 	s.Lock()
 	defer s.Unlock()
 
-	buf := NewSharedBuffer(data, len(s.receivers), done)
 	for _, r := range s.receivers {
+		buf.Hold()
 		select {
 		case r <- buf:
 		default:
@@ -118,4 +112,9 @@ func (s *baseSource) putBuffer(data []byte, done func()) {
 			buf.Release()
 		}
 	}
+}
+
+// TODO: Should this be exported?
+func (s *baseSource) putBuffer(data []byte, done func()) {
+	s.put(packet.NewSharedBuffer(data, 0, done))
 }
