@@ -314,6 +314,38 @@ func (item *sdesItem) readFrom(r *packet.Reader) {
 	}
 }
 
+type rtcpGoodbye struct {
+	ssrc   uint32
+	reason string
+}
+
+func (bye *rtcpGoodbye) writeTo(w *packet.Writer) error {
+	h := rtcpHeader{
+		packetType: rtcpGoodbyeType,
+		count:      1,
+		length:     1 + (len(bye.reason)+3)/4,
+	}
+	if err := h.writeTo(w); err != nil {
+		return err
+	}
+
+	w.WriteUint32(bye.ssrc)
+	if bye.reason != "" {
+		w.WriteByte(byte(len(bye.reason)))
+		w.WriteString(bye.reason)
+		w.Align(4)
+	}
+	return nil
+}
+
+func (p *rtcpGoodbye) readFrom(r *packet.Reader, h *rtcpHeader) error {
+	if err := r.CheckRemaining(4); err != nil {
+		return err
+	}
+	p.ssrc = r.ReadUint32()
+	return nil
+}
+
 // rtcpWriter maintains state necessary for sending RTCP packets.
 type rtcpWriter struct {
 	conn net.Conn
