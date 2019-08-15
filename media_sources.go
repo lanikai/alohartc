@@ -19,14 +19,9 @@ import (
 //   data which must be encoded (e.g. ALSA soundard), V4L2 YUYV.
 // * WebRTC should be able to actuate source (e.g. adjust bitrate, adjust
 //   framerate, force and IDR)
-// * Sources must be able to have multiple subscribers
 
-// MediaSourcer is the interface used for providers of media, such as
-// microphones and cameras.
-//
-// Multiple readers must be supported and each reader must receive a copy of
-// source content from the time they join. How much content is buffered if
-// a reader fails to read in time is left to the implementation.
+// MediaSourcer is the interface for providers of media, such as microphones
+// cameras.
 type MediaSourcer interface {
 	Subscriber
 	io.Closer

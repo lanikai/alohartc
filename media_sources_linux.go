@@ -189,7 +189,7 @@ func (as *ALSAAudioSource) capture() {
 			return
 		default:
 			// Capture
-			out := C.malloc(C.uint(bytesPerSample * numChannels * numFrames))
+			out := C.malloc(C.size_t(bytesPerSample * numChannels * numFrames))
 			n := C.snd_pcm_readi(
 				as.handle,
 				unsafe.Pointer(out),

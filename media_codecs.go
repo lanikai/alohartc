@@ -15,8 +15,9 @@ package alohartc
 // #include <stdlib.h>
 // #include <opus/opus.h>
 //
-// int set_lowest_complexity(OpusEncoder *st) {
-//   return opus_encoder_ctl(st, OPUS_SET_COMPLEXITY(0));
+// // Cgo wrapper around OPUS_SET_COMPLEXITY macro
+// int opus_set_complexity(OpusEncoder *st, opus_int32 n) {
+//   return opus_encoder_ctl(st, OPUS_SET_COMPLEXITY(n));
 // }
 import "C"
 import (
@@ -101,7 +102,7 @@ func (d *OpusDecoder) Decode(b []byte) ([]byte, error) {
 
 	// Decode
 	maxFrameSize := (opusMaxDurationMs * opusSampleRate / 1000)
-	out := C.malloc(opusBytesPerSample * opusNumChannels * C.uint(maxFrameSize))
+	out := C.malloc(C.size_t(opusBytesPerSample * opusNumChannels * maxFrameSize))
 	defer C.free(unsafe.Pointer(out))
 	if nil == b {
 		frameSize = C.opus_decode(
@@ -161,7 +162,8 @@ func NewOpusEncoder() (*OpusEncoder, error) {
 	}
 
 	// Set lowest complexity (for best embedded performance)
-	if err := C.set_lowest_complexity(e.handle); err < 0 {
+	if err := C.opus_set_complexity(e.handle, C.opus_int32(0)); err < 0 {
+		C.opus_encoder_destroy(e.handle)
 		return nil, errors.New(C.GoString(C.opus_strerror(err)))
 	}
 
@@ -187,7 +189,7 @@ func (e *OpusEncoder) Encode(b []byte) ([]byte, error) {
 	// Encode
 	in := C.CBytes(b)
 	defer C.free(unsafe.Pointer(in))
-	out := C.malloc(opusMaxDataBytes)
+	out := C.malloc(C.size_t(opusMaxDataBytes))
 	defer C.free(unsafe.Pointer(out))
 	n := C.opus_encode(
 		e.handle,
