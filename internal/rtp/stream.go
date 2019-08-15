@@ -70,13 +70,8 @@ func newStream(session *Session, opts StreamOptions) *Stream {
 }
 
 func (s *Stream) Close() error {
-	if s.rtpOut != nil {
-		// TODO: Send RTCP Goodbye packet.
-		//if err := s.rtcpOut.Goodbye(); err != nil {
-		//	return err
-		//}
-		s.rtpOut = nil
-	}
+	s.Goodbye("stream closed")
+	s.rtpOut = nil
 	s.rtpIn = nil
 	return nil
 }
@@ -87,14 +82,30 @@ func (s *Stream) sendReceiverReport() error {
 		reports: []rtcpReport{{
 			Source:       s.RemoteSSRC,
 			LastReceived: uint32(s.rtpIn.lastIndex),
+			// TODO: Jitter, arrival delay, etc.
 		}},
 	}
-
 	sdes := &rtcpSourceDescription{
-		ssrc: s.LocalSSRC,
+		ssrc:  s.LocalSSRC,
+		cname: s.LocalCNAME,
 	}
-
 	return s.rtcpOut.writePackets(rr, sdes)
+}
+
+// Send RTCP Goodbye packet to inform the remote peer that we're leaving.
+func (s *Stream) Goodbye(reason string) error {
+	rr := &rtcpReceiverReport{
+		receiver: s.LocalSSRC,
+	}
+	sdes := &rtcpSourceDescription{
+		ssrc:  s.LocalSSRC,
+		cname: s.LocalCNAME,
+	}
+	bye := &rtcpGoodbye{
+		ssrc:   s.LocalSSRC,
+		reason: reason,
+	}
+	return s.rtcpOut.writePackets(rr, sdes, bye)
 }
 
 // TODO; rtpIn/rtcpIn consumers
