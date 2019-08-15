@@ -102,7 +102,7 @@ type rtpWriter struct {
 	buf []byte
 
 	// SRTP cryptographic context.
-	crypto cryptoContext
+	crypto *cryptoContext
 
 	// Prevent simultaneous writes from multiple goroutines.
 	sync.Mutex
@@ -114,7 +114,7 @@ func newRTPWriter(conn net.Conn, ssrc uint32, crypto *cryptoContext) *rtpWriter 
 	w.ssrc = ssrc
 	w.sequenceStart = 1        // TODO: Randomize initial sequence number.
 	w.buf = make([]byte, 1500) // TODO: Determine from MTU
-	w.crypto = *crypto         // By value so that we have our own copy
+	w.crypto = crypto
 	return w
 }
 
@@ -139,8 +139,10 @@ func (w *rtpWriter) writePacket(payloadType byte, marker bool, timestamp uint32,
 		return err
 	}
 
-	if err := w.crypto.encryptAndSignRTP(p, &hdr, index); err != nil {
-		return err
+	if w.crypto != nil {
+		if err := w.crypto.encryptAndSignRTP(p, &hdr, index); err != nil {
+			return err
+		}
 	}
 
 	w.count += 1
@@ -185,29 +187,24 @@ type rtpReader struct {
 	totalBytes uint64
 
 	// SRTP cryptographic context.
-	crypto cryptoContext
+	crypto *cryptoContext
 
-	// Payload consumer. This function should return quickly to avoid blocking
-	// the RTP read loop. If it needs the payload bytes for longer than the
-	// lifetime of the function call, it *must* make a copy.
-	consumer func(payload []byte, timestamp uint32, marker bool) error
+	// Callback for RTP packets. This function should return quickly to avoid
+	// blocking the RTP read loop. If it needs the payload bytes for longer than
+	// the lifetime of the function call, it *must* make a copy.
+	handler func(hdr rtpHeader, payload []byte) error
 }
 
 func newRTPReader(ssrc uint32, crypto *cryptoContext) *rtpReader {
 	r := new(rtpReader)
 	r.ssrc = ssrc
-	r.crypto = *crypto // By value so that we have our own copy
+	r.crypto = crypto
 	return r
 }
 
 // Read and process a single RTP packet. buf contains the serialized packet,
 // which will be decrypted in place.
 func (r *rtpReader) readPacket(buf []byte) error {
-	if r == nil || r.consumer == nil {
-		// No point in processing the packet if nobody's interested.
-		return nil
-	}
-
 	p := packet.NewReader(buf)
 	var hdr rtpHeader
 	if err := hdr.readFrom(p); err != nil {
@@ -216,16 +213,24 @@ func (r *rtpReader) readPacket(buf []byte) error {
 
 	index := r.updateIndex(hdr.sequence)
 
-	payload, err := r.crypto.verifyAndDecryptRTP(buf, &hdr, index)
-	if err != nil {
-		return err
+	var payload []byte
+	if r.crypto != nil {
+		var err error
+		if payload, err = r.crypto.verifyAndDecryptRTP(buf, &hdr, index); err != nil {
+			return err
+		}
+	} else {
+		payload = buf[hdr.length():]
 	}
 
 	r.count += 1
 	r.totalBytes += uint64(len(payload))
 
-	r.consumer(payload, hdr.timestamp, hdr.marker)
-	return nil
+	if r.handler == nil {
+		log.Warn("received RTP packet, but no handler registered")
+		return nil
+	}
+	return r.handler(hdr, payload)
 }
 
 func (r *rtpReader) updateIndex(sequence uint16) uint64 {

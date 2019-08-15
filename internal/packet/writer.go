@@ -50,6 +50,31 @@ func (w *Writer) WriteSlice(p []byte) error {
 	return nil
 }
 
+func (w *Writer) WriteString(s string) error {
+	if err := w.CheckCapacity(len(s)); err != nil {
+		return err
+	}
+	w.offset += copy(w.buffer[w.offset:], s)
+	return nil
+}
+
+func (w *Writer) ZeroPad(n int) {
+	for i := 0; i < n; i++ {
+		w.WriteByte(0)
+	}
+}
+
+// Pad with zeros up to the next multiple of width, e.g. Align(4) adds zero
+// bytes until the next 4-byte boundary.
+func (w *Writer) Align(width int) {
+	boundary := width * ((w.offset + width - 1) / width)
+	for w.offset < boundary {
+		w.buffer[w.offset] = 0
+		w.offset++
+	}
+
+}
+
 // Return the number of bytes written so far.
 func (w *Writer) Length() int {
 	return w.offset

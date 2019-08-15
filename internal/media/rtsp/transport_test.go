@@ -1,7 +1,8 @@
+// +build rtsp
+
 package rtsp
 
 import (
-	//"net"
 	"testing"
 )
 

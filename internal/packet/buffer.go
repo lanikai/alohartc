@@ -1,4 +1,4 @@
-package media
+package packet
 
 import "sync/atomic"
 
@@ -63,8 +63,10 @@ func (buf *SharedBuffer) Release() {
 		return
 	}
 	newCount := atomic.AddInt32(&buf.count, -1)
-	if newCount == 0 && buf.done != nil {
-		buf.done()
+	if newCount == 0 {
+		if buf.done != nil {
+			buf.done()
+		}
 		buf.data = nil
 	}
 }

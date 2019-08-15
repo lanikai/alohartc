@@ -1,3 +1,5 @@
+// +build rtsp
+
 package rtsp
 
 import (
@@ -44,16 +46,23 @@ func TestLocalServer(t *testing.T) {
 	}
 	t.Log("SDP:", sdp)
 
-	videoURI := sdp.Media[0].GetAttr("control")
+	controlURI := sdp.Media[0].GetAttr("control")
 
 	// SETUP
-	tr, sessionID, err := cli.Setup(videoURI)
+	tr, sessionID, err := cli.Setup(controlURI)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer tr.Close()
 	t.Log("Transport:", tr.Header())
 	t.Log("Session ID:", sessionID)
+
+	// PLAY
+	rtpInfo, err := cli.Play(testURI, sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Log("RTP-Info:", rtpInfo)
 
 	// GET_PARAMETER
 	params, err := cli.GetParameter(testURI)

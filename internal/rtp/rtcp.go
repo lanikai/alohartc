@@ -32,7 +32,7 @@ const (
 //   |V=2|P|  count  |  packet type  |             length            |
 //   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 type rtcpHeader struct {
-	padding    bool
+	padding    bool // unused
 	count      int
 	packetType byte
 	length     int // length of RTCP packet in 32-bit words minus one
@@ -62,44 +62,57 @@ func (h *rtcpHeader) writeTo(w *packet.Writer) error {
 }
 
 type rtcpPacket interface {
-	// Write the RTCP packet to the provided writer.
+	// Serialize.
 	writeTo(w *packet.Writer) error
+
+	// Deserialize.
+	readFrom(r *packet.Reader, h *rtcpHeader) error
 }
 
-// A compound RTCP packet consists of one or more RTCP packets, concatenated
-// into a single datagram. See https://tools.ietf.org/html/rfc3550#section-6.1.
+// A compound RTCP packet consists of one or more RTCP packets, each aligned to
+// 4-byte boundaries and concatenated into a single datagram.
+// See https://tools.ietf.org/html/rfc3550#section-6.1.
 type rtcpCompoundPacket struct {
 	packets []rtcpPacket
 }
 
-func (cp *rtcpCompoundPacket) readFrom(r *packet.Reader) error {
+func (cp *rtcpCompoundPacket) readFrom(r *packet.Reader, h *rtcpHeader) error {
 	if err := r.CheckRemaining(rtcpHeaderSize); err != nil {
 		return errors.Errorf("short buffer: %v", err)
 	}
 
-	cp.packets = nil
+	if cp.packets != nil {
+		cp.packets = cp.packets[:0]
+	}
 
-	var h rtcpHeader
+	var p rtcpPacket
 	for {
+		switch h.packetType {
+		case rtcpReceiverReportType:
+			p = new(rtcpReceiverReport)
+		case rtcpSourceDescriptionType:
+			p = new(rtcpSourceDescription)
+		default:
+			log.Debug("Skipping unimplemented RTCP packet type: %d", h.packetType)
+			r.Skip(4 * h.length)
+			continue
+		}
+
+		if err := p.readFrom(r, h); err != nil {
+			return err
+		}
+		cp.packets = append(cp.packets, p)
+
+		if r.Remaining() == 0 {
+			break
+		}
+
+		// Read next packet header.
 		if err := h.readFrom(r); err != nil {
 			return err
 		}
-
 		if err := r.CheckRemaining(4 * h.length); err != nil {
 			return errors.Errorf("short RTCP packet: %v", err)
-		}
-
-		switch h.packetType {
-		case rtcpReceiverReportType:
-			if 4*h.length != 4+h.count*rtcpReportSize {
-				return errors.Errorf("invalid Receiver Report: length = %d, count = %d", h.length, h.count)
-			}
-			p := new(rtcpReceiverReport)
-			p.readFrom(r, h.count)
-			cp.packets = append(cp.packets, p)
-		default:
-			log.Info("Skipping unimplemented RTCP packet type: %d", h.packetType)
-			r.Skip(4 * h.length)
 		}
 	}
 
@@ -161,9 +174,11 @@ func (report *rtcpReport) readFrom(r *packet.Reader) {
 	report.LastSenderReportDelay = r.ReadUint32()
 }
 
+// Receiver Report (RR) RTCP packet.
+// See https://tools.ietf.org/html/rfc3550#section-6.4.2
 type rtcpReceiverReport struct {
-	sender  uint32
-	reports []rtcpReport
+	receiver uint32 // SSRC of receiver who sent the report
+	reports  []rtcpReport
 }
 
 func (p *rtcpReceiverReport) writeTo(w *packet.Writer) error {
@@ -176,22 +191,126 @@ func (p *rtcpReceiverReport) writeTo(w *packet.Writer) error {
 		return err
 	}
 
-	if err := w.CheckCapacity(4 + len(p.reports)*rtcpReportSize); err != nil {
+	if err := w.CheckCapacity(4 * h.length); err != nil {
 		return errors.Errorf("insufficient buffer for ReceiverReport: %v", err)
 	}
-	w.WriteUint32(uint32(p.sender))
+	w.WriteUint32(uint32(p.receiver))
 	for i := range p.reports {
 		p.reports[i].writeTo(w)
 	}
 	return nil
 }
 
-func (p *rtcpReceiverReport) readFrom(r *packet.Reader, count int) {
-	p.sender = r.ReadUint32()
+func (p *rtcpReceiverReport) readFrom(r *packet.Reader, h *rtcpHeader) error {
+	if 4*h.length != 4+h.count*rtcpReportSize {
+		return errors.Errorf("invalid Receiver Report: length = %d, count = %d", h.length, h.count)
+	}
+
+	p.receiver = r.ReadUint32()
 	var report rtcpReport
-	for i := 0; i < count; i++ {
+	for i := 0; i < h.count; i++ {
 		report.readFrom(r)
 		p.reports = append(p.reports, report)
+	}
+	return nil
+}
+
+// Source Description (SDES) RTCP packet.
+// See https://tools.ietf.org/html/rfc3550#section-6.5
+type rtcpSourceDescription struct {
+	ssrc  uint32
+	cname string
+	// TODO: Are any other SDES items needed?
+}
+
+func (sdes *rtcpSourceDescription) writeTo(w *packet.Writer) error {
+	items := []sdesItem{
+		{sdesItemCNAME, sdes.cname},
+		{sdesItemEnd, ""},
+	}
+	totalSize := 0
+	for _, item := range items {
+		totalSize += item.size()
+	}
+
+	h := rtcpHeader{
+		packetType: rtcpSourceDescriptionType,
+		count:      1,
+		length:     1 + (totalSize+3)/4,
+	}
+	if err := h.writeTo(w); err != nil {
+		return err
+	}
+
+	if err := w.CheckCapacity(4 * h.length); err != nil {
+		return errors.Errorf("insufficient buffer for SDES packet: %v", err)
+	}
+
+	w.WriteUint32(sdes.ssrc)
+	for _, item := range items {
+		item.writeTo(w)
+	}
+
+	return nil
+}
+
+func (sdes *rtcpSourceDescription) readFrom(r *packet.Reader, h *rtcpHeader) error {
+	if h.count != 1 || h.length < 1 {
+		return errors.Errorf("invalid SDES packet header: %#v", h)
+	}
+	sdes.ssrc = r.ReadUint32()
+
+	var item sdesItem
+	for r.Remaining() > 0 {
+		item.readFrom(r)
+		switch item.what {
+		case sdesItemEnd:
+			return nil
+		case sdesItemCNAME:
+			sdes.cname = item.text
+		default:
+			log.Trace(4, "Ignoring unimplemented SDES item type: %d", item.what)
+		}
+	}
+	return nil
+}
+
+const (
+	sdesItemEnd   = 0
+	sdesItemCNAME = 1
+)
+
+type sdesItem struct {
+	what byte
+	text string
+}
+
+// Number of bytes occupied by this SDES item.
+func (item *sdesItem) size() int {
+	if item.what == sdesItemEnd {
+		return 1
+	}
+	return 2 + len(item.text)
+}
+
+func (item *sdesItem) writeTo(w *packet.Writer) {
+	w.WriteByte(item.what)
+	if item.what == sdesItemEnd {
+		w.Align(4)
+	} else {
+		w.WriteByte(uint8(len(item.text)))
+		w.WriteString(item.text)
+	}
+}
+
+func (item *sdesItem) readFrom(r *packet.Reader) {
+	item.what = r.ReadByte()
+	if item.what == sdesItemEnd {
+		// Discard zeros up to the next 32-bit (i.e. 4-byte) boundary.
+		r.Align(4)
+	} else {
+		length := int(r.ReadByte())
+		item.text = r.ReadString(length)
 	}
 }
 
@@ -210,7 +329,7 @@ type rtcpWriter struct {
 	buf []byte
 
 	// SRTP cryptographic context.
-	crypto cryptoContext
+	crypto *cryptoContext
 
 	// Prevent simultaneous writes from multiple goroutines.
 	sync.Mutex
@@ -221,7 +340,7 @@ func newRTCPWriter(conn net.Conn, ssrc uint32, crypto *cryptoContext) *rtcpWrite
 	w.conn = conn
 	w.ssrc = ssrc
 	w.buf = make([]byte, 1500) // TODO: Determine from MTU
-	w.crypto = *crypto         // By value so that we have our own copy
+	w.crypto = crypto          // By value so that we have our own copy
 	return w
 }
 
@@ -239,8 +358,10 @@ func (w *rtcpWriter) writePacket(p rtcpPacket) error {
 	}
 
 	index := w.index()
-	if err := w.crypto.encryptAndSignRTCP(b, index); err != nil {
-		return err
+	if w.crypto != nil {
+		if err := w.crypto.encryptAndSignRTCP(b, index); err != nil {
+			return err
+		}
 	}
 
 	w.count += 1
@@ -248,4 +369,16 @@ func (w *rtcpWriter) writePacket(p rtcpPacket) error {
 
 	_, err := w.conn.Write(b.Bytes())
 	return err
+}
+
+func (w *rtcpWriter) writePackets(p ...rtcpPacket) error {
+	switch len(p) {
+	case 0:
+		return nil
+	case 1:
+		return w.writePacket(p[0])
+	default:
+		cp := &rtcpCompoundPacket{p}
+		return w.writePacket(cp)
+	}
 }

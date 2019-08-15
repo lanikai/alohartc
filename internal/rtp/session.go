@@ -23,18 +23,20 @@ const (
 	defaultMaxPacketSize = 512
 )
 
+// A Session represents an established RTP/RTCP connection to a remote peer. It
+// contains one or more streams, each represented by their own SSRC.
 type Session struct {
 	SessionOptions
 
 	conn net.Conn
 
-	// SRTP cryptographic contexts.
-	readContext  *cryptoContext
-	writeContext *cryptoContext
-
 	// RTP streams in this session, keyed by SSRC. Every stream appears twice in
 	// the map, once for the local SSRC and once for the remote SSRC.
 	streams map[uint32]*Stream
+
+	// SRTP cryptographic contexts.
+	readContext  *cryptoContext
+	writeContext *cryptoContext
 }
 
 func NewSession(conn net.Conn, opts SessionOptions) *Session {
@@ -42,13 +44,18 @@ func NewSession(conn net.Conn, opts SessionOptions) *Session {
 		opts.MaxPacketSize = defaultMaxPacketSize
 	}
 
-	return &Session{
-		SessionOptions: opts,
-		conn:           conn,
-		readContext:    newCryptoContext(opts.ReadKey, opts.ReadSalt),
-		writeContext:   newCryptoContext(opts.WriteKey, opts.WriteSalt),
-		streams:        make(map[uint32]*Stream),
+	s := new(Session)
+	s.SessionOptions = opts
+	s.conn = conn
+	s.streams = make(map[uint32]*Stream)
+	if opts.ReadKey != nil && opts.ReadSalt != nil {
+		s.readContext = newCryptoContext(opts.ReadKey, opts.ReadSalt)
 	}
+	if opts.WriteKey != nil && opts.WriteSalt != nil {
+		s.writeContext = newCryptoContext(opts.WriteKey, opts.WriteSalt)
+	}
+	go s.readLoop()
+	return s
 }
 
 func (s *Session) Close() error {
@@ -68,10 +75,6 @@ func (s *Session) AddStream(opts StreamOptions) *Stream {
 func (s *Session) RemoveStream(stream *Stream) {
 	delete(s.streams, stream.LocalSSRC)
 	delete(s.streams, stream.RemoteSSRC)
-}
-
-func (s *Session) Start() {
-	go s.readLoop()
 }
 
 // Returns on read error or when the session is closed.
@@ -97,7 +100,7 @@ func (s *Session) readLoop() {
 
 		stream := s.streams[ssrc]
 		if stream == nil {
-			log.Warn("read RTP: unknown SSRC %02x", ssrc)
+			log.Debug("read RTP: unknown SSRC %02x", ssrc)
 			continue
 		}
 

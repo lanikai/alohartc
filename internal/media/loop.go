@@ -21,7 +21,7 @@ type singletonLoop struct {
 	// Votes in favor of running the loop.
 	votes int
 
-	// Closed when stop() is requested.
+	// Closed when stop() is requested, to trigger run loop exit.
 	quit chan struct{}
 
 	// Closed when run loop actually terminates.
@@ -61,29 +61,29 @@ func (loop *singletonLoop) start() {
 	}()
 }
 
-func (loop *singletonLoop) assertRunning() {
-	if loop.quit == nil || loop.terminated == nil {
-		panic("singletonLoop: not running")
-	}
-}
-
 func (loop *singletonLoop) stop() {
 	loop.Lock()
 	defer loop.Unlock()
 
-	loop.votes--
+	loop.assertRunning()
 
+	loop.votes--
 	if loop.votes < 0 {
 		panic("singletonLoop: negative vote count")
-	} else if loop.votes > 0 {
-		loop.assertRunning()
-		return
+	}
+	if loop.votes == 0 {
+		log.Debug("Stopping singleton loop: %v", loop.run)
+		close(loop.quit)
+		<-loop.terminated
+
+		loop.quit = nil
+		loop.terminated = nil
 	}
 
-	log.Debug("Stopping singleton loop: %v", loop.run)
-	close(loop.quit)
-	<-loop.terminated
+}
 
-	loop.quit = nil
-	loop.terminated = nil
+func (loop *singletonLoop) assertRunning() {
+	if loop.quit == nil || loop.terminated == nil {
+		panic("singletonLoop: not running")
+	}
 }

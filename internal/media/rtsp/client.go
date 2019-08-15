@@ -1,3 +1,5 @@
+// +build rtsp
+
 package rtsp
 
 import (
@@ -9,6 +11,7 @@ import (
 	"net"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/lanikai/alohartc/internal/sdp"
 )
@@ -22,6 +25,8 @@ type Client struct {
 
 	// Monotonically increasing request sequence number.
 	cseq int
+
+	sync.Mutex
 }
 
 func Dial(address string) (*Client, error) {
@@ -31,7 +36,7 @@ func Dial(address string) (*Client, error) {
 func DialContext(ctx context.Context, address string) (*Client, error) {
 	// Connect to RTSP server.
 	var dialer net.Dialer
-	conn, err := dialer.DialContext(ctx, "tcp", address)
+	conn, err := dialer.DialContext(ctx, "tcp4", address)
 	if err != nil {
 		return nil, err
 	}
@@ -64,6 +69,9 @@ func (f *RequestFailure) Error() string {
 
 // Sends a request to the RTSP server, and parses the response.
 func (cli *Client) Request(method, uri string, headers HeaderMap) (*Response, error) {
+	cli.Lock()
+	defer cli.Unlock()
+
 	cli.cseq++
 
 	buf := &bytes.Buffer{}
@@ -142,13 +150,14 @@ func (cli *Client) Request(method, uri string, headers HeaderMap) (*Response, er
 	return resp, err
 }
 
-// Send an OPTIONS request, and parse the response.
+// Send an OPTIONS request, and parse the response from the Public header..
 func (cli *Client) Options() ([]string, error) {
 	resp, err := cli.Request("OPTIONS", "*", nil)
 	if err != nil {
 		return nil, err
 	}
 
+	// See https://tools.ietf.org/html/rfc2068#section-14.35
 	public := resp.Headers["Public"]
 	options := strings.Split(public, ",")
 	for i := range options {
@@ -186,16 +195,39 @@ func (cli *Client) Setup(uri string) (*Transport, string, error) {
 	}
 
 	serverIP := cli.conn.RemoteAddr().(*net.TCPAddr).IP
-	tr.ParseServerResponse(resp.Headers["Transport"], serverIP)
+	tr.parseServerResponse(resp.Headers["Transport"], serverIP)
 
+	// See https://tools.ietf.org/html/rfc2326#section-12.37
 	sessionID := strings.Split(resp.Headers["Session"], ";")[0]
+
 	return tr, sessionID, nil
+}
+
+func (cli *Client) Play(uri, sessionID string) (rtpInfo string, err error) {
+	resp, err := cli.Request("PLAY", uri, HeaderMap{
+		"Session": sessionID,
+	})
+	if err != nil {
+		return
+	}
+
+	rtpInfo = resp.Headers["RTP-Info"]
+	return
+}
+
+func (cli *Client) Pause(uri, session string) error {
+	_, err := cli.Request("PAUSE", uri, HeaderMap{
+		"Session": session,
+	})
+	return err
 }
 
 // Send a GET_PARAMETER request, and return the response.
 // TODO: What should the request body be?
-func (cli *Client) GetParameter(uri string) (string, error) {
-	resp, err := cli.Request("GET_PARAMETER", uri, nil)
+func (cli *Client) GetParameter(uri, session string) (string, error) {
+	resp, err := cli.Request("GET_PARAMETER", uri, HeaderMap{
+		"Session": session,
+	})
 	if err != nil {
 		return "", err
 	}
