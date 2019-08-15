@@ -7,6 +7,8 @@ import (
 	"io"
 	"log"
 	"os"
+	"os/signal"
+	"runtime/pprof"
 	"strings"
 	"time"
 
@@ -32,6 +34,9 @@ func version() {
 var audioSource media.AudioSource
 var videoSource media.VideoSource
 
+// Flags
+var flagCpuProfile = flag.String("cpuprofile", "", "write cpu profile to file")
+
 func main() {
 	// Define and parse optional flags
 	input := flag.String("i", "/dev/video0", "video input ('-' for stdin)")
@@ -39,6 +44,26 @@ func main() {
 	width := flag.Int("width", 1280, "set video width")
 	height := flag.Int("height", 720, "set video height")
 	flag.Parse()
+
+	// Profiling (see https://blog.golang.org/profiling-go-programs)
+	if *flagCpuProfile != "" {
+		f, err := os.Create(*flagCpuProfile)
+		if err != nil {
+			log.Fatal(err)
+		}
+		pprof.StartCPUProfile(f)
+	}
+
+	// Stop profiling on ctrl-c
+	c := make(chan os.Signal)
+	signal.Notify(c, os.Interrupt)
+	go func(chan os.Signal) {
+		select {
+		case <-c:
+			pprof.StopCPUProfile()
+			os.Exit(0)
+		}
+	}(c)
 
 	// Always print version information
 	version()

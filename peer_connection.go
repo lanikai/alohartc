@@ -555,7 +555,8 @@ func (pc *PeerConnection) Stream() error {
 			// read next audio packet (opus sends one frame per packet)
 			n, err := sess.Read(audioBuffer)
 			if err != nil {
-				log.Fatal(err)
+				log.Println(err)
+				break
 			}
 
 			// decode packet

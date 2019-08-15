@@ -14,6 +14,10 @@ package alohartc
 // #cgo pkg-config: opus
 // #include <stdlib.h>
 // #include <opus/opus.h>
+//
+// int set_lowest_complexity(OpusEncoder *st) {
+//   return opus_encoder_ctl(st, OPUS_SET_COMPLEXITY(0));
+// }
 import "C"
 import (
 	"encoding/binary"
@@ -153,6 +157,11 @@ func NewOpusEncoder() (*OpusEncoder, error) {
 		&err,
 	)
 	if err < 0 {
+		return nil, errors.New(C.GoString(C.opus_strerror(err)))
+	}
+
+	// Set lowest complexity (for best embedded performance)
+	if err := C.set_lowest_complexity(e.handle); err < 0 {
 		return nil, errors.New(C.GoString(C.opus_strerror(err)))
 	}
 
