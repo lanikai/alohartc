@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/lanikai/alohartc/internal/media"
-	"github.com/lanikai/alohartc/internal/packet"
 	"github.com/lanikai/alohartc/internal/rtp"
 )
 
@@ -47,21 +46,20 @@ func Open(uri string) (media.VideoSource, error) {
 	video := &rtspVideoSource{}
 	video.Flow.Start = func() {
 		video.quit = make(chan struct{})
-		go videoStream.ReceiveVideo(video.quit, func(buf *packet.SharedBuffer) error {
-			video.Put(buf)
-			return nil
-		})
+		go videoStream.ReceiveVideo(video.quit, video.Put)
 		cli.Play(videoURI, sessionID)
-		for {
-			select {
-			case <-video.quit:
-				cli.Pause(videoURI, sessionID)
-				return
-			case <-time.After(10 * time.Second):
-				// Send keep-alive.
-				cli.GetParameter(uri, sessionID)
+		go func() {
+			for {
+				select {
+				case <-video.quit:
+					cli.Pause(videoURI, sessionID)
+					return
+				case <-time.After(10 * time.Second):
+					// Send keep-alive.
+					cli.GetParameter(uri, sessionID)
+				}
 			}
-		}
+		}()
 	}
 	video.Flow.Stop = func() {
 		close(video.quit)

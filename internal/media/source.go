@@ -1,18 +1,18 @@
 package media
 
 import (
-	"sync"
-
 	"github.com/lanikai/alohartc/internal/packet"
 )
 
 /*
 A Source is a stream of media data that can have multiple consumers. The media
 data is chunked into packets (which may represent discrete video frames, or
-spans of multiple audio frames). Consumer functions request a "receiver"
-channel, to which the Source sends packets. Each packet is delivered as a
-*packet.SharedBuffer instance, which the consuming function must process and
-then release.
+spans of multiple audio frames). Consumer functions register a Receiver, to
+which the Source sends packets. Each packet is delivered as a
+*packet.SharedBuffer instance, which the consumer must process and then release.
+
+If the Source encounters an error, all receiver channels will be closed. The
+Receiver's Err() function will return the reason for the interruption.
 
 The Source interface represents only the consumer-facing side of a media stream;
 it makes no assumptions about how the data is produced. Nor does it describe the
@@ -25,8 +25,9 @@ Example usage:
 	r := src.AddReceiver(4)
 	defer src.RemoveReceiver(r)
 	for {
-		buf, more := <-r
+		buf, more := <-r.Buffers()
 		if !more {
+			// Process r.Err()
 			break
 		}
 		// Do something with buf.Bytes(), then call buf.Release()
@@ -34,87 +35,25 @@ Example usage:
 
 */
 type Source interface {
-	// AddReceiver creates a new receiver channel r, and starts passing incoming
-	// data buffers to it. The source will not block sending to r, so the
-	// capacity must be sufficient to keep up with the rate of incoming data.
-	// (In particular, capacity must be > 0.) The channel may be closed if the
-	// source is interrupted.
+	// AddReceiver creates a new Receiver r, and starts passing incoming data
+	// buffers to it. The source will not block sending to r, so the capacity
+	// must be sufficient to keep up with the rate of incoming data. (In
+	// particular, capacity must be > 0.) The Receiver channel may be closed if
+	// the source is interrupted, in which case r.Err will be populated.
 	//
 	// Callers must ensure that the receiver is removed when processing is
 	// complete (e.g. a defer statement immediately following AddReceiver()).
-	AddReceiver(capacity int) (r <-chan *packet.SharedBuffer)
+	AddReceiver(capacity int) Receiver
 
 	// RemoveReceiver tells the source to stop passing data buffers to r. Upon
 	// return, it is guaranteed r will not receive any more data.
-	RemoveReceiver(r <-chan *packet.SharedBuffer)
+	RemoveReceiver(r Receiver)
 }
 
-// An implementation of Source that can be embedded into a struct.
-type baseSource struct {
-	sync.Mutex
-	receivers []chan *packet.SharedBuffer
+type Receiver interface {
+	// Buffers returns a channel from which callers can read Source buffers.
+	Buffers() <-chan *packet.SharedBuffer
 
-	// start is called when the first receiver is added.
-	start func()
-
-	// stop is called when the last receiver is removed.
-	stop func()
-}
-
-func (s *baseSource) AddReceiver(capacity int) <-chan *packet.SharedBuffer {
-	s.Lock()
-	defer s.Unlock()
-
-	if capacity == 0 {
-		panic("media.Source: receiver capacity must be nonzero")
-	}
-
-	r := make(chan *packet.SharedBuffer, capacity)
-	s.receivers = append(s.receivers, r)
-	if s.start != nil && len(s.receivers) == 1 {
-		go s.start()
-	}
-	return r
-}
-
-func (s *baseSource) RemoveReceiver(r <-chan *packet.SharedBuffer) {
-	s.Lock()
-	defer s.Unlock()
-
-	// Find and delete r from the receivers list.
-	// See https://github.com/golang/go/wiki/SliceTricks
-	for i := range s.receivers {
-		if s.receivers[i] == r {
-			closeAndDrain(s.receivers[i])
-			n := len(s.receivers)
-			copy(s.receivers[i:], s.receivers[i+1:])
-			s.receivers[n-1] = nil
-			s.receivers = s.receivers[:n-1]
-			break
-		}
-	}
-
-	if s.stop != nil && len(s.receivers) == 0 {
-		go s.stop()
-	}
-}
-
-func (s *baseSource) put(buf *packet.SharedBuffer) {
-	s.Lock()
-	defer s.Unlock()
-
-	for _, r := range s.receivers {
-		buf.Hold()
-		select {
-		case r <- buf:
-		default:
-			log.Warn("Source receiver missed a buffer")
-			buf.Release()
-		}
-	}
-}
-
-// TODO: Should this be exported?
-func (s *baseSource) putBuffer(data []byte, done func()) {
-	s.put(packet.NewSharedBuffer(data, 0, done))
+	// Err returns the reason when the Buffers() channel is closed.
+	Err() error
 }

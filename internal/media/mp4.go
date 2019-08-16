@@ -42,10 +42,10 @@ func OpenMP4(filename string) (VideoSource, error) {
 			info := codec.(av.VideoCodecData)
 			log.Info("%v stream: %dx%d", info.Type(), info.Width(), info.Height())
 			video = &mp4VideoSource{f: f, info: info}
-			f.sources = append(f.sources, &video.baseSource)
+			f.flows = append(f.flows, &video.Flow)
 		default:
 			log.Debug("Skipping %v stream", codec.Type())
-			f.sources = append(f.sources, nil)
+			f.flows = append(f.flows, nil)
 		}
 	}
 
@@ -56,8 +56,8 @@ func OpenMP4(filename string) (VideoSource, error) {
 	loop := &singletonLoop{
 		run: f.readLoop,
 	}
-	video.start = loop.start
-	video.stop = loop.stop
+	video.Flow.Start = loop.start
+	video.Flow.Stop = loop.stop
 
 	return video, nil
 }
@@ -66,37 +66,37 @@ type mp4File struct {
 	file    *os.File
 	demuxer *mp4.Demuxer
 
-	codecs  []av.CodecData
-	sources []*baseSource
+	codecs []av.CodecData
+	flows  []*Flow
 }
 
-func (f *mp4File) readLoop(quit <-chan struct{}) {
+func (f *mp4File) readLoop(quit <-chan struct{}) error {
 	// Wall clock offset to the first packet in the file.
 	var start time.Time
 
 	for {
 		select {
 		case <-quit:
-			return
+			return nil
 		default:
 		}
 
 		// Read the next packet from the file.
 		pkt, err := f.demuxer.ReadPacket()
-
-		if err == io.EOF {
-			// Add a 50 millisecond delay, then play the file again.
-			f.demuxer.SeekToTime(0)
-			start = time.Now().Add(50 * time.Millisecond)
-			continue
-		} else if err != nil {
+		if err != nil {
+			if err == io.EOF {
+				// Add a 50 millisecond delay, then play the file again.
+				f.demuxer.SeekToTime(0)
+				start = time.Now().Add(50 * time.Millisecond)
+				continue
+			}
 			log.Error("Error reading packet from %s: %v", f.file.Name(), err)
-			return
+			return err
 		}
 
 		codec := f.codecs[pkt.Idx]
-		src := f.sources[pkt.Idx]
-		if src == nil {
+		flow := f.flows[pkt.Idx]
+		if flow == nil {
 			continue
 		}
 
@@ -117,13 +117,13 @@ func (f *mp4File) readLoop(quit <-chan struct{}) {
 			switch cd := codec.(type) {
 			case h264parser.CodecData:
 				// Send SPS and PPS along with key frame.
-				src.putBuffer(cd.SPS(), nil)
-				src.putBuffer(cd.PPS(), nil)
+				flow.PutBuffer(cd.SPS(), nil)
+				flow.PutBuffer(cd.PPS(), nil)
 				data = skipSEI(data)
 			}
 		}
 
-		src.putBuffer(data, nil)
+		flow.PutBuffer(data, nil)
 
 		log.Debug("Packet: %6d bytes, starting with %02x", len(data), data[0:4])
 	}
@@ -134,7 +134,7 @@ type mp4AudioSource struct {
 }
 
 type mp4VideoSource struct {
-	baseSource
+	Flow
 
 	f *mp4File
 
