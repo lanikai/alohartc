@@ -383,17 +383,13 @@ func (pc *PeerConnection) Stream() error {
 		WriteSalt: writeSalt,
 	})
 
-	rtpStream := rtpSession.AddStream(rtp.StreamOptions{
+	videoStream := rtpSession.AddStream(rtp.StreamOptions{
 		// TODO: Extract these from the SDP instead of hard-coding.
 		LocalSSRC:  2541098696,
 		LocalCNAME: "cYhx/N8U7h7+3GW3",
 		Direction:  "sendonly",
 	})
-	go func() {
-		videoCh := pc.localVideo.AddReceiver(16)
-		defer pc.localVideo.RemoveReceiver(videoCh)
-		rtpStream.SendVideo(pc.ctx.Done(), pc.DynamicType, videoCh)
-	}()
+	go videoStream.SendVideo(pc.ctx.Done(), pc.DynamicType, pc.localVideo)
 
 	//rtpSession, err := rtp.NewSecureSession(rtpEndpoint, readKey, readSalt, writeKey, writeSalt)
 	//go streamH264(pc.ctx, pc.localVideoTrack, rtpSession.NewH264Stream(ssrc, cname))

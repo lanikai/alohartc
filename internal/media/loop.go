@@ -6,7 +6,7 @@ import (
 
 // A loopFunc is a long-running function, e.g. a read loop. It should terminate
 // promptly when the quit channel is closed.
-type loopFunc func(quit <-chan struct{})
+type loopFunc func(quit <-chan struct{}) error
 
 // A singletonLoop is a wrapper for a long-running function that should only run
 // in a single goroutine at any given time. Each call to start() counts as a

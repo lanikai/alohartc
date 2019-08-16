@@ -5,6 +5,7 @@ import (
 	"io"
 	"time"
 
+	"github.com/lanikai/alohartc/internal/media"
 	"github.com/lanikai/alohartc/internal/packet"
 )
 
@@ -20,7 +21,7 @@ const (
 	naluTypeFU_A   = 28
 )
 
-func (s *Stream) SendVideo(quit <-chan struct{}, payloadType byte, src <-chan *packet.SharedBuffer) error {
+func (s *Stream) SendVideo(quit <-chan struct{}, payloadType byte, src media.VideoSource) error {
 	initialTimestamp := uint32(0) // TODO: randomize timestamp
 
 	w := h264Writer{
@@ -28,14 +29,18 @@ func (s *Stream) SendVideo(quit <-chan struct{}, payloadType byte, src <-chan *p
 		payloadType: payloadType,
 		timestamp:   initialTimestamp,
 	}
+
+	r := src.AddReceiver(16)
+	defer src.RemoveReceiver(r)
+
 	for {
 		select {
 		case <-quit:
 			return nil
-		case buf, more := <-src:
+		case buf, more := <-r.Buffers():
 			if !more {
-				log.Debug("Received EOF from video source: %d", payloadType)
-				return io.EOF
+				log.Debug("SendVideo %d stopping: %v", payloadType, r.Err())
+				return r.Err()
 			}
 			if err := w.consume(buf); err != nil {
 				return err
