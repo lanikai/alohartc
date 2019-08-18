@@ -376,7 +376,8 @@ func (pc *PeerConnection) Stream() error {
 	writeSalt := keyReader.Next(saltLen)
 	readSalt := keyReader.Next(saltLen)
 
-	rtpSession := rtp.NewSession(srtpEndpoint, rtp.SessionOptions{
+	rtpSession := rtp.NewSession(rtp.SessionOptions{
+		MuxConn:   srtpEndpoint, // rtcp-mux assumed
 		ReadKey:   readKey,
 		ReadSalt:  readSalt,
 		WriteKey:  writeKey,
