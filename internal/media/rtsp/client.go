@@ -18,7 +18,6 @@ import (
 
 // RTSP 1.0 client implementation.
 // See [RFC 2326](https://tools.ietf.org/html/rfc2326).
-
 type Client struct {
 	// TCP connection to the RTSP server.
 	conn net.Conn
@@ -180,6 +179,7 @@ func (cli *Client) Describe(uri string) (sdp.Session, error) {
 }
 
 // Send a SETUP request, and return the established transport and session ID.
+// See https://tools.ietf.org/html/rfc2326#section-10.4
 func (cli *Client) Setup(uri string) (*Transport, string, error) {
 	tr, err := NewTransport()
 	if err != nil {
@@ -198,14 +198,15 @@ func (cli *Client) Setup(uri string) (*Transport, string, error) {
 	tr.parseServerResponse(resp.Headers["Transport"], serverIP)
 
 	// See https://tools.ietf.org/html/rfc2326#section-12.37
-	sessionID := strings.Split(resp.Headers["Session"], ";")[0]
+	session := strings.Split(resp.Headers["Session"], ";")[0]
 
-	return tr, sessionID, nil
+	return tr, session, nil
 }
 
-func (cli *Client) Play(uri, sessionID string) (rtpInfo string, err error) {
+// See https://tools.ietf.org/html/rfc2326#section-10.5
+func (cli *Client) Play(uri, session string) (rtpInfo string, err error) {
 	resp, err := cli.Request("PLAY", uri, HeaderMap{
-		"Session": sessionID,
+		"Session": session,
 	})
 	if err != nil {
 		return
@@ -215,8 +216,19 @@ func (cli *Client) Play(uri, sessionID string) (rtpInfo string, err error) {
 	return
 }
 
+// Send a PAUSE request.
+// See https://tools.ietf.org/html/rfc2326#section-10.6
 func (cli *Client) Pause(uri, session string) error {
 	_, err := cli.Request("PAUSE", uri, HeaderMap{
+		"Session": session,
+	})
+	return err
+}
+
+// Send a TEARDOWN request.
+// See https://tools.ietf.org/html/rfc2326#section-10.7
+func (cli *Client) Teardown(uri, session string) error {
+	_, err := cli.Request("TEARDOWN", uri, HeaderMap{
 		"Session": session,
 	})
 	return err

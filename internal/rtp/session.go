@@ -6,6 +6,13 @@ import (
 )
 
 type SessionOptions struct {
+	// Single connection over which RTP and RTCP are muxed.
+	MuxConn net.Conn
+
+	// Separate connections for RTP and RTCP.
+	DataConn    net.Conn
+	ControlConn net.Conn
+
 	// SRTP master key material.
 	ReadKey   []byte
 	ReadSalt  []byte
@@ -28,8 +35,6 @@ const (
 type Session struct {
 	SessionOptions
 
-	conn net.Conn
-
 	// RTP streams in this session, keyed by SSRC. Every stream appears twice in
 	// the map, once for the local SSRC and once for the remote SSRC.
 	streams map[uint32]*Stream
@@ -39,27 +44,43 @@ type Session struct {
 	writeContext *cryptoContext
 }
 
-func NewSession(conn net.Conn, opts SessionOptions) *Session {
+func NewSession(opts SessionOptions) *Session {
 	if opts.MaxPacketSize == 0 {
 		opts.MaxPacketSize = defaultMaxPacketSize
 	}
 
-	s := new(Session)
-	s.SessionOptions = opts
-	s.conn = conn
-	s.streams = make(map[uint32]*Stream)
+	s := &Session{
+		SessionOptions: opts,
+		streams:        make(map[uint32]*Stream),
+	}
+
 	if opts.ReadKey != nil && opts.ReadSalt != nil {
 		s.readContext = newCryptoContext(opts.ReadKey, opts.ReadSalt)
 	}
 	if opts.WriteKey != nil && opts.WriteSalt != nil {
 		s.writeContext = newCryptoContext(opts.WriteKey, opts.WriteSalt)
 	}
-	go s.readLoop()
+
+	if s.MuxConn != nil {
+		// Mux RTP and RTCP over a single connection.
+		s.DataConn = s.MuxConn
+		s.ControlConn = s.MuxConn
+		go s.readLoop(s.MuxConn)
+	} else {
+		go s.readLoop(s.DataConn)
+		go s.readLoop(s.ControlConn)
+	}
 	return s
 }
 
 func (s *Session) Close() error {
-	return s.conn.Close()
+	err := s.DataConn.Close()
+	if s.ControlConn != s.DataConn {
+		if err2 := s.ControlConn.Close(); err == nil && err2 != nil {
+			err = err2
+		}
+	}
+	return err
 }
 
 func (s *Session) AddStream(opts StreamOptions) *Stream {
@@ -77,16 +98,16 @@ func (s *Session) RemoveStream(stream *Stream) {
 	delete(s.streams, stream.RemoteSSRC)
 }
 
-// Returns on read error or when the session is closed.
-func (s *Session) readLoop() {
+// Reads packets from conn. Returns on read error or when conn is closed.
+func (s *Session) readLoop(conn net.Conn) {
 	buf := make([]byte, 65536)
 	for {
-		n, err := s.conn.Read(buf)
+		n, err := conn.Read(buf)
 		if err != nil {
 			if err == io.EOF {
-				log.Debug("read RTP: EOF")
+				log.Debug("RTP session: EOF")
 			} else {
-				log.Error("read RTP: %v", err)
+				log.Error("RTP session: %v", err)
 			}
 			return
 		}
@@ -94,13 +115,13 @@ func (s *Session) readLoop() {
 		pkt := buf[0:n]
 		rtcp, ssrc, err := identifyPacket(pkt)
 		if err != nil {
-			log.Error("read RTP: %v", err)
+			log.Error("RTP session: %v", err)
 			return
 		}
 
 		stream := s.streams[ssrc]
 		if stream == nil {
-			log.Debug("read RTP: unknown SSRC %02x", ssrc)
+			log.Debug("RTP session: unknown SSRC %02x", ssrc)
 			continue
 		}
 
@@ -108,7 +129,7 @@ func (s *Session) readLoop() {
 			//	stream.handleRTCP(pkt)
 		} else {
 			if err := stream.rtpIn.readPacket(pkt); err != nil {
-				log.Error("read RTP: %v", err)
+				log.Error("RTP session: %v", err)
 			}
 		}
 	}

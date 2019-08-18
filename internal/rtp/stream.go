@@ -38,8 +38,6 @@ type StreamOptions struct {
 type Stream struct {
 	StreamOptions
 
-	session *Session
-
 	// RTP state for outgoing data.
 	rtpOut *rtpWriter
 
@@ -57,15 +55,14 @@ func newStream(session *Session, opts StreamOptions) *Stream {
 	// TODO: Validate options.
 	s := new(Stream)
 	s.StreamOptions = opts
-	s.session = session
 	if opts.Direction == "sendonly" || opts.Direction == "sendrecv" {
-		s.rtpOut = newRTPWriter(session.conn, opts.LocalSSRC, session.writeContext)
+		s.rtpOut = newRTPWriter(session.DataConn, opts.LocalSSRC, session.writeContext)
 	}
 	if opts.Direction == "recvonly" || opts.Direction == "sendrecv" {
 		s.rtpIn = newRTPReader(opts.RemoteSSRC, session.readContext)
 	}
-	s.rtcpOut = newRTCPWriter(session.conn, opts.LocalSSRC, session.writeContext)
-	//s.rtcpIn = newRTCPReader(session.conn, opts.LocalSSRC, session.readContext)
+	s.rtcpOut = newRTCPWriter(session.ControlConn, opts.LocalSSRC, session.writeContext)
+	//s.rtcpIn = newRTCPReader(session.ControlConn, opts.LocalSSRC, session.readContext)
 	return s
 }
 
