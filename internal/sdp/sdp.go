@@ -29,7 +29,7 @@ type Session struct {
 	Media      []Media
 
 	// Initialized on first call to GetAttr()
-	attributeCache map[string]string
+	attrCache map[string][]string
 }
 
 type Origin struct {
@@ -71,7 +71,7 @@ type Media struct {
 	Attributes []Attribute
 
 	// Initialized on first call to GetAttr()
-	attributeCache map[string]string
+	attrCache map[string][]string
 }
 
 type writer strings.Builder
@@ -181,14 +181,22 @@ func parseAttribute(s string) (a Attribute, err error) {
 	return
 }
 
-func (m *Media) GetAttr(key string) string {
-	if m.attributeCache == nil {
-		m.attributeCache = make(map[string]string)
+func (m *Media) GetAttrs(key string) []string {
+	if m.attrCache == nil {
+		m.attrCache = make(map[string][]string)
 		for _, a := range m.Attributes {
-			m.attributeCache[a.Key] = a.Value
+			m.attrCache[a.Key] = append(m.attrCache[a.Key], a.Value)
 		}
 	}
-	return m.attributeCache[key]
+	return m.attrCache[key]
+}
+
+func (m *Media) GetAttr(key string) string {
+	values := m.GetAttrs(key)
+	if len(values) == 0 {
+		return ""
+	}
+	return values[0]
 }
 
 func (m *Media) String() string {
@@ -251,14 +259,22 @@ loop:
 	return m, text, err
 }
 
-func (s *Session) GetAttr(key string) string {
-	if s.attributeCache == nil {
-		s.attributeCache = make(map[string]string)
+func (s *Session) GetAttrs(key string) []string {
+	if s.attrCache == nil {
+		s.attrCache = make(map[string][]string)
 		for _, a := range s.Attributes {
-			s.attributeCache[a.Key] = a.Value
+			s.attrCache[a.Key] = append(s.attrCache[a.Key], a.Value)
 		}
 	}
-	return s.attributeCache[key]
+	return s.attrCache[key]
+}
+
+func (s *Session) GetAttr(key string) string {
+	values := s.GetAttrs(key)
+	if len(values) == 0 {
+		return ""
+	}
+	return values[0]
 }
 
 func (s *Session) String() string {
