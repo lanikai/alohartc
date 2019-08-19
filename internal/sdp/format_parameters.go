@@ -82,7 +82,7 @@ func (fmtp *H264FormatParameters) Unmarshal(format string) error {
 			for _, e := range encoded {
 				ps, err := base64.StdEncoding.DecodeString(e)
 				if err != nil {
-					return err
+					return errMalformedFormatParameters
 				}
 				fmtp.SpropParameterSets = append(fmtp.SpropParameterSets, ps)
 			}

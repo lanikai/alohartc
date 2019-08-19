@@ -69,6 +69,8 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Cannot open %s (%s)\n", *input, err)
 			os.Exit(1)
 		}
+
+		log.Printf("Local video: %dx%d %s\n", videoSource.Width(), videoSource.Height(), videoSource.Codec())
 	}
 
 	if closer, ok := videoSource.(io.Closer); ok {
