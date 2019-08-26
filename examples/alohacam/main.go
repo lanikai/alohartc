@@ -15,6 +15,7 @@ import (
 	"github.com/lanikai/alohartc/internal/media"
 	"github.com/lanikai/alohartc/internal/media/rtsp"
 	"github.com/lanikai/alohartc/internal/signaling"
+	"github.com/lanikai/alohartc/internal/v4l2"
 )
 
 // Populated via -ldflags="-X ...". See Makefile.
@@ -28,17 +29,15 @@ func version() {
 	fmt.Println("")
 }
 
-//var source alohartc.MediaSource
+var audioSource media.AudioSource
 var videoSource media.VideoSource
 
 func main() {
 	// Define and parse optional flags
 	input := flag.String("i", "/dev/video0", "video input ('-' for stdin)")
-	//bitrate := flag.Uint("bitrate", 1500e3, "set video bitrate")
-	//width := flag.Uint("width", 1280, "set video width")
-	//height := flag.Uint("height", 720, "set video height")
-	//hflip := flag.Bool("hflip", false, "flip video horizontally")
-	//vflip := flag.Bool("vflip", false, "flip video vertically")
+	bitrate := flag.Int("bitrate", 1500e3, "set video bitrate")
+	width := flag.Int("width", 1280, "set video width")
+	height := flag.Int("height", 720, "set video height")
 	flag.Parse()
 
 	// Always print version information
@@ -47,18 +46,17 @@ func main() {
 	// Configure logging
 	log.SetFlags(log.LstdFlags | log.Lshortfile | log.Lmicroseconds)
 
-	// Open media source
+	// Open video source
 	{
 		err := fmt.Errorf("unsupported input: %s", *input)
 		if strings.HasPrefix(*input, "/dev/video") {
-			//source, err = alohartc.NewV4L2MediaSource(
-			//	*input,
-			//	*width,
-			//	*height,
-			//	*bitrate,
-			//	*hflip,
-			//	*vflip,
-			//)
+			videoSource, err = v4l2.Open(*input, v4l2.Config{
+				Width:   *width,
+				Height:  *height,
+				Bitrate: *bitrate,
+
+				RepeatSequenceHeader: true,
+			})
 		} else if strings.HasPrefix(*input, "rtsp://") {
 			videoSource, err = rtsp.Open(*input)
 		} else if strings.HasSuffix(*input, ".mp4") {
@@ -83,10 +81,6 @@ func main() {
 func doPeerSession(ss *signaling.Session) {
 	ctx, cancel := context.WithCancel(ss.Context)
 	defer cancel()
-
-	// Get new track from media source. Close it when session ends.
-	//track := source.GetTrack()
-	//defer source.CloseTrack(track)
 
 	// Create peer connection with one video track
 	pc := alohartc.Must(alohartc.NewPeerConnectionWithContext(

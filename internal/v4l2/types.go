@@ -1,9 +1,9 @@
+// +build v4l2 !production
+// +build linux
+
 // Types are derived from linux/videodev.h to enable cross-compilation
 // without requiring a copy of linux/videodev.h, which in turn #includes
 // other headers.
-
-// Video4Linux is a Linux-specific API. Only build if GOOS=linux.
-// +build linux
 
 package v4l2
 
@@ -51,7 +51,7 @@ type v4l2_format struct {
 type v4l2_control struct {
 	id    uint32
 	value int32
-};
+}
 
 type v4l2_requestbuffers struct {
 	count    uint32

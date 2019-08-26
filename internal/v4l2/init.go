@@ -25,16 +25,14 @@ import (
 	"github.com/lanikai/alohartc/internal/logging"
 )
 
+var log = logging.DefaultLogger.WithTag("v4l2")
+
 // nativeEndian is the byte order for the local platform. Used to send back and
 // V4L2 structs with the C API. We test for endianness at runtime because
 // some architectures can be booted into different endian modes.
 var nativeEndian binary.ByteOrder
 
-var log *logging.Logger
-
 func init() {
-	log = logging.DefaultLogger.WithTag("v4l2")
-
 	buf := [2]byte{}
 	*(*uint16)(unsafe.Pointer(&buf[0])) = uint16(0xABCD)
 
