@@ -1,5 +1,3 @@
-// +build rtsp
-
 package rtsp
 
 import (
@@ -65,7 +63,7 @@ func TestLocalServer(t *testing.T) {
 	t.Log("RTP-Info:", rtpInfo)
 
 	// GET_PARAMETER
-	params, err := cli.GetParameter(testURI)
+	params, err := cli.GetParameter(testURI, sessionID)
 	if err != nil {
 		t.Fatal(err)
 	}

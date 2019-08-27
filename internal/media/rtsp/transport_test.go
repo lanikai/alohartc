@@ -1,5 +1,3 @@
-// +build rtsp
-
 package rtsp
 
 import (

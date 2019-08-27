@@ -11,11 +11,13 @@ GOFLAGS ?=
 GOOS ?= linux
 
 # Command to build alohacam binary.
-BUILDCMD = \
-    CGO_ENABLED=$(CGO_ENABLED) GOARM=$(GOARM) GOARCH=$(GOARCH) GOFLAGS=$(GOFLAGS) GOOS=$(GOOS) \
+define buildcmd
+    CGO_ENABLED=$(CGO_ENABLED) GOARM=$(GOARM) GOARCH=$(GOARCH) GOOS=$(GOOS) \
     go build -v \
 	-ldflags '-s -w -X main.GitRevisionId=$(GIT_REVISION_ID)' \
+	$(1) \
 	-o $@ .
+endef
 
 
 .PHONY: all
@@ -28,7 +30,7 @@ generate:
 # PHONY because we let the Go build system decide if it's up-to-date.
 .PHONY: alohacam
 alohacam: generate
-	$(BUILDCMD)
+	$(call buildcmd, -tags="m4p rtsp v4l2")
 
 
 # Release version. Override on command line when building a release, e.g.
@@ -42,7 +44,6 @@ RELEASE_TARGETS := \
 
 # Set Go build environment for each release target.
 $(RELEASE_TARGETS): CGO_ENABLED=0
-$(RELEASE_TARGETS): GOFLAGS=-tags=production
 release/$(VERSION)/alohacam-linux-%: GOOS=linux
 release/$(VERSION)/alohacam-linux-armv%: GOARCH=arm
 release/$(VERSION)/alohacam-linux-armv6: GOARM=6
@@ -51,7 +52,7 @@ release/$(VERSION)/alohacam-linux-aarch64: GOARCH=arm64
 
 .PHONY: $(RELEASE_TARGETS)
 $(RELEASE_TARGETS): checktree generate
-	$(BUILDCMD)
+	$(call buildcmd, -tags="production v4l2")
 
 .PHONY: release
 release: $(RELEASE_TARGETS)
