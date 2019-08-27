@@ -1,4 +1,4 @@
-// +build !rtsp
+// +build production,!rtsp
 
 package rtsp
 
