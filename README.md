@@ -7,7 +7,32 @@
   <a href="https://circleci.com/gh/lanikai/alohartc" alt="CircleCI"><img src="https://circleci.com/gh/lanikai/alohartc.svg?style=shield&circle-token=0bcc086c4c5c77ab6cfbdc85cb810f522ef7b8bd"></a>
 </p>
 
-## Setup
+
+## Quickstart
+
+First, download dependencies:
+
+    make get
+
+Next, build for a Raspberry Pi Zero:
+
+	make
+
+Alternatively, build for a Raspberry Pi Model 3B/3B+ (armv7-based
+architecture):
+
+    GOARM=7 make
+    
+Or to build for release:
+
+    make release
+
+Once built, transfer `alohacam` to your Raspberry Pi and run. Open
+`http://<target>:8000` in browser. This should start a live video stream
+from your Raspberry Pi.
+    
+    
+## Development
 
 Set a pre-commit hook to `go fmt` code (see https://golang.org/misc/git/pre-commit)
 
@@ -18,32 +43,6 @@ git config --global url."ssh://git@github.com/".insteadOf "https://github.com/"
 ```
 
 
-## Building
-
-First, download dependencies:
-
-    make get
-
-To cross-compile for a Raspberry Pi Model 3B/3B+ (armv7-based architecture):
-
-    make
-    
-To cross-compile for a Raspberry Pi Zero (armv6-based architecture):
-
-    GOARM=6 make
-
-To build for production:
-
-    GOFLAGS="-tags=production" make
-
-
-## Quickstart
-
-Build code as above, then transfer `alohacam` to Raspberry Pi and run. Open
-`http://<target>:8000` in browser. This should start a live video stream from
-Raspberry Pi.
-    
-    
 ## Notes
 
 Ensure camera is enabled on Raspberry Pi and that v4l2 module is loaded.

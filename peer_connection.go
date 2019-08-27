@@ -422,8 +422,10 @@ func (pc *PeerConnection) Stream() error {
 	// ice.DataStream will then be marked dead, which we check for here.
 	select {
 	case <-pc.ctx.Done():
+		log.Println("context done")
 		return nil
 	case <-dataStream.Done():
+		log.Println("datastream done")
 		return dataStream.Err()
 	}
 }

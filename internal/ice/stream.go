@@ -1,13 +1,10 @@
 package ice
 
 import (
-	"errors"
 	"io"
 	"net"
 	"time"
 )
-
-var ErrReadTimeout = errors.New("read timeout")
 
 // A DataStream represents an active connection between two peers. ICE control
 // packets are filtered out and handled by the ICE agent, so reads and writes
@@ -91,7 +88,7 @@ func (s *DataStream) Read(b []byte) (int, error) {
 		case <-s.dead:
 			return 0, io.EOF
 		case <-timeout:
-			return 0, ErrReadTimeout
+			return 0, errReadTimeout
 		case data := <-s.in:
 			n := len(data)
 			if n > len(b) {

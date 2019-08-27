@@ -1,4 +1,4 @@
-// +build !linux production,!v4l2
+// +build !linux release,!v4l2
 
 package v4l2
 

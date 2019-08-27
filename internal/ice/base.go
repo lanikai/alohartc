@@ -21,6 +21,7 @@ const (
 	timeoutQuerySTUNServer = 5 * time.Second
 
 	// Timeout for reads from base (i.e. its UDPConn).
+	// STUN re-bindings sent every 2500ms on Safari
 	timeoutReadFromBase = 5 * time.Second
 )
 
@@ -229,7 +230,7 @@ func (base *Base) readLoop(defaultHandler stunHandler, dataIn chan []byte) {
 				// Timeout is expected for bases that are not selected.
 				if neterr.Timeout() {
 					log.Debug("Connection timed out: %s\n", base.address)
-					base.err = ErrReadTimeout
+					base.err = errReadTimeout
 					break
 				}
 

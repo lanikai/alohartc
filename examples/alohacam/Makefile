@@ -2,10 +2,11 @@ TOP := $(shell git rev-parse --show-cdup)
 
 GIT_REVISION_ID := $(shell git describe --always --tags)
 
-# Default 'alohacam' target platform is Linux/ARMv7. Can be overridden on the
-# command line. (Note: these default values are ignored for release builds.)
+# Default 'alohacam' target platform is Linux/ARMv6 (Raspberry Pi Zero). Can
+# be overridden on the command line.
+# NOTE: These default values are ignored for release builds.
 CGO_ENABLED ?= 0
-GOARM ?= 7
+GOARM ?= 6
 GOARCH ?= arm
 GOFLAGS ?=
 GOOS ?= linux
@@ -30,7 +31,7 @@ generate:
 # PHONY because we let the Go build system decide if it's up-to-date.
 .PHONY: alohacam
 alohacam: generate
-	$(call buildcmd, -tags="m4p rtsp v4l2")
+	$(call buildcmd, -tags="mp4 rtsp v4l2")
 
 
 # Release version. Override on command line when building a release, e.g.
@@ -52,7 +53,7 @@ release/$(VERSION)/alohacam-linux-aarch64: GOARCH=arm64
 
 .PHONY: $(RELEASE_TARGETS)
 $(RELEASE_TARGETS): checktree generate
-	$(call buildcmd, -tags="production v4l2")
+	$(call buildcmd, -tags="release v4l2")
 
 .PHONY: release
 release: $(RELEASE_TARGETS)
@@ -79,6 +80,3 @@ endif
 # script.
 download_server:
 	python3 -m http.server 8086
-
-
-# TODO: Add a make target to upload releases to S3.

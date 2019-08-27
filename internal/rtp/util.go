@@ -4,8 +4,8 @@ package rtp
 // first byte of the RTP packet header:
 //    0 1 2 3 4 5 6 7
 //   +-+-+-+-+-+-+-+-+
-//	 |V=2|P|X|  CC   |
-//	 +-+-+-+-+-+-+-+-+
+//   |V=2|P|X|  CC   |
+//   +-+-+-+-+-+-+-+-+
 // can be parsed with
 //    V, P, X, CC := splitByte2114(header[0])
 // and put back together with
@@ -69,8 +69,8 @@ func joinByte125(a1 bool, b2 byte, c5 byte) byte {
 // E.g. for the second byte of the RTP packet header:
 //    0 1 2 3 4 5 6 7
 //   +-+-+-+-+-+-+-+-+
-//	 |M|     PT      |
-//	 +-+-+-+-+-+-+-+-+
+//   |M|     PT      |
+//   +-+-+-+-+-+-+-+-+
 func splitByte17(v byte) (a1 bool, b7 byte) {
 	a1 = (v >> 7) == 1
 	b7 = v & 0x7f

@@ -1,3 +1,5 @@
+// +build mqtt release
+
 package signaling
 
 import (

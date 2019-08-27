@@ -1,4 +1,4 @@
-// +build mp4 !production
+// +build mp4 !release
 
 package media
 

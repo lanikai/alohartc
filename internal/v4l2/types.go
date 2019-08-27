@@ -1,4 +1,4 @@
-// +build v4l2 !production
+// +build v4l2 !release
 // +build linux
 
 // Types are derived from linux/videodev.h to enable cross-compilation

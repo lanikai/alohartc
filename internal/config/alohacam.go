@@ -1,4 +1,4 @@
-// +build production
+// +build release
 
 package config
 
