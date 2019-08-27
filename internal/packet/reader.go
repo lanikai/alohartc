@@ -38,6 +38,12 @@ func (r *Reader) ReadUint32() uint32 {
 	return v
 }
 
+func (r *Reader) ReadUint64() uint64 {
+	v := networkOrder.Uint64(r.buffer[r.offset:])
+	r.offset += 8
+	return v
+}
+
 func (r *Reader) ReadSlice(n int) []byte {
 	v := r.buffer[r.offset : r.offset+n]
 	r.offset += n

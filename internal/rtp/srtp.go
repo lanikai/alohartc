@@ -161,7 +161,7 @@ func (c *cryptoContext) verifyAndDecryptRTCP(buf []byte) ([]byte, uint64, error)
 	ssrc := binary.BigEndian.Uint32(buf[4:8])
 	payload := buf[8:indexStart]
 	c.encryptSRTCP(payload, ssrc, index)
-	return payload, index, nil
+	return buf[0:indexStart], index, nil
 }
 
 // SRTP key derivation algorithm.
