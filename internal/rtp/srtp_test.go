@@ -48,17 +48,14 @@ func TestEncryptRTCP(t *testing.T) {
 	masterSalt := []byte("SodiumChloride")
 	crypto := newCryptoContext(masterKey, masterSalt)
 
+	hdr := uint32(0x81c8000a)
 	ssrc := uint32(0x1337d00d)
+	payload := []byte("abcdefghijklmnopqrstuvwxyz0123456789")
 	index := uint64(123456)
-	hdr := rtcpHeader{
-		packetType: 200,
-		length:     30,
-	}
-	payload := []byte("abcdefghijklmnopqrstuvwxyz")
 
 	// Write the RTCP packet to the buffer.
 	p := packet.NewWriterSize(512)
-	hdr.writeTo(p)
+	p.WriteUint32(hdr)
 	p.WriteUint32(ssrc)
 	p.WriteSlice(payload)
 
@@ -68,12 +65,12 @@ func TestEncryptRTCP(t *testing.T) {
 	}
 
 	// p now contains an encrypted SRTCP packet. Read it back and compare.
-	payloadOut, indexOut, err := crypto.verifyAndDecryptRTCP(p.Bytes())
+	decrypted, indexOut, err := crypto.verifyAndDecryptRTCP(p.Bytes())
 	if err != nil {
 		t.Error(err)
 	}
-	if !bytes.Equal(payload, payloadOut) {
-		t.Errorf("RTCP encrypt/decrypt failure: %s", payloadOut)
+	if !bytes.Equal(payload, decrypted[8:]) {
+		t.Errorf("RTCP encrypt/decrypt failure: %q", decrypted)
 	}
 	if index != indexOut {
 		t.Errorf("RTCP index mismatch: %d", indexOut)

@@ -1,7 +1,7 @@
 package rtp
 
 import (
-	"net"
+	"io"
 	"sync"
 
 	errors "golang.org/x/xerrors"
@@ -9,23 +9,12 @@ import (
 	"github.com/lanikai/alohartc/internal/packet"
 )
 
-const (
-	rtcpHeaderSize = 4
-	rtcpReportSize = 6 * 4
-
-	// From RFC 3550 Section 6.
-	rtcpSenderReportType      = 200
-	rtcpReceiverReportType    = 201
-	rtcpSourceDescriptionType = 202
-	rtcpGoodbyeType           = 203
-	rtcpAppType               = 204
-)
-
 // RTP Control Protocol (RTCP), as defined in RFC 3550 Section 6.
 
 // RTCP packets come in several different types. While they differ structurally,
 // they all share a common 4-byte prefix header (where the meaning of count
-// depends on packet type). See https://tools.ietf.org/html/rfc3550#section-6.
+// depends on packet type).
+// See https://tools.ietf.org/html/rfc3550#section-6.
 //    0                   1                   2                   3
 //    0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
 //   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
@@ -61,71 +50,28 @@ func (h *rtcpHeader) writeTo(w *packet.Writer) error {
 	return nil
 }
 
+const (
+	rtcpHeaderSize = 4
+	rtcpReportSize = 6 * 4
+
+	// From RFC 3550 Section 6.
+	rtcpSenderReportType      = 200
+	rtcpReceiverReportType    = 201
+	rtcpSourceDescriptionType = 202
+	rtcpGoodbyeType           = 203
+	rtcpAppType               = 204
+
+	// From RFC 4585.
+	rtcpTransportLayerFeedbackType  = 205
+	rtcpPayloadSpecificFeedbackType = 206
+)
+
 type rtcpPacket interface {
 	// Serialize.
 	writeTo(w *packet.Writer) error
 
 	// Deserialize.
 	readFrom(r *packet.Reader, h *rtcpHeader) error
-}
-
-// A compound RTCP packet consists of one or more RTCP packets, each aligned to
-// 4-byte boundaries and concatenated into a single datagram.
-// See https://tools.ietf.org/html/rfc3550#section-6.1.
-type rtcpCompoundPacket struct {
-	packets []rtcpPacket
-}
-
-func (cp *rtcpCompoundPacket) readFrom(r *packet.Reader, h *rtcpHeader) error {
-	if err := r.CheckRemaining(rtcpHeaderSize); err != nil {
-		return errors.Errorf("short buffer: %v", err)
-	}
-
-	if cp.packets != nil {
-		cp.packets = cp.packets[:0]
-	}
-
-	var p rtcpPacket
-	for {
-		switch h.packetType {
-		case rtcpReceiverReportType:
-			p = new(rtcpReceiverReport)
-		case rtcpSourceDescriptionType:
-			p = new(rtcpSourceDescription)
-		default:
-			log.Debug("Skipping unimplemented RTCP packet type: %d", h.packetType)
-			r.Skip(4 * h.length)
-			continue
-		}
-
-		if err := p.readFrom(r, h); err != nil {
-			return err
-		}
-		cp.packets = append(cp.packets, p)
-
-		if r.Remaining() == 0 {
-			break
-		}
-
-		// Read next packet header.
-		if err := h.readFrom(r); err != nil {
-			return err
-		}
-		if err := r.CheckRemaining(4 * h.length); err != nil {
-			return errors.Errorf("short RTCP packet: %v", err)
-		}
-	}
-
-	return nil
-}
-
-func (cp *rtcpCompoundPacket) writeTo(w *packet.Writer) error {
-	for _, p := range cp.packets {
-		if err := p.writeTo(w); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 // Report block for sender and receiver reports.
@@ -174,6 +120,59 @@ func (report *rtcpReport) readFrom(r *packet.Reader) {
 	report.LastSenderReportDelay = r.ReadUint32()
 }
 
+// Sender Report (SR) RTCP packet.
+// See https://tools.ietf.org/html/rfc3550#section-6.4.1
+type rtcpSenderReport struct {
+	sender       uint32 // sender SSRC
+	ntpTimestamp uint64 // NTP timestamp
+	rtpTimestamp uint32 // RTP timestamp
+	packetCount  uint32 // number of RTP packets sent
+	totalBytes   uint32 // number of payload bytes sent
+	reports      []rtcpReport
+}
+
+func (p *rtcpSenderReport) writeTo(w *packet.Writer) error {
+	h := rtcpHeader{
+		packetType: rtcpSenderReportType,
+		count:      len(p.reports),
+		length:     (24 + len(p.reports)*rtcpReportSize) / 4,
+	}
+	if err := h.writeTo(w); err != nil {
+		return err
+	}
+
+	if err := w.CheckCapacity(4 * h.length); err != nil {
+		return errors.Errorf("insufficient buffer for SenderReport: %v", err)
+	}
+	w.WriteUint32(p.sender)
+	w.WriteUint64(p.ntpTimestamp)
+	w.WriteUint32(p.rtpTimestamp)
+	w.WriteUint32(p.packetCount)
+	w.WriteUint32(p.totalBytes)
+	for i := range p.reports {
+		p.reports[i].writeTo(w)
+	}
+	return nil
+}
+
+func (p *rtcpSenderReport) readFrom(r *packet.Reader, h *rtcpHeader) error {
+	if 4*h.length != 24+h.count*rtcpReportSize {
+		return errors.Errorf("invalid Sender Report: length = %d, count = %d", h.length, h.count)
+	}
+
+	p.sender = r.ReadUint32()
+	p.ntpTimestamp = r.ReadUint64()
+	p.rtpTimestamp = r.ReadUint32()
+	p.packetCount = r.ReadUint32()
+	p.totalBytes = r.ReadUint32()
+	var report rtcpReport
+	for i := 0; i < h.count; i++ {
+		report.readFrom(r)
+		p.reports = append(p.reports, report)
+	}
+	return nil
+}
+
 // Receiver Report (RR) RTCP packet.
 // See https://tools.ietf.org/html/rfc3550#section-6.4.2
 type rtcpReceiverReport struct {
@@ -194,7 +193,7 @@ func (p *rtcpReceiverReport) writeTo(w *packet.Writer) error {
 	if err := w.CheckCapacity(4 * h.length); err != nil {
 		return errors.Errorf("insufficient buffer for ReceiverReport: %v", err)
 	}
-	w.WriteUint32(uint32(p.receiver))
+	w.WriteUint32(p.receiver)
 	for i := range p.reports {
 		p.reports[i].writeTo(w)
 	}
@@ -348,7 +347,7 @@ func (p *rtcpGoodbye) readFrom(r *packet.Reader, h *rtcpHeader) error {
 
 // rtcpWriter maintains state necessary for sending RTCP packets.
 type rtcpWriter struct {
-	conn net.Conn
+	out  io.Writer
 	ssrc uint32
 
 	// Number of RTCP packets sent.
@@ -367,9 +366,9 @@ type rtcpWriter struct {
 	sync.Mutex
 }
 
-func newRTCPWriter(conn net.Conn, ssrc uint32, crypto *cryptoContext) *rtcpWriter {
+func newRTCPWriter(out io.Writer, ssrc uint32, crypto *cryptoContext) *rtcpWriter {
 	w := new(rtcpWriter)
-	w.conn = conn
+	w.out = out
 	w.ssrc = ssrc
 	w.buf = make([]byte, 1500) // TODO: Determine from MTU
 	w.crypto = crypto          // By value so that we have our own copy
@@ -380,13 +379,19 @@ func (w *rtcpWriter) index() uint64 {
 	return w.count
 }
 
-func (w *rtcpWriter) writePacket(p rtcpPacket) error {
+func (w *rtcpWriter) writePacket(ps ...rtcpPacket) error {
 	w.Lock()
 	defer w.Unlock()
 
+	if len(ps) == 0 {
+		return nil
+	}
+
 	b := packet.NewWriter(w.buf)
-	if err := p.writeTo(b); err != nil {
-		return err
+	for _, p := range ps {
+		if err := p.writeTo(b); err != nil {
+			return err
+		}
 	}
 
 	index := w.index()
@@ -396,21 +401,102 @@ func (w *rtcpWriter) writePacket(p rtcpPacket) error {
 		}
 	}
 
+	if _, err := w.out.Write(b.Bytes()); err != nil {
+		return err
+	}
+
 	w.count += 1
 	w.totalBytes += uint64(b.Length())
-
-	_, err := w.conn.Write(b.Bytes())
-	return err
+	return nil
 }
 
-func (w *rtcpWriter) writePackets(p ...rtcpPacket) error {
-	switch len(p) {
-	case 0:
-		return nil
-	case 1:
-		return w.writePacket(p[0])
-	default:
-		cp := &rtcpCompoundPacket{p}
-		return w.writePacket(cp)
+// rtcpReader maintains state necessary for receiving RTCP packets.
+type rtcpReader struct {
+	ssrc uint32
+
+	// Most recent observed RTCP index.
+	lastIndex uint64
+
+	// Number of RTCP packets received. (Note: compound RTCP packets count as
+	// multiple packets.)
+	count uint64
+
+	// Total number of RTCP bytes received.
+	totalBytes uint64
+
+	// SRTP cryptographic context.
+	crypto *cryptoContext
+
+	// Callback for RTCP packets.
+	handler func(p rtcpPacket) error
+}
+
+func newRTCPReader(ssrc uint32, crypto *cryptoContext) *rtcpReader {
+	r := new(rtcpReader)
+	r.ssrc = ssrc
+	r.crypto = crypto
+	return r
+}
+
+// Read and process a single RTCP packet. buf contains the serialized packet,
+// which will be decrypted in place.
+func (r *rtcpReader) readPacket(buf []byte) error {
+	var index uint64
+	if r.crypto != nil {
+		var err error
+		if buf, index, err = r.crypto.verifyAndDecryptRTCP(buf); err != nil {
+			return err
+		}
+	} else {
+		index = r.lastIndex + 1
 	}
+
+	if index > r.lastIndex {
+		r.lastIndex = index
+	}
+	r.totalBytes += uint64(len(buf))
+
+	var h rtcpHeader
+	pr := packet.NewReader(buf)
+	for pr.Remaining() > 0 {
+		if err := h.readFrom(pr); err != nil {
+			return err
+		}
+
+		var p rtcpPacket
+		switch h.packetType {
+		case rtcpReceiverReportType:
+			p = new(rtcpReceiverReport)
+		case rtcpSenderReportType:
+			p = new(rtcpSenderReport)
+		case rtcpSourceDescriptionType:
+			p = new(rtcpSourceDescription)
+		case rtcpGoodbyeType:
+			p = new(rtcpGoodbye)
+		case rtcpTransportLayerFeedbackType, rtcpPayloadSpecificFeedbackType:
+			p = newFeedbackPacket(h.packetType, h.count)
+		default:
+			log.Debug("Ignoring unimplemented RTCP packet type: %d", h.packetType)
+		}
+
+		if p == nil {
+			pr.Skip(4 * h.length)
+			continue
+		}
+
+		if err := p.readFrom(pr, &h); err != nil {
+			return err
+		}
+		r.count += 1
+
+		if r.handler == nil {
+			log.Warn("Received RTCP packet, but no handler registered")
+			return nil
+		}
+		if err := r.handler(p); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }

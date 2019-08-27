@@ -1,7 +1,8 @@
 package rtp
 
 import (
-	"net"
+	"io"
+	"math/rand"
 	"sync"
 
 	errors "golang.org/x/xerrors"
@@ -54,8 +55,6 @@ func (h *rtpHeader) writeTo(w *packet.Writer) {
 	for i := range h.csrc {
 		w.WriteUint32(h.csrc[i])
 	}
-
-	// TODO: Padding.
 }
 
 func (h *rtpHeader) readFrom(r *packet.Reader) error {
@@ -85,7 +84,7 @@ func (h *rtpHeader) readFrom(r *packet.Reader) error {
 
 // rtpWriter maintains state necessary for sending RTP data packets.
 type rtpWriter struct {
-	conn net.Conn
+	out  io.Writer
 	ssrc uint32
 
 	// Initial sequence number. The current sequence number is computed from
@@ -108,11 +107,11 @@ type rtpWriter struct {
 	sync.Mutex
 }
 
-func newRTPWriter(conn net.Conn, ssrc uint32, crypto *cryptoContext) *rtpWriter {
+func newRTPWriter(out io.Writer, ssrc uint32, crypto *cryptoContext) *rtpWriter {
 	w := new(rtpWriter)
-	w.conn = conn
+	w.out = out
 	w.ssrc = ssrc
-	w.sequenceStart = 1        // TODO: Randomize initial sequence number.
+	w.sequenceStart = uint16(rand.Uint32())
 	w.buf = make([]byte, 1500) // TODO: Determine from MTU
 	w.crypto = crypto
 	return w
@@ -148,7 +147,7 @@ func (w *rtpWriter) writePacket(payloadType byte, marker bool, timestamp uint32,
 	w.count += 1
 	w.totalBytes += uint64(len(payload))
 
-	_, err := w.conn.Write(p.Bytes())
+	_, err := w.out.Write(p.Bytes())
 	return err
 }
 
@@ -233,9 +232,34 @@ func (r *rtpReader) readPacket(buf []byte) error {
 	return r.handler(hdr, payload)
 }
 
+// Update the rollover counter (ROC) and sequence number (SEQ), which we combine
+// into a single 48-bit index variable. Return the index corresponding to the
+// provided sequence number.
+// See https://tools.ietf.org/html/rfc3711#section-3.3.1
 func (r *rtpReader) updateIndex(sequence uint16) uint64 {
-	// TODO: Compute index: https://tools.ietf.org/html/rfc3711#section-3.3.1
-	r.lastSequence = sequence
-	r.lastIndex = uint64(sequence)
-	return r.lastIndex
+	if r.lastIndex == 0 {
+		// Initialize ROC to 0, so index = SEQ.
+		r.lastSequence = sequence
+		r.lastIndex = uint64(sequence)
+		return r.lastIndex
+	}
+
+	// If either sequence or lastSequence is close to 2^16, and the other is
+	// close to 0, then correct for rollover.
+	delta := int64(sequence) - int64(r.lastSequence)
+	if delta > 32768 {
+		delta -= 65536
+	} else if delta <= -32768 {
+		delta += 65536
+	}
+	if delta > 4096 {
+		log.Debug("large RTP sequence number delta: %d -> %d", r.lastSequence, sequence)
+	}
+
+	index := uint64(int64(r.lastIndex) + delta)
+	if index > r.lastIndex {
+		r.lastIndex = index
+		r.lastSequence = sequence
+	}
+	return index
 }

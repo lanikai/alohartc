@@ -3,6 +3,7 @@ package rtp
 import (
 	"bytes"
 	"io"
+	"math/rand"
 	"time"
 
 	"github.com/lanikai/alohartc/internal/media"
@@ -22,12 +23,27 @@ const (
 )
 
 func (s *Stream) SendVideo(quit <-chan struct{}, payloadType byte, src media.VideoSource) error {
-	initialTimestamp := uint32(0) // TODO: randomize timestamp
-
 	w := h264Writer{
 		rtpWriter:   s.rtpOut,
 		payloadType: payloadType,
-		timestamp:   initialTimestamp,
+		timestamp:   rand.Uint32(),
+	}
+
+	s.rtcpIn.handler = func(pkt rtcpPacket) error {
+		switch p := pkt.(type) {
+		case *rtcpReceiverReport:
+			log.Debug("Received ReceiverReport for stream %d: %#v", payloadType, p)
+		case *nackFeedbackMessage:
+			log.Debug("Received NACK for stream %d: %#v", payloadType, p)
+			// TODO: w.resendPackets(p.getLostPackets())
+		case *pliFeedbackMessage:
+			log.Debug("Received PLI for stream %d: %#v", payloadType, p)
+			// TODO: src.TriggerIFrame()
+		default:
+			log.Debug("Received unrecognized RTCP packet for stream %d: %#v", payloadType, p)
+		}
+		// TODO: FIR, REMB, others
+		return nil
 	}
 
 	r := src.AddReceiver(16)
@@ -42,40 +58,13 @@ func (s *Stream) SendVideo(quit <-chan struct{}, payloadType byte, src media.Vid
 				log.Debug("SendVideo %d stopping: %v", payloadType, r.Err())
 				return r.Err()
 			}
-			if err := w.consume(buf); err != nil {
+			err := w.packetize(buf.Bytes())
+			buf.Release()
+			if err != nil {
 				return err
 			}
 		}
 		// TODO: Sender reports, RTCP feedback, etc.
-	}
-}
-
-func (s *Stream) ReceiveVideo(quit <-chan struct{}, consume func(buf *packet.SharedBuffer) error) error {
-	r := h264Reader{
-		rtpReader: s.rtpIn,
-		ch:        make(chan *packet.SharedBuffer, 4),
-	}
-	s.rtpIn.handler = r.handlePacket
-
-	receiverReportTicker := time.NewTicker(2 * time.Second)
-	defer receiverReportTicker.Stop()
-
-	for {
-		select {
-		case <-quit:
-			return nil
-		case buf, more := <-r.ch:
-			if !more {
-				return io.EOF
-			}
-
-			if err := consume(buf); err != nil {
-				return err
-			}
-		case <-receiverReportTicker.C:
-			log.Debug("sending Receiver Report for remote SSRC %02x", s.RemoteSSRC)
-			s.sendReceiverReport()
-		}
 	}
 }
 
@@ -90,28 +79,16 @@ type h264Writer struct {
 	stap []byte
 }
 
-func (w *h264Writer) consume(buf *packet.SharedBuffer) error {
-	defer buf.Release()
-
-	nalu := buf.Bytes()
+func (w *h264Writer) packetize(nalu []byte) error {
 	naluType := nalu[0] & 0x1f
 	switch naluType {
 	case naluTypeSEI, naluTypeSPS, naluTypePPS:
 		// Merge consecutive SEI/SPS/PPS into a single STAP-A packet.
 		w.stap = appendSTAP(w.stap, nalu)
 		return nil
-	default:
-		return w.packetize(nalu)
 	}
-}
 
-func (w *h264Writer) advanceTimestamp() {
-	// TODO: Use framerate from video source
-	w.timestamp += 3000
-}
-
-func (w *h264Writer) packetize(nalu []byte) error {
-	// First send STAP-A packet, if present.
+	// Send accumulated STAP-A packet, if present.
 	if len(w.stap) > 0 {
 		if err := w.writePacket(w.payloadType, false, w.timestamp, w.stap); err != nil {
 			return err
@@ -136,7 +113,6 @@ func (w *h264Writer) packetize(nalu []byte) error {
 	indicator := nalu[0]&0xe0 | naluTypeFU_A
 	start := byte(0x80)
 	end := byte(0)
-	naluType := nalu[0] & 0x1f
 	p := packet.NewWriterSize(maxSize) // TODO: sync.Pool
 	for i := 1; i < len(nalu); i += maxSize - 2 {
 		tail := i + maxSize - 2
@@ -159,6 +135,40 @@ func (w *h264Writer) packetize(nalu []byte) error {
 	return nil
 }
 
+func (w *h264Writer) advanceTimestamp() {
+	// TODO: Use framerate from video source
+	w.timestamp += 3000
+}
+
+func (s *Stream) ReceiveVideo(quit <-chan struct{}, consume func(buf *packet.SharedBuffer) error) error {
+	r := h264Reader{
+		rtpReader: s.rtpIn,
+		ch:        make(chan *packet.SharedBuffer, 4),
+	}
+	s.rtpIn.handler = r.handleData
+
+	receiverReportTicker := time.NewTicker(2 * time.Second)
+	defer receiverReportTicker.Stop()
+
+	for {
+		select {
+		case <-quit:
+			return nil
+		case buf, more := <-r.ch:
+			if !more {
+				return io.EOF
+			}
+
+			if err := consume(buf); err != nil {
+				return err
+			}
+		case <-receiverReportTicker.C:
+			log.Debug("sending Receiver Report for remote SSRC %02x", s.RemoteSSRC)
+			s.sendReceiverReport()
+		}
+	}
+}
+
 type h264Reader struct {
 	*rtpReader
 
@@ -169,11 +179,7 @@ type h264Reader struct {
 	buf *bytes.Buffer
 }
 
-func copyBytes(buf []byte) []byte {
-	return append([]byte(nil), buf...)
-}
-
-func (r *h264Reader) handlePacket(hdr rtpHeader, payload []byte) error {
+func (r *h264Reader) handleData(hdr rtpHeader, payload []byte) error {
 	log.Trace(4, "Received RTP payload: %d", len(payload))
 
 	// Assemble RTP packets into full NAL units.
@@ -258,4 +264,8 @@ func splitSTAP(buf []byte) ([][]byte, error) {
 		nalus = append(nalus, p.ReadSlice(int(n)))
 	}
 	return nalus, nil
+}
+
+func copyBytes(buf []byte) []byte {
+	return append([]byte(nil), buf...)
 }

@@ -41,6 +41,11 @@ func (w *Writer) WriteUint32(v uint32) {
 	w.offset += 4
 }
 
+func (w *Writer) WriteUint64(v uint64) {
+	networkOrder.PutUint64(w.buffer[w.offset:], v)
+	w.offset += 8
+}
+
 // Write the given bytes, if there is enough room.
 func (w *Writer) WriteSlice(p []byte) error {
 	if err := w.CheckCapacity(len(p)); err != nil {

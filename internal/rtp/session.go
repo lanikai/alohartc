@@ -126,7 +126,9 @@ func (s *Session) readLoop(conn net.Conn) {
 		}
 
 		if rtcp {
-			//	stream.handleRTCP(pkt)
+			if err := stream.rtcpIn.readPacket(pkt); err != nil {
+				log.Error("RTP session: %v", err)
+			}
 		} else {
 			if err := stream.rtpIn.readPacket(pkt); err != nil {
 				log.Error("RTP session: %v", err)

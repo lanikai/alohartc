@@ -48,7 +48,7 @@ type Stream struct {
 	rtcpOut *rtcpWriter
 
 	// RTCP state for incoming control packets.
-	//rtcpIn *rtcpReader
+	rtcpIn *rtcpReader
 }
 
 func newStream(session *Session, opts StreamOptions) *Stream {
@@ -62,15 +62,23 @@ func newStream(session *Session, opts StreamOptions) *Stream {
 		s.rtpIn = newRTPReader(opts.RemoteSSRC, session.readContext)
 	}
 	s.rtcpOut = newRTCPWriter(session.ControlConn, opts.LocalSSRC, session.writeContext)
-	//s.rtcpIn = newRTCPReader(session.ControlConn, opts.LocalSSRC, session.readContext)
+	s.rtcpIn = newRTCPReader(opts.RemoteSSRC, session.readContext)
 	return s
 }
 
 func (s *Stream) Close() error {
-	s.Goodbye("stream closed")
+	s.sendGoodbye("stream closed")
 	s.rtpOut = nil
 	s.rtpIn = nil
 	return nil
+}
+
+func (s *Stream) sendSenderReport() error {
+	sdes := &rtcpSourceDescription{
+		ssrc:  s.LocalSSRC,
+		cname: s.LocalCNAME,
+	}
+	return s.rtcpOut.writePacket(sdes)
 }
 
 func (s *Stream) sendReceiverReport() error {
@@ -86,11 +94,11 @@ func (s *Stream) sendReceiverReport() error {
 		ssrc:  s.LocalSSRC,
 		cname: s.LocalCNAME,
 	}
-	return s.rtcpOut.writePackets(rr, sdes)
+	return s.rtcpOut.writePacket(rr, sdes)
 }
 
 // Send RTCP Goodbye packet to inform the remote peer that we're leaving.
-func (s *Stream) Goodbye(reason string) error {
+func (s *Stream) sendGoodbye(reason string) error {
 	rr := &rtcpReceiverReport{
 		receiver: s.LocalSSRC,
 	}
@@ -102,7 +110,5 @@ func (s *Stream) Goodbye(reason string) error {
 		ssrc:   s.LocalSSRC,
 		reason: reason,
 	}
-	return s.rtcpOut.writePackets(rr, sdes, bye)
+	return s.rtcpOut.writePacket(rr, sdes, bye)
 }
-
-// TODO; rtpIn/rtcpIn consumers

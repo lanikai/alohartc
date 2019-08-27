@@ -75,12 +75,6 @@ type PeerConnection struct {
 	// Media tracks
 	localAudio media.AudioSource
 	localVideo media.VideoSource
-
-	// Media tracks
-	//localVideoTrack  Track
-	//remoteVideoTrack Track // not implemented
-	//localAudioTrack  Track // not implemented
-	//remoteAudioTrack Track // not implemented
 }
 
 // Must is a helper that wraps a call to a function returning
@@ -384,12 +378,23 @@ func (pc *PeerConnection) Stream() error {
 		WriteSalt: writeSalt,
 	})
 
-	videoStream := rtpSession.AddStream(rtp.StreamOptions{
-		// TODO: Extract these from the SDP instead of hard-coding.
-		LocalSSRC:  2541098696,
-		LocalCNAME: "cYhx/N8U7h7+3GW3",
-		Direction:  "sendonly",
-	})
+	videoStreamOpts := rtp.StreamOptions{
+		Direction: "sendonly",
+	}
+	for _, m := range pc.localDescription.Media {
+		if m.Type == "video" {
+			fmt.Sscanf(m.GetAttr("ssrc"), "%d cname:%s", &videoStreamOpts.LocalSSRC, &videoStreamOpts.LocalCNAME)
+			break
+		}
+	}
+	for _, m := range pc.remoteDescription.Media {
+		if m.Type == "video" {
+			fmt.Sscanf(m.GetAttr("ssrc"), "%d cname:%s", &videoStreamOpts.RemoteSSRC, &videoStreamOpts.RemoteCNAME)
+			break
+		}
+	}
+
+	videoStream := rtpSession.AddStream(videoStreamOpts)
 	go videoStream.SendVideo(pc.ctx.Done(), pc.DynamicType, pc.localVideo)
 
 	//rtpSession, err := rtp.NewSecureSession(rtpEndpoint, readKey, readSalt, writeKey, writeSalt)
