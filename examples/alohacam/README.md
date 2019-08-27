@@ -1,4 +1,4 @@
-Demonstrates send-only video from WebRTC native peer. Uses a built-in signaling
+Demonstrates send-only video from WebRTC native peer. Uses a built-insignaling
 server.
 
 To cross-compile (e.g. for aarch64 / arm64):

@@ -29,8 +29,8 @@ var (
 
 func init() {
 	flag.IntVar(&flagPort, "p", 8000, "HTTP port on which to listen")
-	flag.StringVar(&flagHTTPSCert, "httpsCert", "", "HTTPS server certificate")
-	flag.StringVar(&flagHTTPSKey, "httpsKey", "", "HTTPS server private key")
+	flag.StringVar(&flagHTTPSCert, "httpsCert", "cert.pem", "HTTPS server certificate")
+	flag.StringVar(&flagHTTPSKey, "httpsKey", "key.pem", "HTTPS server private key")
 
 	RegisterListener(localWebsocketListener)
 }
