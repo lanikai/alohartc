@@ -6,25 +6,30 @@
 //
 //////////////////////////////////////////////////////////////////////////////
 
-package alohartc
+package media
 
 import (
 	"io"
 	"os"
 )
 
-// MediaSinker is the interface for media sinks (e.g. speaker, display)
-type MediaSinker interface {
+// MediaSink is the interface for media sinks (e.g. speaker, display)
+type MediaSink interface {
 	io.Closer
 	io.Writer
 }
 
-// AudioSinker is the interface for audio sinks (e.g. speaker)
-type AudioSinker interface {
-	MediaSinker
+// AudioSink is the interface for audio sinks (e.g. speaker)
+type AudioSink interface {
+	MediaSink
 
 	// Configure audio sink sample rate, number of channels, and sample format
 	Configure(rate int, channels int, format int) error
+}
+
+// VideoSink is the stub interface for video sinks (e.g. display)
+type VideoSink interface {
+	MediaSink
 }
 
 // FileMediaSink is a generic file writer, useful for testing or writing

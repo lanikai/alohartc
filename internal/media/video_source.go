@@ -1,15 +1,10 @@
 package media
 
 type VideoSource interface {
-	Source
+	MediaSource
 
 	Codec() string
 
 	Width() int
 	Height() int
-
-	//GetFramerate() float32
-	//GetBitrate() int
-
-	//AdjustBitrate(bps int)
 }

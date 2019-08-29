@@ -1,9 +1,6 @@
 //////////////////////////////////////////////////////////////////////////////
 //
-// Media sources unique to Linux:
-//
-// * ALSAAudioSource: Advanced Linux Sound Architecture (ALSA) audio source
-// * V4L2VideoSource: Video4Linux2 video source
+// Advanced Linux Sound Architecture (ALSA) audio source
 //
 // Copyright 2019 Lanikai Labs. All rights reserved.
 //
@@ -11,7 +8,7 @@
 
 // +build linux
 
-package alohartc
+package media
 
 // #cgo pkg-config: alsa
 // #include <stdlib.h>
@@ -217,10 +214,4 @@ func (as *ALSAAudioSource) capture() {
 			}
 		}
 	}
-}
-
-// TODO Port v4l2 module to a cgo-based source using videodev2.h. More
-//      robust, and now need cgo anyhow for libasound2 and libopus.
-type V4L2VideoSource struct {
-	VideoSourcer
 }

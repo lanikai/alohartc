@@ -2,12 +2,10 @@ package media
 
 import (
 	"sync"
-
-	"github.com/lanikai/alohartc/internal/packet"
 )
 
-// Flow is a concrete implementation of Source that can be embedded into a
-// struct.
+// Flow is a concrete implementation of MediaSource that can be embedded
+// into a struct.
 type Flow struct {
 	// Start is called when the first receiver is added.
 	Start func()
@@ -15,12 +13,12 @@ type Flow struct {
 	// Stop is called when the last receiver is removed.
 	Stop func()
 
-	receivers []*flowReceiver
+	subscribers []chan []byte
 
 	sync.Mutex
 }
 
-func (f *Flow) AddReceiver(capacity int) Receiver {
+func (f *Flow) Subscribe(capacity int) <-chan []byte {
 	f.Lock()
 	defer f.Unlock()
 
@@ -28,92 +26,71 @@ func (f *Flow) AddReceiver(capacity int) Receiver {
 		panic("media.Flow: receiver capacity must be nonzero")
 	}
 
-	r := &flowReceiver{
-		ch: make(chan *packet.SharedBuffer, capacity),
-	}
-	f.receivers = append(f.receivers, r)
-	if f.Start != nil && len(f.receivers) == 1 {
+	s := make(chan []byte, capacity)
+	f.subscribers = append(f.subscribers, s)
+	if f.Start != nil && len(f.subscribers) == 1 {
 		f.Start()
 	}
-	return r
+	return s
 }
 
-func (f *Flow) RemoveReceiver(r Receiver) {
+func (f *Flow) Unsubscribe(s <-chan []byte) error {
 	f.Lock()
 	defer f.Unlock()
 
 	// Find and delete r from the receivers list.
 	// See https://github.com/golang/go/wiki/SliceTricks
-	for i := range f.receivers {
-		if f.receivers[i] == r {
-			f.receivers[i].closeAndDrain()
-
-			n := len(f.receivers)
-			copy(f.receivers[i:], f.receivers[i+1:])
-			f.receivers[n-1] = nil
-			f.receivers = f.receivers[:n-1]
+	for i, subscriber := range f.subscribers {
+		if s == subscriber {
+			subs := f.subscribers
+			close(subs[i])
+			subs[len(subs)-1], subs[i] = subs[i], subs[len(subs)-1]
+			f.subscribers = subs[:len(subs)-1]
 			break
 		}
 	}
 
-	if f.Stop != nil && len(f.receivers) == 0 {
+	if f.Stop != nil && len(f.subscribers) == 0 {
 		go f.Stop()
 	}
-}
 
-func (f *Flow) Put(buf *packet.SharedBuffer) error {
-	f.Lock()
-	defer f.Unlock()
-
-	for _, r := range f.receivers {
-		buf.Hold()
-		select {
-		case r.ch <- buf:
-		default:
-			log.Warn("media.Flow: receiver missed a buffer")
-			// TODO: Keep per-receiver count of missed buffers?
-			buf.Release()
-		}
-	}
-	buf.Release()
 	return nil
 }
 
-// TODO: Do we need this?
-func (f *Flow) PutBuffer(data []byte, done func()) error {
-	return f.Put(packet.NewSharedBuffer(data, 1, done))
-}
-
-func (f *Flow) Shutdown(cause error) {
+func (f *Flow) Write(p []byte) (n int, err error) {
 	f.Lock()
 	defer f.Unlock()
 
-	if len(f.receivers) > 0 {
-		for _, r := range f.receivers {
-			r.err = cause
-			r.closeAndDrain()
+	for _, subscriber := range f.subscribers {
+		select {
+		case subscriber <- p:
+			// Added slice reference to subscriber
+		default:
+			// Drop oldest byte slice, add newest
+			<-subscriber
+			subscriber <- p
+
+			log.Warn("media.Flow: subscriber missed a buffer")
+			// TODO: Keep per-subscriber count of missed buffers?
 		}
-		f.receivers = nil
 	}
 
+	return len(p), nil
 }
 
-type flowReceiver struct {
-	ch  chan *packet.SharedBuffer
-	err error
-}
+func (f *Flow) Close() error {
+	f.Lock()
+	defer f.Unlock()
 
-func (r *flowReceiver) Buffers() <-chan *packet.SharedBuffer {
-	return r.ch
-}
-
-func (r *flowReceiver) Err() error {
-	return r.err
-}
-
-func (r *flowReceiver) closeAndDrain() {
-	close(r.ch)
-	for buf := range r.ch {
-		buf.Release()
+	if len(f.subscribers) > 0 {
+		for _, subscriber := range f.subscribers {
+			close(subscriber)
+			for len(subscriber) > 0 {
+				<-subscriber // Drain
+			}
+		}
+		f.subscribers = nil
 	}
+
+	return nil
 }

@@ -117,13 +117,13 @@ func (f *mp4File) readLoop(quit <-chan struct{}) error {
 			switch cd := codec.(type) {
 			case h264parser.CodecData:
 				// Send SPS and PPS along with key frame.
-				flow.PutBuffer(cd.SPS(), nil)
-				flow.PutBuffer(cd.PPS(), nil)
+				flow.Write(cd.SPS())
+				flow.Write(cd.PPS())
 				data = skipSEI(data)
 			}
 		}
 
-		flow.PutBuffer(data, nil)
+		flow.Write(data)
 
 		log.Debug("Packet: %6d bytes, starting with %02x", len(data), data[0:4])
 	}

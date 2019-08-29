@@ -1,13 +1,14 @@
 //////////////////////////////////////////////////////////////////////////////
 //
-// Darwin specific media sinks. Stubs for unsupported sinks for compilation
-// and tests to succeed.
+// Stubs for unsupported sinks for compilation and tests to succeed.
 //
 // Copyright 2019 Lanikai Labs LLC. All rights reserved.
 //
 //////////////////////////////////////////////////////////////////////////////
 
-package alohartc
+// +build !linux
+
+package media
 
 type ALSAAudioSink struct {
 }

@@ -10,7 +10,7 @@
 
 // +build linux
 
-package alohartc
+package media
 
 // #cgo pkg-config: alsa
 // #include <stdlib.h>

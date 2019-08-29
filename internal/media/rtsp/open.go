@@ -141,12 +141,12 @@ func (video *videoSource) start() {
 
 		// Feed video buffers from the RTP stream into video.Flow, until the
 		// stream is interrupted.
-		err := stream.ReceiveVideo(video.quit, video.Flow.Put)
+		stream.ReceiveVideo(video.quit, video.Flow.Write)
 
 		// Clean up nicely on exit.
 		stream.Close()
 		video.cli.Teardown(video.uri, sessionID)
-		video.Flow.Shutdown(err)
+		video.Flow.Close()
 	}()
 
 	// Tell RTSP server to begin sending the video stream.

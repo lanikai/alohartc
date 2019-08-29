@@ -46,20 +46,19 @@ func (s *Stream) SendVideo(quit <-chan struct{}, payloadType byte, src media.Vid
 		return nil
 	}
 
-	r := src.AddReceiver(16)
-	defer src.RemoveReceiver(r)
+	subscriber := src.Subscribe(16)
+	defer src.Unsubscribe(subscriber)
 
 	for {
 		select {
 		case <-quit:
 			return nil
-		case buf, more := <-r.Buffers():
+		case buf, more := <-subscriber:
 			if !more {
-				log.Debug("SendVideo %d stopping: %v", payloadType, r.Err())
-				return r.Err()
+				log.Debug("SendVideo %d stopping", payloadType)
+				return nil
 			}
-			err := w.packetize(buf.Bytes())
-			buf.Release()
+			err := w.packetize(buf)
 			if err != nil {
 				return err
 			}
@@ -140,10 +139,10 @@ func (w *h264Writer) advanceTimestamp() {
 	w.timestamp += 3000
 }
 
-func (s *Stream) ReceiveVideo(quit <-chan struct{}, consume func(buf *packet.SharedBuffer) error) error {
+func (s *Stream) ReceiveVideo(quit <-chan struct{}, consume func(p []byte) (n int, err error)) error {
 	r := h264Reader{
 		rtpReader: s.rtpIn,
-		ch:        make(chan *packet.SharedBuffer, 4),
+		ch:        make(chan []byte, 4),
 	}
 	s.rtpIn.handler = r.handleData
 
@@ -159,7 +158,7 @@ func (s *Stream) ReceiveVideo(quit <-chan struct{}, consume func(buf *packet.Sha
 				return io.EOF
 			}
 
-			if err := consume(buf); err != nil {
+			if _, err := consume(buf); err != nil {
 				return err
 			}
 		case <-receiverReportTicker.C:
@@ -173,7 +172,7 @@ type h264Reader struct {
 	*rtpReader
 
 	// Channel for received NAL units.
-	ch chan *packet.SharedBuffer
+	ch chan []byte
 
 	// Buffer for assembling FU-A packets into a complete NALU.
 	buf *bytes.Buffer
@@ -193,7 +192,7 @@ func (r *h264Reader) handleData(hdr rtpHeader, payload []byte) error {
 			return err
 		}
 		for _, nalu := range nalus {
-			r.ch <- packet.NewSharedBuffer(nalu, 1, nil)
+			r.ch <- nalu
 		}
 	case naluTypeFU_A:
 		// Reassemble a sequence of FU-A packets.
@@ -213,13 +212,13 @@ func (r *h264Reader) handleData(hdr rtpHeader, payload []byte) error {
 		}
 		r.buf.Write(payload[2:])
 		if end != 0 {
-			r.ch <- packet.NewSharedBuffer(r.buf.Bytes(), 1, nil)
+			r.ch <- r.buf.Bytes()
 			r.buf = nil
 		}
 	default:
 		// Payload is a single NALU.
 		payload = copyBytes(payload)
-		r.ch <- packet.NewSharedBuffer(payload, 1, nil)
+		r.ch <- payload
 	}
 	return nil
 }

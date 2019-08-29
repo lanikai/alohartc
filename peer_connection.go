@@ -77,8 +77,8 @@ type PeerConnection struct {
 	// Media tracks
 	localAudio  media.AudioSource
 	localVideo  media.VideoSource
-	remoteAudio media.AudioSource
-	remoteVideo media.VideoSource // not implemented
+	remoteAudio media.AudioSink
+	remoteVideo media.VideoSink // not implemented
 }
 
 // Must is a helper that wraps a call to a function returning
@@ -512,27 +512,19 @@ func (pc *PeerConnection) Stream() error {
 	videoStream := rtpSession.AddStream(videoStreamOpts)
 	go videoStream.SendVideo(pc.ctx.Done(), pc.DynamicType, pc.localVideo)
 
-	//rtpSession, err := rtp.NewSecureSession(rtpEndpoint, readKey, readSalt, writeKey, writeSalt)
-	//go streamH264(pc.ctx, pc.localVideoTrack, rtpSession.NewH264Stream(ssrc, cname))
-
 	// Start goroutine for processing incoming SRTCP packets
+	// TODO: Add back in
 	//go srtcpReaderRunloop(dataMux, readKey, readSalt)
 
-	// Begin a new SRTP session
-	//srtpSession, err := srtp.NewSession(srtpEndpoint, pc.DynamicType, writeKey, writeSalt)
-	//if err != nil {
-	//	return err
-	//}
-
 	go func() {
-		as, err := NewALSAAudioSink("hw:seeed2micvoicec")
+		as, err := media.NewALSAAudioSink("hw:seeed2micvoicec")
 		if err != nil {
 			log.Fatal(err)
 		}
 		defer as.Close()
 
 		// configure soundcard for opus codec
-		if err := as.Configure(48000, 2, S16LE); err != nil {
+		if err := as.Configure(48000, 2, media.S16LE); err != nil {
 			log.Fatal(err)
 		}
 
@@ -546,7 +538,7 @@ func (pc *PeerConnection) Stream() error {
 		}
 
 		// instantiate decoder
-		decoder, err := NewOpusDecoder(false)
+		decoder, err := media.NewOpusDecoder(false)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -578,14 +570,14 @@ func (pc *PeerConnection) Stream() error {
 	//}
 
 	// Goroutine for sending local audio track to remote peer
-	if nil != pc.audioSource {
+	if nil != pc.localAudio {
 		// create srtp decryption context
 		sess, err := srtp.NewAudioSession(remoteAudioEndpoint, 111, writeKey, writeSalt)
 		if err != nil {
 			log.Fatal(err)
 		}
 
-		go sendAudioTrack(pc.ctx, sess, pc.audioSource)
+		go sendAudioTrack(pc.ctx, sess, pc.localAudio)
 	}
 
 	// There are two termination conditions that we need to deal with here:
@@ -683,13 +675,13 @@ func sendVideoTrack(conn *srtp.Conn, track Track) error {
 
 // sendAudioTrack transmits the local audio track to remote peer
 // Terminates either on track read error or SRTP write error.
-func sendAudioTrack(ctx context.Context, conn *srtp.AudioConn, as AudioSourcer) error {
-	audio := as.Subscribe(10)
+func sendAudioTrack(ctx context.Context, conn *srtp.AudioConn, as media.AudioSource) error {
+	s := as.Subscribe(16)
 
 	for {
 		select {
 		// Read audio (already encoded with selected codec)
-		case p, ok := <-audio:
+		case p, ok := <-s:
 			if !ok {
 				return errors.New("audio source closed")
 			}
@@ -698,9 +690,7 @@ func sendAudioTrack(ctx context.Context, conn *srtp.AudioConn, as AudioSourcer) 
 			}
 		// Abort on context termination
 		case <-ctx.Done():
-			if err := as.Unsubscribe(audio); err != nil {
-				return err
-			}
+			as.Unsubscribe(s)
 
 			return nil
 		}

@@ -18,6 +18,9 @@ import (
 	"github.com/lanikai/alohartc/internal/media/rtsp"
 	"github.com/lanikai/alohartc/internal/signaling"
 	"github.com/lanikai/alohartc/internal/v4l2"
+
+	"net/http"
+	_ "net/http/pprof"
 )
 
 // Populated via -ldflags="-X ...". See Makefile.
@@ -65,6 +68,10 @@ func main() {
 		}
 	}(c)
 
+	go func() {
+		log.Println(http.ListenAndServe(":6060", nil))
+	}()
+
 	// Always print version information
 	version()
 
@@ -101,13 +108,13 @@ func main() {
 	}
 
 	// Open audio source
-	as, err := alohartc.NewALSAAudioSource("hw:seeed2micvoicec")
+	as, err := media.NewALSAAudioSource("hw:seeed2micvoicec")
 	if nil != err {
 		log.Fatal(err)
 	}
 
 	// Configure soundcard for Opus codec
-	if err := as.Configure(48000, 2, alohartc.S16LE); err != nil {
+	if err := as.Configure(48000, 2, media.S16LE); err != nil {
 		log.Fatal(err)
 	}
 	audioSource = as

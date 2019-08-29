@@ -53,7 +53,8 @@ func Open(devpath string, cfg Config) (media.VideoSource, error) {
 			for {
 				buf, err := dev.ReadFrame()
 				if err != nil {
-					v.Flow.Shutdown(err)
+					log.Info(err.Error())
+					v.Flow.Close()
 					break
 				}
 				// On the Raspberry Pi, each picture NALU is delivered as a
@@ -63,7 +64,7 @@ func Open(devpath string, cfg Config) (media.VideoSource, error) {
 				for _, nalu := range bytes.Split(buf, []byte{0, 0, 0, 1}) {
 					if len(nalu) > 0 {
 						log.Debug("nalu = % 5d bytes, %02x", len(nalu), nalu[0:2])
-						v.Flow.PutBuffer(nalu, nil)
+						v.Flow.Write(nalu)
 					}
 				}
 			}
