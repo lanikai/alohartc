@@ -50,6 +50,10 @@ func (a *Agent) Configure(mid, username, localPassword, remotePassword string) {
 	a.checklist.username = username
 	a.checklist.localPassword = localPassword
 	a.checklist.remotePassword = remotePassword
+	a.checklist.priorityTable = &PriorityTable{
+		ipv4: 65534, // evens
+		ipv6: 65535, // odds; slightly higher initial local preference for IPv6
+	}
 }
 
 func (a *Agent) Start(ctx context.Context, rcand <-chan Candidate) <-chan Candidate {
@@ -80,7 +84,7 @@ func (a *Agent) connect(ctx context.Context, rcand <-chan Candidate, lcand chan<
 	// Gather local candidates for each base.
 	go func() {
 		defer close(lcand)
-		gatherAllCandidates(ctx, bases, func(c Candidate) {
+		gatherAllCandidates(ctx, a.checklist.priorityTable, bases, func(c Candidate) {
 			a.addLocalCandidate(c)
 			select {
 			case lcand <- c:
