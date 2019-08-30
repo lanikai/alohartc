@@ -8,8 +8,13 @@ import (
 	"time"
 )
 
+type PriorityTable struct {
+	ipv4 int
+	ipv6 int
+}
+
 type Checklist struct {
-	state       checklistState
+	state checklistState
 
 	// Checklist state listeners, each with a unique id.
 	listeners      map[int]chan checklistState
@@ -35,6 +40,8 @@ type Checklist struct {
 
 	// Index of the next candidate pair to be checked
 	nextToCheck int
+
+	priorityTable *PriorityTable
 }
 
 type checklistState int
@@ -195,8 +202,8 @@ func (cl *Checklist) adoptPeerReflexiveCandidate(base *Base, raddr net.Addr, pri
 	cl.mutex.Lock()
 	defer cl.mutex.Unlock()
 
-	local := makeHostCandidate(base)
-	remote := makePeerReflexiveCandidate(base, raddr, priority)
+	local := makeHostCandidate(cl.priorityTable, base)
+	remote := makePeerReflexiveCandidate(cl.priorityTable, base, raddr, priority)
 	log.Debug("New peer-reflexive %s", remote)
 
 	p := newCandidatePair(cl.nextPairID, local, remote)
@@ -238,7 +245,7 @@ func (cl *Checklist) sendCheck(p *CandidatePair) error {
 	req := newStunBindingRequest("")
 	req.addAttribute(stunAttrUsername, []byte(cl.username))
 	req.addAttribute(stunAttrIceControlled, []byte{1, 2, 3, 4, 5, 6, 7, 8})
-	req.addPriority(p.local.peerPriority())
+	req.addPriority(p.local.peerPriority(cl.priorityTable))
 	req.addMessageIntegrity(cl.remotePassword)
 	req.addFingerprint()
 	p.state = InProgress

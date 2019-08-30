@@ -108,21 +108,21 @@ func createBase(ip net.IP, component int, sdpMid string) (*Base, error) {
 	log.Info("Listening on %s\n", address)
 
 	return &Base{
-		PacketConn:   conn,
-		address:      address,
-		component:    component,
-		sdpMid:       sdpMid,
+		PacketConn: conn,
+		address:    address,
+		component:  component,
+		sdpMid:     sdpMid,
 	}, nil
 }
 
 // Gather host and server-reflexive candidates for each base. Blocks until
 // gathering is complete.
-func gatherAllCandidates(ctx context.Context, bases []*Base, take func(c Candidate)) {
+func gatherAllCandidates(ctx context.Context, pt *PriorityTable, bases []*Base, take func(c Candidate)) {
 	var wg sync.WaitGroup
 	for _, b := range bases {
 		wg.Add(1)
 		go func(base *Base) {
-			base.gatherCandidates(ctx, take)
+			base.gatherCandidates(ctx, pt, take)
 			wg.Done()
 		}(b)
 	}
@@ -130,10 +130,10 @@ func gatherAllCandidates(ctx context.Context, bases []*Base, take func(c Candida
 }
 
 // Gather candidates host and server-reflexive candidates for this base.
-func (base *Base) gatherCandidates(ctx context.Context, take func(c Candidate)) {
+func (base *Base) gatherCandidates(ctx context.Context, pt *PriorityTable, take func(c Candidate)) {
 	log.Debug("Gathering local candidates for base %s\n", base.address)
 	// Host candidate for peers on the same LAN.
-	take(makeHostCandidate(base))
+	take(makeHostCandidate(pt, base))
 
 	if base.address.protocol == UDP && !base.address.linkLocal {
 		// Query STUN server to get a server reflexive candidate.
@@ -151,7 +151,7 @@ func (base *Base) gatherCandidates(ctx context.Context, take func(c Candidate)) 
 		} else if mappedAddress == base.address {
 			log.Debug("Server-reflexive address for %s is same as base\n", base.address)
 		} else {
-			take(makeServerReflexiveCandidate(base, mappedAddress, flagStunServer))
+			take(makeServerReflexiveCandidate(pt, base, mappedAddress, flagStunServer))
 		}
 	}
 }

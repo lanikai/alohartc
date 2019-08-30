@@ -37,24 +37,29 @@ const (
 	relayType = "relay"
 )
 
-func makeHostCandidate(base *Base) Candidate {
+func makeHostCandidate(pt *PriorityTable, base *Base) Candidate {
 	return Candidate{
 		mid:        base.sdpMid,
 		address:    base.address,
 		typ:        hostType,
-		priority:   computePriority(hostType, base.component),
+		priority:   computePriority(pt, hostType, base),
 		foundation: computeFoundation(hostType, base.address, ""),
 		component:  base.component,
 		base:       base,
 	}
 }
 
-func makeServerReflexiveCandidate(base *Base, mapped TransportAddress, stunServer string) Candidate {
+func makeServerReflexiveCandidate(
+	pt *PriorityTable,
+	base *Base,
+	mapped TransportAddress,
+	stunServer string,
+) Candidate {
 	c := Candidate{
 		mid:        base.sdpMid,
 		address:    mapped,
 		typ:        srflxType,
-		priority:   computePriority(srflxType, base.component),
+		priority:   computePriority(pt, srflxType, base),
 		foundation: computeFoundation(srflxType, base.address, stunServer),
 		component:  base.component,
 		base:       base,
@@ -65,7 +70,12 @@ func makeServerReflexiveCandidate(base *Base, mapped TransportAddress, stunServe
 	return c
 }
 
-func makePeerReflexiveCandidate(base *Base, addr net.Addr, priority uint32) Candidate {
+func makePeerReflexiveCandidate(
+	pt *PriorityTable,
+	base *Base,
+	addr net.Addr,
+	priority uint32,
+) Candidate {
 	ta := makeTransportAddress(addr)
 	c := Candidate{
 		mid:        base.sdpMid,
@@ -83,23 +93,36 @@ func makePeerReflexiveCandidate(base *Base, addr net.Addr, priority uint32) Cand
 }
 
 // [RFC8445 §5.1.2] Prioritizing Candidates
-func computePriority(typ string, component int) uint32 {
-	var typePref int
+func computePriority(pt *PriorityTable, typ string, base *Base) uint32 {
+	var localPref, typePref int
 	switch typ {
 	case hostType:
 		typePref = 126
-	case srflxType, prflxType:
+	case prflxType:
 		typePref = 110
+	case srflxType:
+		typePref = 100
 	case relayType:
 		typePref = 0
 	default:
 		panic("Illegal candidate type: " + typ)
 	}
 
-	// TODO: Handle more than one local IP address
-	localPref := 65535
+	// Intermingle IPv4 and IPv6 candidates (see RFC8421 §4) by assigning IPv6
+	// odd local preferences, and IPv4 even local preferences, with slight
+	// preference towards IPv6.
+	switch base.address.family {
+	case IPv4:
+		localPref = pt.ipv4
+		pt.ipv4--
+	case IPv6:
+		localPref = pt.ipv6
+		pt.ipv6--
+	default:
+		panic("Illegal address family")
+	}
 
-	return uint32((typePref << 24) + (localPref << 8) + (256 - component))
+	return uint32((typePref << 24) + (localPref << 8) + ((256 - base.component) & 0xFF))
 }
 
 // [RFC8445 §5.1.1.3] The foundation must be unique for each tuple of
@@ -124,8 +147,8 @@ func (c *Candidate) isReflexive() bool {
 
 // Computes the priority of this candidate as if it were peer-reflexive, for use in connectivity
 // checks.
-func (c *Candidate) peerPriority() uint32 {
-	return computePriority(prflxType, c.component)
+func (c *Candidate) peerPriority(pt *PriorityTable) uint32 {
+	return computePriority(pt, prflxType, c.base)
 }
 
 func (c *Candidate) sdpString() string {
