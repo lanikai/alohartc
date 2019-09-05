@@ -34,17 +34,8 @@ const (
 	sdpUsername = "AlohaRTC"
 	sdpUri      = "https://lanikailabs.com"
 
-	nalTypeSingleTimeAggregationPacketA = 24
-	nalReferenceIndicatorPriority1      = 1 << 5
-	nalReferenceIndicatorPriority2      = 2 << 5
-	nalReferenceIndicatorPriority3      = 3 << 5
-
-	naluBufferSize = 2 * 1024 * 1024
-
 	keyLen  = 16
 	saltLen = 14
-
-	maxSRTCPSize = 65536
 
 	connectTimeout = 10 * time.Second
 )
@@ -75,10 +66,9 @@ type PeerConnection struct {
 	fingerprint string
 
 	// Media tracks
-	localAudio  media.AudioSource
-	localVideo  media.VideoSource
-	remoteAudio media.AudioSink
-	remoteVideo media.VideoSink // not implemented
+	audioSource media.AudioSource
+	videoSource media.VideoSource
+	audioSink   media.AudioSink
 }
 
 // Must is a helper that wraps a call to a function returning
@@ -106,10 +96,9 @@ func NewPeerConnectionWithContext(ctx context.Context, config Config) (*PeerConn
 	pc := &PeerConnection{
 		ctx:              ctx,
 		cancel:           cancel,
-		localAudio:       config.LocalAudio,
-		localVideo:       config.LocalVideo,
-		remoteAudio:      config.RemoteAudio,
-		remoteVideo:      config.RemoteVideo,
+		audioSource:      config.AudioSource,
+		videoSource:      config.VideoSource,
+		audioSink:        config.AudioSink,
 		iceAgent:         ice.NewAgent(),
 		remoteCandidates: make(chan ice.Candidate, 4),
 
@@ -196,69 +185,115 @@ func (pc *PeerConnection) createAnswer() (sdp.Session, error) {
 		},
 	}
 
+	// process remote media (i.e. audio and video)
+MediaLoop:
 	for _, remoteMedia := range pc.remoteDescription.Media {
 
 		switch remoteMedia.Type {
 
 		case "audio":
-			// Select Opus codec (only supported)
-			supportedPayloadTypes := make(map[int]interface{})
+			// Receive only? Send only? Receive and send?
+			var sendrecv string
+			switch {
+			case nil == pc.audioSource && nil == pc.audioSink:
+				continue MediaLoop
+			case nil == pc.audioSource && nil != pc.audioSink:
+				sendrecv = "recvonly"
+			case nil != pc.audioSource && nil == pc.audioSink:
+				sendrecv = "sendonly"
+			case nil != pc.audioSource && nil != pc.audioSink:
+				sendrecv = "sendrecv"
+			}
 
-			// search rtpmap attributes for supported codecs
+			// Search rtpmap attributes for supported codecs
+			acceptedPayloadTypes := make(map[int]interface{})
 			for _, attr := range remoteMedia.Attributes {
 				switch attr.Key {
 				case "rtpmap":
-					var payloadType int
+					var pt int
 					var codec string
 
-					// parse rtpmap line
+					// Parse rtpmap line
 					if _, err := fmt.Sscanf(
-						attr.Value, "%3d %s", &payloadType, &codec,
+						attr.Value, "%3d %s", &pt, &codec,
 					); err != nil {
 						log.Warn("malformed rtpmap")
-						break // switch
+						break
 					}
 
-					// only Opus 48KHz stereo codec supported
-					if "opus/48000/2" == codec {
-						supportedPayloadTypes[payloadType] = &sdp.OpusFormatParameters{}
+					// Accept or omit codec
+					switch codec {
+					// Opus 48KHz stereo
+					case "opus/48000/2":
+						// TODO Add --without-opus support
+						acceptedPayloadTypes[pt] = &sdp.OpusFormatParameters{}
+
+					// mu-law 8KHz mono
+					case "PCMU/8000":
+						// TODO Add --without-pcmu support
+						acceptedPayloadTypes[pt] = &sdp.PCMUFormatParameters{}
 					}
 				}
 			}
 
-			// choose first supported payload type
-			var payloadType int
-			for payloadType, _ = range supportedPayloadTypes {
-				break
+			// No accepted payload types? Omit audio media block entirely.
+			if 0 == len(acceptedPayloadTypes) {
+				continue MediaLoop
 			}
 
+			// String array for media answer containing accepted payload types
+			acceptedFormats := []string{}
+			for pt, _ := range acceptedPayloadTypes {
+				acceptedFormats = append(acceptedFormats, strconv.Itoa(int(pt)))
+			}
+
+			// Attributes for media answer
+			attrs := []sdp.Attribute{
+				{"fingerprint", "sha-256 " + strings.ToUpper(pc.fingerprint)},
+				{"ice-ufrag", ufrag},
+				{"ice-pwd", pwd},
+				{"ice-options", "trickle"},
+				{"ice-options", "ice2"},
+				{"mid", remoteMedia.GetAttr("mid")},
+				{"rtcp", "9 IN IP4 0.0.0.0"},
+				{"setup", "active"},
+				{sendrecv, ""},
+				{"rtcp-mux", ""},
+				{"rtcp-rsize", ""},
+			}
+			for pt, fmtp := range acceptedPayloadTypes {
+				switch fmtp.(type) {
+				case *sdp.OpusFormatParameters:
+					attrs = append(attrs, []sdp.Attribute{
+						{"rtpmap", fmt.Sprintf("%d opus/48000/2", pt)},
+						{"fmtp", fmt.Sprintf("%d minptime=10; useinbandfec=1", pt)},
+						{"ptime", "20"},
+					}...)
+				case *sdp.PCMUFormatParameters:
+					attrs = append(attrs, sdp.Attribute{
+						"rtpmap",
+						fmt.Sprintf("%d PCMU/8000", pt),
+					})
+				}
+			}
+			// TODO: Randomize SSRC (note: must be different from video SSRC)
+			attrs = append(attrs, sdp.Attribute{
+				"ssrc",
+				"2541098698 cname:cYhx/N8U7h7+3GW5",
+			})
+
+			// Create media answer block
 			m := sdp.Media{
 				Type:   remoteMedia.Type,
 				Port:   9,
 				Proto:  "UDP/TLS/RTP/SAVPF",
-				Format: []string{strconv.Itoa(int(payloadType))},
+				Format: acceptedFormats,
 				Connection: &sdp.Connection{
 					NetworkType: "IN",
 					AddressType: "IP4",
 					Address:     "0.0.0.0",
 				},
-				Attributes: []sdp.Attribute{
-					{"fingerprint", "sha-256 " + strings.ToUpper(pc.fingerprint)},
-					{"ice-ufrag", ufrag},
-					{"ice-pwd", pwd},
-					{"ice-options", "trickle"},
-					{"ice-options", "ice2"},
-					{"mid", remoteMedia.GetAttr("mid")},
-					{"rtcp", "9 IN IP4 0.0.0.0"},
-					{"setup", "active"},
-					{"sendrecv", ""},
-					{"rtcp-mux", ""},
-					{"rtcp-rsize", ""},
-					{"rtpmap", fmt.Sprintf("%d opus/48000/2", payloadType)},
-					{"fmtp", fmt.Sprintf("%d minptime=10; useinbandfec=1", payloadType)},
-					{"ptime", "20"},
-					{"ssrc", "2541098698 cname:cYhx/N8U7h7+3GW5"},
-				},
+				Attributes: attrs,
 			}
 			s.Media = append(s.Media, m)
 
@@ -466,7 +501,10 @@ func (pc *PeerConnection) Stream() error {
 	remoteAudioEndpoint := dataMux.NewEndpoint(mux.MatchSSRC(remoteAudioSSRC))
 
 	// Configuration for DTLS handshake, namely certificate and private key
-	config := &dtls.Config{Certificate: pc.certificate, PrivateKey: pc.privateKey}
+	config := &dtls.Config{
+		Certificate: pc.certificate,
+		PrivateKey:  pc.privateKey,
+	}
 
 	// Initiate a DTLS handshake as a client
 	dtlsConn, err := dtls.Client(dtlsEndpoint, config)
@@ -510,74 +548,69 @@ func (pc *PeerConnection) Stream() error {
 	}
 
 	videoStream := rtpSession.AddStream(videoStreamOpts)
-	go videoStream.SendVideo(pc.ctx.Done(), pc.DynamicType, pc.localVideo)
+	go videoStream.SendVideo(pc.ctx.Done(), pc.DynamicType, pc.videoSource)
 
 	// Start goroutine for processing incoming SRTCP packets
 	// TODO: Add back in
 	//go srtcpReaderRunloop(dataMux, readKey, readSalt)
 
-	go func() {
-		as, err := media.NewALSAAudioSink("hw:seeed2micvoicec")
-		if err != nil {
-			log.Fatal(err)
-		}
-		defer as.Close()
+	// receive remote audio
+	// TODO use proper codec based on payload type
+	if nil != pc.audioSink {
+		go func() {
+			as := pc.audioSink
 
-		// configure soundcard for opus codec
-		if err := as.Configure(48000, 2, media.S16LE); err != nil {
-			log.Fatal(err)
-		}
-
-		// create audio buffer
-		audioBuffer := make([]byte, 1280)
-
-		// create srtp decryption context
-		sess, err := srtp.NewSession(remoteAudioEndpoint, 0, readKey, readSalt)
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		// instantiate decoder
-		decoder, err := media.NewOpusDecoder(false)
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		for {
-			// read next audio packet (opus sends one frame per packet)
-			n, err := sess.Read(audioBuffer)
-			if err != nil {
-				log.Println(err)
-				break
+			// configure soundcard for opus codec
+			if err := as.Configure(48000, 2, media.S16LE); err != nil {
+				log.Fatal(err)
 			}
 
-			// decode packet
-			decoded, err := decoder.Decode(audioBuffer[:n-10])
+			// create audio buffer
+			audioBuffer := make([]byte, 1280)
+
+			// create srtp decryption context
+			sess, err := srtp.NewSession(remoteAudioEndpoint, 0, readKey, readSalt)
 			if err != nil {
 				log.Fatal(err)
 			}
 
-			// write decoded packet to soundcard
-			if n, err := as.Write(decoded); err != nil {
-				log.Println(n, err)
+			// instantiate decoder
+			decoder, err := media.NewOpusDecoder(false)
+			if err != nil {
+				log.Fatal(err)
 			}
-		}
-	}()
 
-	// Start a goroutine for sending each video track to connected peer.
-	//if pc.localVideoTrack != nil {
-	//	go sendVideoTrack(srtpSession, pc.localVideoTrack)
-	//}
+			for {
+				// read next audio packet (opus sends one frame per packet)
+				n, err := sess.Read(audioBuffer)
+				if err != nil {
+					log.Println(err)
+					break
+				}
+
+				// decode packet
+				decoded, err := decoder.Decode(audioBuffer[:n-10])
+				if err != nil {
+					log.Fatal(err)
+				}
+
+				// write decoded packet to soundcard
+				if n, err := as.Write(decoded); err != nil {
+					log.Println(n, err)
+				}
+			}
+		}()
+	}
 
 	// Goroutine for sending local audio track to remote peer
-	if nil != pc.localAudio {
+	if nil != pc.audioSource {
 		// create srtp decryption context
 		sess, err := srtp.NewAudioSession(remoteAudioEndpoint, 111, writeKey, writeSalt)
 		if err != nil {
 			log.Fatal(err)
 		}
 
-		go sendAudioTrack(pc.ctx, sess, pc.localAudio)
+		go sendAudioTrack(pc.ctx, sess, pc.audioSource)
 	}
 
 	// There are two termination conditions that we need to deal with here:
@@ -602,75 +635,6 @@ func (pc *PeerConnection) Close() {
 
 	// Cancel context to notify goroutines to exit.
 	pc.cancel()
-}
-
-// sendVideoTrack transmits the local video track to the remote peer.
-// Terminates either on track read error or SRTP write error.
-func sendVideoTrack(conn *srtp.Conn, track Track) error {
-	switch track.PayloadType() {
-	case "H264/90000":
-		var stap []byte
-		buf := make([]byte, 128*1024)
-		gotParameterSet := false
-
-		for {
-			// Read next NAL unit from H.264 video track
-			n, err := track.Read(buf)
-			if err != nil {
-				return err
-			}
-			nalu := buf[:n]
-
-			// See https://tools.ietf.org/html/rfc6184#section-1.3
-			forbiddenBit := (nalu[0] & 0x80) >> 7
-			nri := (nalu[0] & 0x60) >> 5
-			typ := nalu[0] & 0x1f
-
-			// Wrap SPS, PPS, and SEI types into a STAP-A packet
-			// See https://tools.ietf.org/html/rfc6184#section-5.7
-			if (typ == 6) || (typ == 7) || (typ == 8) {
-				if stap == nil {
-					stap = []byte{nalTypeSingleTimeAggregationPacketA}
-				}
-				stap = append(stap, byte(n>>8), byte(n))
-				stap = append(stap, nalu...)
-
-				// STAP-A forbidden bit is bitwise-OR of all forbidden bits
-				stap[0] |= forbiddenBit << 7
-
-				// STAP-A NRI value is maximum of all NRI values
-				stapnri := (stap[0] & 0x60) >> 5
-				if nri > stapnri {
-					stap[0] = (stap[0] &^ 0x60) | (nri << 5)
-				}
-
-				gotParameterSet = true
-			} else {
-				// Discard NAL units until parameter set received
-				if !gotParameterSet {
-					continue
-				}
-
-				// Send STAP-A when complete
-				if stap != nil {
-					if err := conn.Stap(stap); err != nil {
-						return err
-					}
-					stap = nil
-				}
-
-				// Send NALU
-				if err := conn.Send(nalu); err != nil {
-					return err
-				}
-			}
-		}
-
-	default:
-		panic("unsupported video track")
-	}
-
-	panic("logic error")
 }
 
 // sendAudioTrack transmits the local audio track to remote peer

@@ -1,10 +1,7 @@
-all: examples
+all: alohartcd
 
-examples: alohacam
-
-alohacam:
-	$(MAKE) -C examples/alohacam
-	mv examples/alohacam/alohacam .
+alohartcd:
+	$(MAKE) -C cmd/alohartcd
 
 generate:
 	go generate -x ./...
@@ -13,4 +10,4 @@ get:
 	go get -d -v ./...
 
 
-.PHONY: alohacam examples generate get
+.PHONY: alohartcd generate get
