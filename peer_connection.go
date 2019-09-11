@@ -416,6 +416,7 @@ func (pc *PeerConnection) SetRemoteDescription(sdpOffer string) (sdpAnswer strin
 		return
 	}
 
+	// TODO should be able to use any media index. Originally 0.
 	mid := offer.Media[1].GetAttr("mid")
 	remoteUfrag := offer.Media[1].GetAttr("ice-ufrag")
 	localUfrag := answer.Media[1].GetAttr("ice-ufrag")

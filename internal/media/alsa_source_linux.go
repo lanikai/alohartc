@@ -180,13 +180,16 @@ func (as *ALSAAudioSource) capture() {
 	numChannels := 2
 	numFrames := 960
 
+	// Allocate capture buffer. Free upon stop.
+	out := C.malloc(C.size_t(bytesPerSample * numChannels * numFrames))
+	defer C.free(unsafe.Pointer(out))
+
 	for {
 		select {
 		case <-as.stop:
 			return
 		default:
-			// Capture
-			out := C.malloc(C.size_t(bytesPerSample * numChannels * numFrames))
+			// Capture (until successful)
 			n := C.snd_pcm_readi(
 				as.handle,
 				unsafe.Pointer(out),
@@ -194,9 +197,9 @@ func (as *ALSAAudioSource) capture() {
 			)
 			if n < 0 {
 				log.Println(C.GoString(C.snd_strerror(C.int(n))))
+				continue
 			}
 			captured := C.GoBytes(out, (C.int(bytesPerSample) * C.int(numChannels) * C.int(n)))
-			C.free(unsafe.Pointer(out))
 
 			// Encode (if encoder specified)
 			encoded := captured

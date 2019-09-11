@@ -11,17 +11,35 @@ endef
 
 
 .PHONY: all
-all: alohartcd
+all: alohartcd alohartcd-linux-armv6 alohartcd-linux-armv7 alohartcd-linux-aarch64
+
+alohartcd%: export CGO_ENABLED=1
+alohartcd-linux-%: export GOOS=linux
+alohartcd-linux-armv%: export CC=arm-unknown-linux-gnueabi-gcc
+alohartcd-linux-armv%: export GOARCH=arm
+alohartcd-linux-armv%: export PKG_CONFIG_PATH=$(abspath $(dir $(shell which arm-unknown-linux-gnueabi-gcc))/../arm-unknown-linux-gnueabi/sysroot/usr/lib/pkgconfig)
+alohartcd-linux-armv%: export PKG_CONFIG_LIBDIR=$(abspath $(dir $(shell which arm-unknown-linux-gnueabi-gcc))/../arm-unknown-linux-gnueabi/sysroot/usr/lib)
+alohartcd-linux-armv6: export GOARM=6
+alohartcd-linux-armv7: export GOARM=7
+alohartcd-linux-aarch64: export CC=aarch64-unknown-linux-gnu-gcc
+alohartcd-linux-aarch64: export GOARCH=arm64
+alohartcd-linux-aarch64: export PKG_CONFIG_PATH=$(abspath $(dir $(shell which aarch64-unknown-linux-gnu-gcc))/../aarch64-unknown-linux-gnu/sysroot/usr/lib/pkgconfig)
+alohartcd-linux-aarch64: export PKG_CONFIG_LIBDIR=$(abspath $(dir $(shell which aarch64-unknown-linux-gnu-gcc))/../aarch64-unknown-linux-gnu/sysroot/usr/lib)
+
+.PHONY: alohartcd
+alohartcd%: generate
+	$(call buildcmd, -tags="mp4 rtsp v4l2")
 
 .PHONY: generate
 generate:
 	$(MAKE) -C $(TOP) generate
 
-# PHONY because we let the Go build system decide if it's up-to-date.
-.PHONY: alohartcd
-alohartcd: generate
-	$(call buildcmd, -tags="mp4 rtsp v4l2")
+.PHONY: clean
+clean:
+	rm -rf alohartcd alohartcd-linux-armv6 alohartcd-linux-armv7 alohartcd-linux-aarch64
 
+
+###  BUILDS FOR DISTRIBUTION  ################################################
 
 RELEASE_TARGETS := \
     release/$(VERSION)/alohartcd-linux-armv6 \
