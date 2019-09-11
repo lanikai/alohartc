@@ -46,7 +46,7 @@ func help() {
 	fmt.Println("                                \"none\" to omit from offer (default: /dev/video0)")
 	fmt.Println("  -v, --version               Display version and exit successfully")
 	fmt.Println("")
-	fmt.Println("Please report bugs to <aloha@lanikailabs.com>")
+	fmt.Println("Please report bugs to <aloha@lanikailabs.com>. Mahalo!")
 }
 
 // version displays information and exits successfully (GNU convention)
@@ -117,6 +117,7 @@ func main() {
 		}
 		defer as.Close()
 
+		// TODO Configure later based on codec
 		as.Configure(48000, 2, media.S16LE)
 
 		audioSource = as
