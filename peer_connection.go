@@ -17,6 +17,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"io"
 	"strconv"
 	"strings"
 	"time"
@@ -192,19 +193,6 @@ MediaLoop:
 		switch remoteMedia.Type {
 
 		case "audio":
-			// Receive only? Send only? Receive and send?
-			var sendrecv string
-			switch {
-			case nil == pc.audioSource && nil == pc.audioSink:
-				continue MediaLoop
-			case nil == pc.audioSource && nil != pc.audioSink:
-				sendrecv = "recvonly"
-			case nil != pc.audioSource && nil == pc.audioSink:
-				sendrecv = "sendonly"
-			case nil != pc.audioSource && nil != pc.audioSink:
-				sendrecv = "sendrecv"
-			}
-
 			// Search rtpmap attributes for supported codecs
 			acceptedPayloadTypes := make(map[int]interface{})
 			for _, attr := range remoteMedia.Attributes {
@@ -257,7 +245,7 @@ MediaLoop:
 				{"mid", remoteMedia.GetAttr("mid")},
 				{"rtcp", "9 IN IP4 0.0.0.0"},
 				{"setup", "active"},
-				{sendrecv, ""},
+				{sendrecv(pc.audioSource, pc.audioSink), ""},
 				{"rtcp-mux", ""},
 				{"rtcp-rsize", ""},
 			}
@@ -482,24 +470,11 @@ func (pc *PeerConnection) Stream() error {
 	// Instantiate a new endpoint for DTLS from multiplexer
 	dtlsEndpoint := dataMux.NewEndpoint(mux.MatchDTLS)
 
-	// Get remote audio SSRC
-	remoteAudioSSRC := uint32(0)
-	for _, media := range pc.remoteDescription.Media {
-		if "audio" == media.Type {
-			if ssrc, err := strconv.ParseUint(strings.Fields(media.GetAttr("ssrc"))[0], 0, 32); err != nil {
-				return err
-			} else {
-				remoteAudioSSRC = uint32(ssrc)
-			}
-		}
-	}
-
 	// Instantiate a new endpoint for SRTP from multiplexer
 	srtpEndpoint := dataMux.NewEndpoint(func(b []byte) bool {
 		// First byte looks like 10??????, representing RTP version 2.
 		return b[0]&0xb0 == 0x80
 	})
-	remoteAudioEndpoint := dataMux.NewEndpoint(mux.MatchSSRC(remoteAudioSSRC))
 
 	// Configuration for DTLS handshake, namely certificate and private key
 	config := &dtls.Config{
@@ -532,19 +507,26 @@ func (pc *PeerConnection) Stream() error {
 		WriteSalt: writeSalt,
 	})
 
+	audioStreamOpts := rtp.StreamOptions{
+		Direction: sendrecv(pc.audioSource, pc.audioSink),
+	}
 	videoStreamOpts := rtp.StreamOptions{
-		Direction: "sendonly",
+		Direction: sendrecv(pc.videoSource, nil),
 	}
 	for _, m := range pc.localDescription.Media {
-		if m.Type == "video" {
+		switch m.Type {
+		case "audio":
+			fmt.Sscanf(m.GetAttr("ssrc"), "%d cname:%s", &audioStreamOpts.LocalSSRC, &audioStreamOpts.LocalCNAME)
+		case "video":
 			fmt.Sscanf(m.GetAttr("ssrc"), "%d cname:%s", &videoStreamOpts.LocalSSRC, &videoStreamOpts.LocalCNAME)
-			break
 		}
 	}
 	for _, m := range pc.remoteDescription.Media {
-		if m.Type == "video" {
+		switch m.Type {
+		case "audio":
+			fmt.Sscanf(m.GetAttr("ssrc"), "%d cname:%s", &audioStreamOpts.RemoteSSRC, &audioStreamOpts.RemoteCNAME)
+		case "video":
 			fmt.Sscanf(m.GetAttr("ssrc"), "%d cname:%s", &videoStreamOpts.RemoteSSRC, &videoStreamOpts.RemoteCNAME)
-			break
 		}
 	}
 
@@ -558,6 +540,8 @@ func (pc *PeerConnection) Stream() error {
 	// receive remote audio
 	// TODO use proper codec based on payload type
 	if nil != pc.audioSink {
+		remoteAudioEndpoint := dataMux.NewEndpoint(mux.MatchSSRC(audioStreamOpts.RemoteSSRC))
+
 		go func() {
 			as := pc.audioSink
 
@@ -586,13 +570,17 @@ func (pc *PeerConnection) Stream() error {
 				n, err := sess.Read(audioBuffer)
 				if err != nil {
 					log.Println(err)
-					break
+					if err == io.EOF {
+						break
+					}
+					continue
 				}
 
 				// decode packet
 				decoded, err := decoder.Decode(audioBuffer[:n-10])
 				if err != nil {
-					log.Fatal(err)
+					log.Println(err)
+					continue
 				}
 
 				// write decoded packet to soundcard
@@ -605,8 +593,10 @@ func (pc *PeerConnection) Stream() error {
 
 	// Goroutine for sending local audio track to remote peer
 	if nil != pc.audioSource {
+		localAudioEndpoint := dataMux.NewEndpoint(mux.MatchSSRC(audioStreamOpts.LocalSSRC))
+
 		// create srtp decryption context
-		sess, err := srtp.NewAudioSession(remoteAudioEndpoint, 111, writeKey, writeSalt)
+		sess, err := srtp.NewAudioSession(localAudioEndpoint, 111, writeKey, writeSalt)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -662,4 +652,18 @@ func sendAudioTrack(ctx context.Context, conn *srtp.AudioConn, as media.AudioSou
 	}
 
 	panic("logic error")
+}
+
+// sendrecv returns the direction attribute based on source/sink availability
+func sendrecv(source media.MediaSource, sink media.MediaSink) string {
+	switch {
+	case nil == source && nil != sink:
+		return "recvonly"
+	case nil != source && nil == sink:
+		return "sendonly"
+	case nil != source && nil != sink:
+		return "sendrecv"
+	default:
+		return ""
+	}
 }
