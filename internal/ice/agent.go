@@ -19,6 +19,8 @@ type Agent struct {
 
 	checklist Checklist
 
+	interfaces map[string]bool
+
 	dataIn chan []byte
 
 	failure error
@@ -31,8 +33,10 @@ const (
 	packetQueueLength = 64
 )
 
-func NewAgent() *Agent {
-	return new(Agent)
+func NewAgent(interfaces map[string]bool) *Agent {
+	return &Agent{
+		interfaces: interfaces,
+	}
 }
 
 func (a *Agent) fail(err error) {
@@ -66,7 +70,7 @@ func (a *Agent) Start(ctx context.Context, rcand <-chan Candidate) <-chan Candid
 // The lcand channel will be closed.
 func (a *Agent) connect(ctx context.Context, rcand <-chan Candidate, lcand chan<- Candidate) {
 	// Create a base for each network interface.
-	bases, err := initializeBases(a.component, a.mid)
+	bases, err := initializeBases(a.interfaces, a.component, a.mid)
 	if err != nil {
 		close(lcand)
 		a.fail(err)

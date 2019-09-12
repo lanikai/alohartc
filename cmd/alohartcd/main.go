@@ -44,6 +44,7 @@ func help() {
 	fmt.Println("                                Video4Linux2, RTSP, and MP4 files. Video source")
 	fmt.Println("                                must produce H.264 encoded byte-stream. Set to")
 	fmt.Println("                                \"none\" to omit from offer (default: /dev/video0)")
+	fmt.Println("  -i, --interfaces=<std>      Comma-separated list of interfaces to use")
 	fmt.Println("  -v, --version               Display version and exit successfully")
 	fmt.Println("")
 	fmt.Println("Please report bugs to <aloha@lanikailabs.com>. Mahalo!")
@@ -59,12 +60,14 @@ func version() {
 var audioSink media.AudioSink
 var audioSource media.AudioSource
 var videoSource media.VideoSource
+var interfaces map[string]bool
 
 // Command line flags
 var (
 	audioSinkFlag   = getopt.StringLong("audio-sink", 1000, "default", "")
 	audioSourceFlag = getopt.StringLong("audio-source", 1001, "default", "")
 	inputFlag       = getopt.StringLong("input", 'i', "/dev/video0", "")
+	interfacesFlag  = getopt.StringLong("interfaces", 1003, "all", "")
 	bitrateFlag     = getopt.IntLong("bitrate", 'b', 1500e3, "")
 	geometryFlag    = getopt.StringLong("geometry", 'g', "1280x720", "")
 	helpFlag        = getopt.BoolLong("help", 'h', ".")
@@ -93,6 +96,12 @@ func main() {
 	if n, err := fmt.Sscanf(*geometryFlag, "%dx%d", &width, &height); n != 2 || err != nil {
 		log.Println(err)
 		os.Exit(1)
+	}
+
+	// Parse interfaces string
+	interfaces = make(map[string]bool)
+	for _, name := range strings.Split(*interfacesFlag, ",") {
+		interfaces[name] = true
 	}
 
 	// Configure logging
@@ -169,6 +178,7 @@ func doPeerSession(ss *signaling.Session) {
 			AudioSink:   audioSink,
 			AudioSource: audioSource,
 			VideoSource: videoSource,
+			Interfaces:  interfaces,
 		}))
 	defer pc.Close()
 

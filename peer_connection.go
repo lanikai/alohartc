@@ -100,7 +100,7 @@ func NewPeerConnectionWithContext(ctx context.Context, config Config) (*PeerConn
 		audioSource:      config.AudioSource,
 		videoSource:      config.VideoSource,
 		audioSink:        config.AudioSink,
-		iceAgent:         ice.NewAgent(),
+		iceAgent:         ice.NewAgent(config.Interfaces),
 		remoteCandidates: make(chan ice.Candidate, 4),
 
 		// Set initial dummy handler for local ICE candidates.
@@ -530,8 +530,11 @@ func (pc *PeerConnection) Stream() error {
 		}
 	}
 
-	videoStream := rtpSession.AddStream(videoStreamOpts)
-	go videoStream.SendVideo(pc.ctx.Done(), pc.DynamicType, pc.videoSource)
+	// Send local video -> remote peer
+	if nil != pc.videoSource {
+		videoStream := rtpSession.AddStream(videoStreamOpts)
+		go videoStream.SendVideo(pc.ctx.Done(), pc.DynamicType, pc.videoSource)
+	}
 
 	// Start goroutine for processing incoming SRTCP packets
 	// TODO: Add back in
@@ -545,7 +548,7 @@ func (pc *PeerConnection) Stream() error {
 		go func() {
 			as := pc.audioSink
 
-			// configure soundcard for opus codec
+			// configure soundcard for 48 KHz stereo playback (Opus codec requirement)
 			if err := as.Configure(48000, 2, media.S16LE); err != nil {
 				log.Fatal(err)
 			}

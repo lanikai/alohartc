@@ -1,6 +1,9 @@
 TOP := $(shell git rev-parse --show-cdup)
 VERSION := $(shell git describe --always --tags)
 
+CC_FOR_linux_arm ?= arm-unknown-linux-gnueabi-gcc
+CC_FOR_linux_arm64 ?= aarch64-unknown-linux-gnu-gcc
+
 # Command to build alohartcd binary.
 define buildcmd
     go build -v \
@@ -15,19 +18,21 @@ all: alohartcd alohartcd-linux-armv6 alohartcd-linux-armv7 alohartcd-linux-aarch
 
 alohartcd%: export CGO_ENABLED=1
 alohartcd-linux-%: export GOOS=linux
-alohartcd-linux-armv%: export CC=arm-unknown-linux-gnueabi-gcc
+alohartcd-linux-armv%: export CC=$(CC_FOR_linux_arm)
 alohartcd-linux-armv%: export GOARCH=arm
-alohartcd-linux-armv%: export PKG_CONFIG_PATH=$(abspath $(dir $(shell which arm-unknown-linux-gnueabi-gcc))/../arm-unknown-linux-gnueabi/sysroot/usr/lib/pkgconfig)
-alohartcd-linux-armv%: export PKG_CONFIG_LIBDIR=$(abspath $(dir $(shell which arm-unknown-linux-gnueabi-gcc))/../arm-unknown-linux-gnueabi/sysroot/usr/lib)
+alohartcd-linux-armv%: export PKG_CONFIG_PATH=$(abspath $(dir $(shell which $(CC_FOR_linux_arm)))/../arm-unknown-linux-gnueabi/sysroot/usr/lib/pkgconfig)
+alohartcd-linux-armv%: export PKG_CONFIG_LIBDIR=$(abspath $(dir $(shell which $(CC_FOR_linux_arm)))/../arm-unknown-linux-gnueabi/sysroot/usr/lib)
 alohartcd-linux-armv6: export GOARM=6
 alohartcd-linux-armv7: export GOARM=7
-alohartcd-linux-aarch64: export CC=aarch64-unknown-linux-gnu-gcc
+alohartcd-linux-aarch64: export CC=$(CC_FOR_linux_arm64)
 alohartcd-linux-aarch64: export GOARCH=arm64
-alohartcd-linux-aarch64: export PKG_CONFIG_PATH=$(abspath $(dir $(shell which aarch64-unknown-linux-gnu-gcc))/../aarch64-unknown-linux-gnu/sysroot/usr/lib/pkgconfig)
-alohartcd-linux-aarch64: export PKG_CONFIG_LIBDIR=$(abspath $(dir $(shell which aarch64-unknown-linux-gnu-gcc))/../aarch64-unknown-linux-gnu/sysroot/usr/lib)
+alohartcd-linux-aarch64: export PKG_CONFIG_PATH=$(abspath $(dir $(shell which $(CC_FOR_linux_arm64)))/../aarch64-unknown-linux-gnu/sysroot/usr/lib/pkgconfig)
+alohartcd-linux-aarch64: export PKG_CONFIG_LIBDIR=$(abspath $(dir $(shell which $(CC_FOR_linux_arm64)))/../aarch64-unknown-linux-gnu/sysroot/usr/lib)
 
 .PHONY: alohartcd
 alohartcd%: generate
+	$(call buildcmd, -tags="mp4 rtsp v4l2")
+alohartcd: generate
 	$(call buildcmd, -tags="mp4 rtsp v4l2")
 
 .PHONY: generate

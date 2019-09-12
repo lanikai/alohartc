@@ -47,12 +47,23 @@ type Base struct {
 type stunHandler func(msg *stunMessage, addr net.Addr, base *Base)
 
 // Create a base for each local IP address.
-func initializeBases(component int, sdpMid string) (bases []*Base, err error) {
+func initializeBases(
+	interfaces map[string]bool,
+	component int,
+	sdpMid string,
+) (bases []*Base, err error) {
 	ifaces, err := net.Interfaces()
 	if err != nil {
 		return
 	}
 	for _, iface := range ifaces {
+		// Skip interface if not in list of specified interfaces
+		if _, ok := interfaces[iface.Name]; !ok {
+			if _, ok := interfaces["all"]; !ok {
+				continue
+			}
+		}
+
 		log.Debug("Interface %d: %s (%s)\n", iface.Index, iface.Name, iface.Flags)
 		if !flagEnableLoopback {
 			if iface.Flags&net.FlagLoopback != 0 {
