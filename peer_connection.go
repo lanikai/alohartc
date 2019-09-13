@@ -129,7 +129,7 @@ func filterGroup(sess sdp.Session, allowedTypes map[string]bool) string {
 	filtered := []string{"BUNDLE"}
 
 	for _, m := range sess.Media {
-		if _, ok := allowedTypes[m.Type]; ok {
+		if allowed, ok := allowedTypes[m.Type]; ok && allowed {
 			filtered = append(filtered, m.GetAttr("mid"))
 		}
 	}
@@ -160,6 +160,10 @@ func (pc *PeerConnection) createAnswer() (sdp.Session, error) {
 		return sdp.Session{}, err
 	}
 
+	isAudioAllowed := (nil != pc.audioSource) || (nil != pc.audioSink)
+	isVideoAllowed := (nil != pc.videoSource)
+
+	// Session-level block
 	s := sdp.Session{
 		Version: 0,
 		Origin: sdp.Origin{
@@ -180,19 +184,29 @@ func (pc *PeerConnection) createAnswer() (sdp.Session, error) {
 				"group",
 				filterGroup(
 					pc.remoteDescription,
-					map[string]bool{"audio": true, "video": true},
+					map[string]bool{
+						"audio": isAudioAllowed,
+						"video": isVideoAllowed,
+					},
 				),
 			},
 		},
 	}
 
-	// process remote media (i.e. audio and video)
-MediaLoop:
+	// Media-level blocks
 	for _, remoteMedia := range pc.remoteDescription.Media {
 
 		switch remoteMedia.Type {
 
 		case "audio":
+			port := 9
+
+			// Must set port to zero when rejecting media block
+			// See https://tools.ietf.org/html/rfc3264#section-6
+			if !isAudioAllowed {
+				port = 0
+			}
+
 			// Search rtpmap attributes for supported codecs
 			acceptedPayloadTypes := make(map[int]interface{})
 			for _, attr := range remoteMedia.Attributes {
@@ -226,7 +240,7 @@ MediaLoop:
 
 			// No accepted payload types? Omit audio media block entirely.
 			if 0 == len(acceptedPayloadTypes) {
-				continue MediaLoop
+				port = 0
 			}
 
 			// String array for media answer containing accepted payload types
@@ -245,9 +259,13 @@ MediaLoop:
 				{"mid", remoteMedia.GetAttr("mid")},
 				{"rtcp", "9 IN IP4 0.0.0.0"},
 				{"setup", "active"},
-				{sendrecv(pc.audioSource, pc.audioSink), ""},
 				{"rtcp-mux", ""},
 				{"rtcp-rsize", ""},
+			}
+			if 0 != port {
+				attrs = append(attrs, sdp.Attribute{
+					sendrecv(pc.audioSource, pc.audioSink), "",
+				})
 			}
 			for pt, fmtp := range acceptedPayloadTypes {
 				switch fmtp.(type) {
@@ -271,9 +289,9 @@ MediaLoop:
 			})
 
 			// Create media answer block
-			m := sdp.Media{
+			media := sdp.Media{
 				Type:   remoteMedia.Type,
-				Port:   9,
+				Port:   port,
 				Proto:  "UDP/TLS/RTP/SAVPF",
 				Format: acceptedFormats,
 				Connection: &sdp.Connection{
@@ -283,9 +301,14 @@ MediaLoop:
 				},
 				Attributes: attrs,
 			}
-			s.Media = append(s.Media, m)
+
+			s.Media = append(s.Media, media)
 
 		case "video":
+			if nil == pc.videoSource {
+				continue
+			}
+
 			// Select H.264 codec with packetization-mode=1 (only supported)
 			supportedPayloadTypes := make(map[int]interface{})
 
@@ -404,13 +427,12 @@ func (pc *PeerConnection) SetRemoteDescription(sdpOffer string) (sdpAnswer strin
 		return
 	}
 
-	// TODO should be able to use any media index. Originally 0.
-	mid := offer.Media[1].GetAttr("mid")
-	remoteUfrag := offer.Media[1].GetAttr("ice-ufrag")
-	localUfrag := answer.Media[1].GetAttr("ice-ufrag")
+	mid := offer.Media[0].GetAttr("mid")
+	remoteUfrag := offer.Media[0].GetAttr("ice-ufrag")
+	localUfrag := answer.Media[0].GetAttr("ice-ufrag")
 	username := remoteUfrag + ":" + localUfrag
-	localPassword := answer.Media[1].GetAttr("ice-pwd")
-	remotePassword := offer.Media[1].GetAttr("ice-pwd")
+	localPassword := answer.Media[0].GetAttr("ice-pwd")
+	remotePassword := offer.Media[0].GetAttr("ice-pwd")
 	pc.iceAgent.Configure(mid, username, localPassword, remotePassword)
 
 	// ICE gathering begins implicitly after offer/answer exchange.
