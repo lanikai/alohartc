@@ -26,7 +26,6 @@ import (
 	"github.com/lanikai/alohartc/internal/mux"
 	"github.com/lanikai/alohartc/internal/rtp"
 	"github.com/lanikai/alohartc/internal/sdp"
-	"github.com/lanikai/alohartc/internal/srtp"
 )
 
 const (
@@ -409,11 +408,6 @@ func (pc *PeerConnection) Stream() error {
 	//	return err
 	//}
 
-	// Start a goroutine for sending each video track to connected peer.
-	//if pc.localVideoTrack != nil {
-	//	go sendVideoTrack(srtpSession, pc.localVideoTrack)
-	//}
-
 	// There are two termination conditions that we need to deal with here:
 	// 1. Context cancellation. If Close() is called explicitly, or if the
 	// parent context is canceled, we should terminate cleanly.
@@ -434,73 +428,4 @@ func (pc *PeerConnection) Close() {
 
 	// Cancel context to notify goroutines to exit.
 	pc.cancel()
-}
-
-// sendVideoTrack transmits the local video track to the remote peer.
-// Terminates either on track read error or SRTP write error.
-func sendVideoTrack(conn *srtp.Conn, track Track) error {
-	switch track.PayloadType() {
-	case "H264/90000":
-		var stap []byte
-		buf := make([]byte, 128*1024)
-		gotParameterSet := false
-
-		for {
-			// Read next NAL unit from H.264 video track
-			n, err := track.Read(buf)
-			if err != nil {
-				return err
-			}
-			nalu := buf[:n]
-
-			// See https://tools.ietf.org/html/rfc6184#section-1.3
-			forbiddenBit := (nalu[0] & 0x80) >> 7
-			nri := (nalu[0] & 0x60) >> 5
-			typ := nalu[0] & 0x1f
-
-			// Wrap SPS, PPS, and SEI types into a STAP-A packet
-			// See https://tools.ietf.org/html/rfc6184#section-5.7
-			if (typ == 6) || (typ == 7) || (typ == 8) {
-				if stap == nil {
-					stap = []byte{nalTypeSingleTimeAggregationPacketA}
-				}
-				stap = append(stap, byte(n>>8), byte(n))
-				stap = append(stap, nalu...)
-
-				// STAP-A forbidden bit is bitwise-OR of all forbidden bits
-				stap[0] |= forbiddenBit << 7
-
-				// STAP-A NRI value is maximum of all NRI values
-				stapnri := (stap[0] & 0x60) >> 5
-				if nri > stapnri {
-					stap[0] = (stap[0] &^ 0x60) | (nri << 5)
-				}
-
-				gotParameterSet = true
-			} else {
-				// Discard NAL units until parameter set received
-				if !gotParameterSet {
-					continue
-				}
-
-				// Send STAP-A when complete
-				if stap != nil {
-					if err := conn.Stap(stap); err != nil {
-						return err
-					}
-					stap = nil
-				}
-
-				// Send NALU
-				if err := conn.Send(nalu); err != nil {
-					return err
-				}
-			}
-		}
-
-	default:
-		panic("unsupported video track")
-	}
-
-	panic("should never get here")
 }
