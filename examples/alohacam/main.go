@@ -100,12 +100,10 @@ func doPeerSession(ss *signaling.Session) {
 	// Wait for SDP offer from remote peer, then send our answer.
 	select {
 	case offer := <-ss.Offer:
-		fmt.Printf("Offer: %s\n", offer)
 		answer, err := pc.SetRemoteDescription(offer)
 		if err != nil {
 			log.Fatal(err)
 		}
-		fmt.Printf("Answer: %s\n", answer)
 
 		if err := ss.SendAnswer(answer); err != nil {
 			log.Fatal(err)

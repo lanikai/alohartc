@@ -36,28 +36,27 @@
 
     ws.addEventListener("message", function (event) {
       var msg = JSON.parse(event.data);
-      console.log("websocket message received:", msg)
       switch(msg.type) {
         case "answer":
+          console.log("%cremote answer\n%s", "color: orange", msg.sdp)
           pc.setRemoteDescription({ "type": "answer", "sdp": msg.sdp })
-          .then(function() {
-            console.log("setRemoteDescription success");
-          }).catch(function(error) {
+          .catch(function(error) {
             console.log("setRemoteDescription error: " + error);
           });
           break;
         case "iceCandidate":
           if (msg.candidate) {
+            console.log("%cremote candidate: %s mid: %s", "color: brown", msg.candidate, msg.sdpMid);
             pc.addIceCandidate({
               candidate: msg.candidate,
               sdpMid: msg.sdpMid,
             }).catch(function(error) {
-              console.log("Failed to add remote ICE candidate to local ICE agent:", error);
+              console.log("%cFailed to add remote ICE candidate:", "color: red", error);
             });
           } else {
             pc.addIceCandidate(null)
             .catch(function(error) {
-              console.log("Failed to signal end of remate ICE candidates:", error);
+              console.log("%cFailed to signal end of remate ICE candidates:", "color: red", error);
             });
           }
           break;
@@ -105,14 +104,13 @@
 
       pc.ontrack = function(e) {
         if (remoteVideo.srcObject !== e.streams[0]) {
-            remoteVideo.srcObject = e.streams[0];
-            console.log("received remote stream!");
+          remoteVideo.srcObject = e.streams[0];
         }
       }
 
       // Called upon successful offer creation
       function onCreateOfferSuccess(offer) {
-        console.log("onCreateOfferSuccess:", offer.sdp);
+        console.log("%clocal offer:\n%s", "color: green", offer.sdp);
         pc.setLocalDescription(offer);
         ws.send(JSON.stringify({
           type: "offer",
