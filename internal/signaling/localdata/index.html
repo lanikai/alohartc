@@ -75,7 +75,7 @@
       // Called by the browser's ICE agent when it determines a new local candidate.
       pc.onicecandidate = function(event) {
         if (event.candidate) {
-          console.log("New local ICE candidate:", event.candidate);
+          console.log("%clocal candidate: %s mid: %s", "color: blue", event.candidate.candidate, event.candidate.sdpMid)
         } else {
           console.log("End of local ICE candidates");
         }
