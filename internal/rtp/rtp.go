@@ -7,6 +7,7 @@ import (
 
 	errors "golang.org/x/xerrors"
 
+	"github.com/golang/groupcache/lru"
 	"github.com/lanikai/alohartc/internal/packet"
 )
 
@@ -44,6 +45,7 @@ func (h *rtpHeader) length() int {
 
 const (
 	rtpHeaderSize = 12
+	rtpCacheSize  = 200 // Number of packets to keep in cache
 )
 
 func (h *rtpHeader) writeTo(w *packet.Writer) {
@@ -105,6 +107,9 @@ type rtpWriter struct {
 
 	// Prevent simultaneous writes from multiple goroutines.
 	sync.Mutex
+
+	// Least-recently used cache for retransmitting lost packets.
+	cache *lru.Cache
 }
 
 func newRTPWriter(out io.Writer, ssrc uint32, crypto *cryptoContext) *rtpWriter {
@@ -114,6 +119,7 @@ func newRTPWriter(out io.Writer, ssrc uint32, crypto *cryptoContext) *rtpWriter 
 	w.sequenceStart = uint16(rand.Uint32())
 	w.buf = make([]byte, 1500) // TODO: Determine from MTU
 	w.crypto = crypto
+	w.cache = lru.New(rtpCacheSize)
 	return w
 }
 
@@ -147,8 +153,26 @@ func (w *rtpWriter) writePacket(payloadType byte, marker bool, timestamp uint32,
 	w.count += 1
 	w.totalBytes += uint64(len(payload))
 
+	// Add packet to cache for retransmission in case of nack.
+	b := make([]byte, p.Length())
+	copy(b, p.Bytes())
+	w.cache.Add(uint16(index), b)
+
 	_, err := w.out.Write(p.Bytes())
 	return err
+}
+
+// Resend the specified sequence number if available in cache.
+func (w *rtpWriter) resend(sequenceNumber uint16) {
+	w.Lock()
+	defer w.Unlock()
+	if b, ok := w.cache.Get(sequenceNumber); ok {
+		if _, err := w.out.Write(b.([]byte)); err != nil {
+			log.Error("Failed to retransmit: %s", err.Error())
+		}
+	} else {
+		log.Error("Not available for retransmit: %d", sequenceNumber)
+	}
 }
 
 // Compute the RTP packet index, also known as the extended sequence number.
