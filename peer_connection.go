@@ -150,70 +150,63 @@ func (pc *PeerConnection) createAnswer() (sdp.Session, error) {
 
 	for _, remoteMedia := range pc.remoteDescription.Media {
 
-		// Select H.264 codec with packetization-mode=1 (only supported)
-		supportedPayloadTypes := make(map[int]interface{})
+		type payloadTypeAttributes struct {
+			nack   bool
+			pli    bool
+			fmtp   string
+			codec  string
+			reject bool
+		}
 
-		// search rtpmap attributes for supported codecs
+		supportedPayloadTypes := make(map[int]*payloadTypeAttributes)
+
+		// Search attributes for supported codecs
 		for _, attr := range remoteMedia.Attributes {
+			var pt int
+			var text string
+
+			// Parse payload type from attribute. Will bin by payload type.
+			pt = -1
 			switch attr.Key {
 			case "rtpmap":
-				var payloadType int
-				var codec string
-
-				// parse rtpmap line
-				if _, err := fmt.Sscanf(
-					attr.Value, "%3d %s", &payloadType, &codec,
-				); err != nil {
-					log.Warn("malformed rtpmap")
-					break // switch
-				}
-
-				// only H.264 codec supported
-				if "H264/90000" == codec {
-					supportedPayloadTypes[payloadType] = &sdp.H264FormatParameters{}
-				}
-			}
-		}
-
-		// search rtpmap attributes for supported format parameters
-		for _, attr := range remoteMedia.Attributes {
-			switch attr.Key {
+				fallthrough
 			case "fmtp":
-				var payloadType int
-				var params string
-
-				// parse fmtp line
+				fallthrough
+			case "rtcp-fb":
 				if _, err := fmt.Sscanf(
-					attr.Value, "%3d %s", &payloadType, &params,
+					attr.Value, "%3d %s", &pt, &text,
 				); err != nil {
-					log.Warn("malformed fmtp")
+					log.Warn(fmt.Sprintf("malformed %s", attr.Key))
 					break // switch
 				}
+			}
+			if pt < 0 {
+				continue // Ignore unsupported attributes
+			}
 
-				// only packetization-mode=1 supported
-				if fmtp, ok := supportedPayloadTypes[payloadType]; ok {
-					switch fmtp.(type) {
-					case *sdp.H264FormatParameters:
-						if err := fmtp.(*sdp.H264FormatParameters).Unmarshal(params); err != nil {
-							log.Warn(err.Error())
-						}
-						if 1 != fmtp.(*sdp.H264FormatParameters).PacketizationMode {
-							delete(supportedPayloadTypes, payloadType)
-						}
-					}
+			if _, ok := supportedPayloadTypes[pt]; !ok {
+				supportedPayloadTypes[pt] = &payloadTypeAttributes{}
+			}
+			switch attr.Key {
+			case "rtpmap":
+				switch text {
+				case "H264/90000":
+					supportedPayloadTypes[pt].codec = text
+				}
+			case "rtcp-fb":
+				switch text {
+				case "nack":
+					supportedPayloadTypes[pt].nack = true
+				}
+			case "fmtp":
+				supportedPayloadTypes[pt].fmtp = text
+				if !strings.Contains(text, "packetization-mode=1") {
+					supportedPayloadTypes[pt].reject = true
+				}
+				if !strings.Contains(text, "profile-level-id=42e01f") {
+					supportedPayloadTypes[pt].reject = true
 				}
 			}
-		}
-
-		// choose first supported payload type
-		var fmtp string
-		for payloadType, formatParameters := range supportedPayloadTypes {
-			switch formatParameters.(type) {
-			case *sdp.H264FormatParameters:
-				fmtp = formatParameters.(*sdp.H264FormatParameters).Marshal()
-			}
-			pc.DynamicType = uint8(payloadType)
-			break
 		}
 
 		// Require 24 and 128 bits of randomness for ufrag and pwd, respectively
@@ -226,11 +219,11 @@ func (pc *PeerConnection) createAnswer() (sdp.Session, error) {
 		ufrag := base64.StdEncoding.EncodeToString(rnd[0:3])
 		pwd := base64.StdEncoding.EncodeToString(rnd[3:])
 
+		// Media description with first part of attributes
 		m := sdp.Media{
-			Type:   "video",
-			Port:   9,
-			Proto:  "UDP/TLS/RTP/SAVPF",
-			Format: []string{strconv.Itoa(int(pc.DynamicType))},
+			Type:  "video",
+			Port:  9,
+			Proto: "UDP/TLS/RTP/SAVPF",
 			Connection: &sdp.Connection{
 				NetworkType: "IN",
 				AddressType: "IP4",
@@ -248,15 +241,50 @@ func (pc *PeerConnection) createAnswer() (sdp.Session, error) {
 				{"sendonly", ""},
 				{"rtcp-mux", ""},
 				{"rtcp-rsize", ""},
-				{"rtpmap", fmt.Sprintf("%d H264/90000", pc.DynamicType)},
-				{"fmtp", fmt.Sprintf("%d %s", pc.DynamicType, fmtp)},
-				// TODO: Randomize SSRC
+			},
+		}
+
+		// Additional attributes per payload type
+		for pt, a := range supportedPayloadTypes {
+			switch {
+			case "H264/90000" == a.codec && "" != a.fmtp && !a.reject:
+				m.Attributes = append(
+					m.Attributes,
+					sdp.Attribute{"rtpmap", fmt.Sprintf("%d %s", pt, a.codec)},
+				)
+
+				if a.nack {
+					m.Attributes = append(
+						m.Attributes,
+						sdp.Attribute{"rtcp-fb", fmt.Sprintf("%d nack", pt)},
+					)
+				}
+
+				m.Attributes = append(
+					m.Attributes,
+					sdp.Attribute{"fmtp", fmt.Sprintf("%d %s", pt, a.fmtp)},
+				)
+				m.Format = append(m.Format, strconv.Itoa(pt))
+
+				// TODO [chris] Fix payload type selection. Currently we're
+				// rejecting essentially all but one payload type, assigned
+				// here. However, we should be prepared to receive RTP flows
+				// for each accepted payload type.
+				pc.DynamicType = uint8(pt)
+			}
+		}
+
+		// Final attributes
+		m.Attributes = append(
+			m.Attributes,
+			[]sdp.Attribute{
 				{"ssrc", "2541098696 cname:cYhx/N8U7h7+3GW3"},
 				{"ssrc", "2541098696 msid:SdWLKyaNRoUSWQ7BzkKGcbCWcuV7rScYxCAv e9b60276-a415-4a66-8395-28a893918d4c"},
 				{"ssrc", "2541098696 mslabel:SdWLKyaNRoUSWQ7BzkKGcbCWcuV7rScYxCAv"},
 				{"ssrc", "2541098696 label:e9b60276-a415-4a66-8395-28a893918d4c"},
-			},
-		}
+			}...,
+		)
+
 		s.Media = append(s.Media, m)
 	}
 
