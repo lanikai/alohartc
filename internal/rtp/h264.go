@@ -29,13 +29,15 @@ func (s *Stream) SendVideo(quit <-chan struct{}, payloadType byte, src media.Vid
 		timestamp:   rand.Uint32(),
 	}
 
+	resendPackets := make(chan uint16, 16)
+
 	s.rtcpIn.handler = func(pkt rtcpPacket) error {
 		switch p := pkt.(type) {
 		case *rtcpReceiverReport:
 			log.Debug("Received ReceiverReport for stream %d: %#v", payloadType, p)
 		case *nackFeedbackMessage:
-			log.Debug("Received NACK for stream %d: %#v", payloadType, p)
-			// TODO: w.resendPackets(p.getLostPackets())
+			log.Warn("Received NACK for stream %d: %#v", payloadType, p)
+			resendPackets <- p.pid
 		case *pliFeedbackMessage:
 			log.Debug("Received PLI for stream %d: %#v", payloadType, p)
 			// TODO: src.TriggerIFrame()
@@ -63,6 +65,8 @@ func (s *Stream) SendVideo(quit <-chan struct{}, payloadType byte, src media.Vid
 			if err != nil {
 				return err
 			}
+		case seq := <-resendPackets:
+			w.resend(seq)
 		}
 		// TODO: Sender reports, RTCP feedback, etc.
 	}

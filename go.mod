@@ -3,6 +3,7 @@ module github.com/lanikai/alohartc
 go 1.13
 
 require (
+	github.com/golang/groupcache v0.0.0-20181024230925-c65c006176ff
 	github.com/gorilla/websocket v1.4.0
 	github.com/lanikai/alohartc/internal/dtls v0.0.0-20190830191728-a3f721372687
 	github.com/lanikai/oahu/api v0.0.0-20190703205954-e5008c1038bd

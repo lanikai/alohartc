@@ -68,6 +68,7 @@ func newStream(session *Session, opts StreamOptions) *Stream {
 
 func (s *Stream) Close() error {
 	s.sendGoodbye("stream closed")
+	s.rtpOut.cache.Clear()
 	s.rtpOut = nil
 	s.rtpIn = nil
 	return nil
