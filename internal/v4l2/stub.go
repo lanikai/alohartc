@@ -7,5 +7,5 @@ import (
 )
 
 func Open(devpath string, cfg Config) (media.VideoSource, error) {
-	panic("V4L2 support disabled")
+	return nil, errNotSupported
 }
