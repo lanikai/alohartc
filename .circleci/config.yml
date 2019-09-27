@@ -31,7 +31,10 @@ jobs:
 
       # Run tests
       - run: go get github.com/kyoh86/richgo
-      - run: richgo test -v ./...
+      - run: richgo test -race -coverprofile=coverage.txt -covermode=atomic -v ./...
+      
+      # Code coverage
+      - run: bash <(curl -s https://codecov.io/bash)
 
   build-release:
     executor: alohartc-executor
