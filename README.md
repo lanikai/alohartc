@@ -2,9 +2,10 @@
   AlohaRTC
   <br>
 </h1>
-<h4 align="center">Real-time communication with cameras, natively within the browser</h4>
+<h4 align="center">Real-time communication with embedded cameras, natively within the browser</h4>
 <p align="center">
   <a href="https://circleci.com/gh/lanikai/alohartc" alt="CircleCI"><img src="https://circleci.com/gh/lanikai/alohartc.svg?style=shield&circle-token=0bcc086c4c5c77ab6cfbdc85cb810f522ef7b8bd"></a>
+  <a href="https://codecov.io/gh/lanikai/alohartc"><img src="https://codecov.io/gh/lanikai/alohartc/branch/master/graph/badge.svg?token=c5vL4R61Y0" /></a>
 </p>
 
 ## Setup
