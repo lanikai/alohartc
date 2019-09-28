@@ -112,3 +112,8 @@ func (w *Writer) Bytes() []byte {
 func (w *Writer) Reset() {
 	w.offset = 0
 }
+
+// Return original byte slice (for sync.Pool)
+func (w *Writer) Buffer() []byte {
+	return w.buffer
+}
