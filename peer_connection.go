@@ -168,11 +168,7 @@ func (pc *PeerConnection) createAnswer() (sdp.Session, error) {
 			// Parse payload type from attribute. Will bin by payload type.
 			pt = -1
 			switch attr.Key {
-			case "rtpmap":
-				fallthrough
-			case "fmtp":
-				fallthrough
-			case "rtcp-fb":
+			case "fmtp", "rtcp-fb", "rtpmap":
 				if _, err := fmt.Sscanf(
 					attr.Value, "%3d %s", &pt, &text,
 				); err != nil {
