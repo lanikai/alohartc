@@ -36,8 +36,10 @@ func (s *Stream) SendVideo(quit <-chan struct{}, payloadType byte, src media.Vid
 		case *rtcpReceiverReport:
 			log.Debug("Received ReceiverReport for stream %d: %#v", payloadType, p)
 		case *nackFeedbackMessage:
-			log.Warn("Received NACK for stream %d: %#v", payloadType, p)
-			resendPackets <- p.pid
+			log.Debug("Received NACK for stream %d: %#v", payloadType, p)
+			for _, pid := range p.getLostPackets() {
+				resendPackets <- pid
+			}
 		case *pliFeedbackMessage:
 			log.Debug("Received PLI for stream %d: %#v", payloadType, p)
 			// TODO: src.TriggerIFrame()
