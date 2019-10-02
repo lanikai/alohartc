@@ -199,7 +199,7 @@ func (pc *PeerConnection) createAnswer() (sdp.Session, error) {
 				if !strings.Contains(text, "packetization-mode=1") {
 					supportedPayloadTypes[pt].reject = true
 				}
-				if !strings.Contains(text, "profile-level-id=42e01f") {
+				if !strings.Contains(text, "profile-level-id=42") {
 					supportedPayloadTypes[pt].reject = true
 				}
 			}
