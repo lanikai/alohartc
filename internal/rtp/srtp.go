@@ -7,7 +7,6 @@ package rtp
 
 import (
 	"bytes"
-	"crypto/aes"
 	"crypto/cipher"
 	"crypto/hmac"
 	"crypto/sha1"
@@ -16,6 +15,7 @@ import (
 	"hash"
 	"sync"
 
+	"github.com/lanikai/alohartc/internal/aes"
 	"github.com/lanikai/alohartc/internal/packet"
 )
 
@@ -211,7 +211,7 @@ func defaultPRF(masterKey, x []byte) cipher.Stream {
 		// IV equal to (x*2^16)
 		x = padRight(x, aes.BlockSize)
 	}
-	return cipher.NewCTR(block, x)
+	return block.CounterMode(x)
 }
 
 // An encryptTransform specifies how the session key and salt are used to
@@ -250,7 +250,7 @@ func aesCounterMode(key, salt []byte) encryptFunc {
 		xor32(iv[4:], ssrc)
 		xor64(iv[6:], index)
 
-		cipher.NewCTR(block, iv).XORKeyStream(payload, payload)
+		block.CounterMode(iv).XORKeyStream(payload, payload)
 	}
 }
 

@@ -5,19 +5,21 @@ GIT_REVISION_ID := $(shell git describe --always --tags)
 # Default 'alohacam' target platform is Linux/ARMv7. Can be overridden on the
 # command line. (Note: these default values are ignored for release builds.)
 CGO_ENABLED ?= 0
-GOARM ?= 7
 GOARCH ?= arm
-GOFLAGS ?=
+GOARM ?= 7
+GOFLAGS ?= -tags=aes_nettle,mp4,rtsp,v4l2
 GOOS ?= linux
 
+# To build for ARMv6 (i.e. Raspberry Pi Zero), run:
+#   make CC=$(git root)/xbuild/pizero/bin/musl-gcc CGO_ENABLED=1 \
+#     CGO_CFLAGS="-march=armv6 -mfpu=vfp -mfloat-abi=hard" CGO_LDFLAGS="-static -lnettle"
+
 # Command to build alohacam binary.
-define buildcmd
-    CGO_ENABLED=$(CGO_ENABLED) GOARM=$(GOARM) GOARCH=$(GOARCH) GOOS=$(GOOS) \
+BUILDCMD = \
+    CGO_ENABLED=$(CGO_ENABLED) GOARCH=$(GOARCH) GOARM=$(GOARM) GOFLAGS=$(GOFLAGS) GOOS=$(GOOS) \
     go build -v \
-	-ldflags '-s -w -X main.GitRevisionId=$(GIT_REVISION_ID)' \
-	$(1) \
+	-ldflags '-X main.GitRevisionId=$(GIT_REVISION_ID) -linkmode external' \
 	-o $@ .
-endef
 
 
 .PHONY: all
@@ -30,7 +32,7 @@ generate:
 # PHONY because we let the Go build system decide if it's up-to-date.
 .PHONY: alohacam
 alohacam: generate
-	$(call buildcmd, -tags="m4p rtsp v4l2")
+	$(BUILDCMD)
 
 
 # Release version. Override on command line when building a release, e.g.
@@ -45,6 +47,7 @@ RELEASE_TARGETS := \
 # Set Go build environment for each release target.
 $(RELEASE_TARGETS): CGO_ENABLED=0
 release/$(VERSION)/alohacam-linux-%: GOOS=linux
+release/$(VERSION)/alohacam-linux-%: GOFLAGS=-tags=production,v4l2
 release/$(VERSION)/alohacam-linux-armv%: GOARCH=arm
 release/$(VERSION)/alohacam-linux-armv6: GOARM=6
 release/$(VERSION)/alohacam-linux-armv7: GOARM=7
@@ -52,7 +55,7 @@ release/$(VERSION)/alohacam-linux-aarch64: GOARCH=arm64
 
 .PHONY: $(RELEASE_TARGETS)
 $(RELEASE_TARGETS): checktree generate
-	$(call buildcmd, -tags="production v4l2")
+	$(BUILDCMD)
 
 .PHONY: release
 release: $(RELEASE_TARGETS)
