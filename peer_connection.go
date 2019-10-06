@@ -129,6 +129,7 @@ func NewPeerConnectionWithContext(ctx context.Context, config Config) (*PeerConn
 
 // Create SDP answer. Only needs SDP offer, no ICE candidates.
 func (pc *PeerConnection) createAnswer() (sdp.Session, error) {
+	// Session description
 	s := sdp.Session{
 		Version: 0,
 		Origin: sdp.Origin{
@@ -148,6 +149,7 @@ func (pc *PeerConnection) createAnswer() (sdp.Session, error) {
 		},
 	}
 
+	// Media description(s)
 	for _, remoteMedia := range pc.remoteDescription.Media {
 
 		type payloadTypeAttributes struct {
@@ -156,6 +158,7 @@ func (pc *PeerConnection) createAnswer() (sdp.Session, error) {
 			fmtp   string
 			codec  string
 			reject bool
+			remb   bool
 		}
 
 		supportedPayloadTypes := make(map[int]*payloadTypeAttributes)
@@ -191,6 +194,8 @@ func (pc *PeerConnection) createAnswer() (sdp.Session, error) {
 				}
 			case "rtcp-fb":
 				switch text {
+				case "goog-remb":
+					supportedPayloadTypes[pt].remb = true
 				case "nack":
 					supportedPayloadTypes[pt].nack = true
 				}
@@ -249,10 +254,19 @@ func (pc *PeerConnection) createAnswer() (sdp.Session, error) {
 					sdp.Attribute{"rtpmap", fmt.Sprintf("%d %s", pt, a.codec)},
 				)
 
+				// Negative acknowledgement (NACK) support
 				if a.nack {
 					m.Attributes = append(
 						m.Attributes,
 						sdp.Attribute{"rtcp-fb", fmt.Sprintf("%d nack", pt)},
+					)
+				}
+
+				// Receiver estimated maximum bitrate (REMB) support
+				if a.remb {
+					m.Attributes = append(
+						m.Attributes,
+						sdp.Attribute{"rtcp-fb", fmt.Sprintf("%d goog-remb", pt)},
 					)
 				}
 
@@ -430,6 +444,32 @@ func (pc *PeerConnection) Stream() error {
 	//if err != nil {
 	//	return err
 	//}
+
+	// Change bitrate every 3 seconds
+	go func() {
+		lowBitrate := 500000
+		highBitrate := 1500000
+		bitrate := highBitrate
+		ticker := time.NewTicker(15 * time.Second)
+		done := make(chan bool)
+		for {
+			select {
+			case <-done:
+				return
+			case t := <-ticker.C:
+				switch bitrate {
+				case lowBitrate:
+					bitrate = highBitrate
+				case highBitrate:
+					bitrate = lowBitrate
+				}
+				fmt.Println("Setting bitrate to", bitrate, "at", t)
+				if err := pc.localVideo.SetBitrate(bitrate); err != nil {
+					log.Fatal(err)
+				}
+			}
+		}
+	}()
 
 	// There are two termination conditions that we need to deal with here:
 	// 1. Context cancellation. If Close() is called explicitly, or if the

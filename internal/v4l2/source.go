@@ -97,3 +97,7 @@ func (v *videoSource) Width() int {
 func (v *videoSource) Height() int {
 	return v.cfg.Height
 }
+
+func (v *videoSource) SetBitrate(bps int) error {
+	return v.dev.SetBitrate(bps)
+}

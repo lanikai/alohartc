@@ -118,6 +118,10 @@ func (video *videoSource) Height() int {
 	return int(video.sps.Height)
 }
 
+func (video *videoSource) SetBitrate(bps int) error {
+	return errors.New("not supported")
+}
+
 func (video *videoSource) start() {
 	transport, sessionID, err := video.cli.Setup(video.uri)
 	if err != nil {

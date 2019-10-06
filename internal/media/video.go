@@ -8,6 +8,8 @@ type VideoSource interface {
 	Width() int
 	Height() int
 
+	SetBitrate(bps int) error
+
 	//GetFramerate() float32
 	//GetBitrate() int
 

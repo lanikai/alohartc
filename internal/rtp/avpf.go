@@ -12,6 +12,7 @@ import (
 const (
 	fmtNACK = 1
 	fmtPLI  = 1
+	fmtREMB = 15
 )
 
 func newFeedbackPacket(packetType byte, fmt int) rtcpPacket {
@@ -24,6 +25,8 @@ func newFeedbackPacket(packetType byte, fmt int) rtcpPacket {
 		switch fmt {
 		case fmtPLI:
 			return new(pliFeedbackMessage)
+		case fmtREMB:
+			return new(rembFeedbackMessage)
 		}
 	}
 
@@ -132,5 +135,49 @@ func (pli *pliFeedbackMessage) readFrom(r *packet.Reader, h *rtcpHeader) error {
 	}
 	pli.sender = r.ReadUint32()
 	pli.source = r.ReadUint32()
+	return nil
+}
+
+// See https://tools.ietf.org/html/draft-alvestrand-rmcat-remb-03#section-2.2
+type rembFeedbackMessage struct {
+	sender  uint32 // SSRC of REMB sender
+	source  uint32 // SSRC of media source
+	bitrate uint32 // Total estimated maximum available bitrate
+}
+
+// TODO [chris] incomplete
+func (remb *rembFeedbackMessage) writeTo(w *packet.Writer) error {
+	h := rtcpHeader{
+		packetType: rtcpPayloadSpecificFeedbackType,
+		count:      fmtREMB,
+		length:     2,
+	}
+	if err := h.writeTo(w); err != nil {
+		return err
+	}
+
+	if err := w.CheckCapacity(4 * h.length); err != nil {
+		return err
+	}
+	w.WriteUint32(remb.sender)
+	w.WriteUint32(remb.source)
+	return nil
+}
+
+func (remb *rembFeedbackMessage) readFrom(r *packet.Reader, h *rtcpHeader) error {
+	if h.length != 5 {
+		return errors.Errorf("invalid REMB Feedback Message: length = %d, ", h.length)
+	}
+	remb.sender = r.ReadUint32()
+	remb.source = r.ReadUint32()
+	if "REMB" != r.ReadString(4) {
+		return errors.Errorf("invalid REMB Feedback Message: invalid identifier")
+	}
+	numSSRC := r.ReadByte()
+	em := r.ReadUint24() // bitrate exponent and mantissa
+	// TODO [chris] 0 if > ~4Gbps
+	remb.bitrate = (em & 0x3FFFF) << (em >> 18)
+	log.Debug("%v sources, estimated bitrate: %v", numSSRC, remb.bitrate)
+
 	return nil
 }

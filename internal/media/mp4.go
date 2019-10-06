@@ -153,6 +153,10 @@ func (vs *mp4VideoSource) Height() int {
 	return vs.info.Height()
 }
 
+func (vs *mp4VideoSource) SetBitrate(bps int) error {
+	return errors.New("not supported")
+}
+
 // Skip past the SEI (if present) in a H.264 data packet.
 // See ITU-T H.264 section 7.3.2.3.
 func skipSEI(data []byte) []byte {
