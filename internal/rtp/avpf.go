@@ -140,44 +140,61 @@ func (pli *pliFeedbackMessage) readFrom(r *packet.Reader, h *rtcpHeader) error {
 
 // See https://tools.ietf.org/html/draft-alvestrand-rmcat-remb-03#section-2.2
 type rembFeedbackMessage struct {
-	sender  uint32 // SSRC of REMB sender
-	source  uint32 // SSRC of media source
-	bitrate uint32 // Total estimated maximum available bitrate
+	sender   uint32   // SSRC of REMB sender
+	exponent uint32   // Total estimated maximum bitrate
+	mantissa uint32   // Total estimated maximum bitrate
+	sources  []uint32 // One or more SSRCs feedback applies to
 }
 
-// TODO [chris] incomplete
 func (remb *rembFeedbackMessage) writeTo(w *packet.Writer) error {
 	h := rtcpHeader{
 		packetType: rtcpPayloadSpecificFeedbackType,
 		count:      fmtREMB,
-		length:     2,
+		length:     4 + len(remb.sources),
 	}
 	if err := h.writeTo(w); err != nil {
 		return err
 	}
-
 	if err := w.CheckCapacity(4 * h.length); err != nil {
 		return err
 	}
 	w.WriteUint32(remb.sender)
-	w.WriteUint32(remb.source)
+	w.WriteUint32(0) // SSRC of media source is always 0
+	w.WriteString("REMB")
+	w.WriteByte(byte(len(remb.sources)))
+	w.WriteUint24(((remb.exponent & 0x3F) << 18) | (remb.mantissa & 0x3FFFF))
+	for _, source := range remb.sources {
+		w.WriteUint32(source)
+	}
+
 	return nil
 }
 
 func (remb *rembFeedbackMessage) readFrom(r *packet.Reader, h *rtcpHeader) error {
-	if h.length != 5 {
+	// Require at least 1 source (length = 5)
+	if h.length < 5 {
 		return errors.Errorf("invalid REMB Feedback Message: length = %d, ", h.length)
 	}
 	remb.sender = r.ReadUint32()
-	remb.source = r.ReadUint32()
-	if "REMB" != r.ReadString(4) {
-		return errors.Errorf("invalid REMB Feedback Message: invalid identifier")
+	if 0 != r.ReadUint32() {
+		return errors.Errorf("invalid REMB Feedback Messages: non-zero source")
 	}
-	numSSRC := r.ReadByte()
-	em := r.ReadUint24() // bitrate exponent and mantissa
-	// TODO [chris] 0 if > ~4Gbps
-	remb.bitrate = (em & 0x3FFFF) << (em >> 18)
-	log.Debug("%v sources, estimated bitrate: %v", numSSRC, remb.bitrate)
+	if "REMB" != r.ReadString(4) {
+		return errors.Errorf("invalid REMB Feedback Message: invalid id")
+	}
+	numSources := int(r.ReadByte())
+
+	em := r.ReadUint24()
+	remb.exponent = ((em >> 18) & 0x3F)
+	remb.mantissa = (em & 0x3FFFF)
+
+	for i := 0; i < numSources && i < (r.Remaining()>>2); i++ {
+		remb.sources = append(remb.sources, r.ReadUint32())
+	}
 
 	return nil
+}
+
+func (remb *rembFeedbackMessage) getEstimatedBitrate() int {
+	return int(remb.mantissa << remb.exponent)
 }

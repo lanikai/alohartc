@@ -84,6 +84,8 @@ type videoSource struct {
 	cfg Config
 
 	dev *device
+
+	current int
 }
 
 func (v *videoSource) Codec() string {
@@ -98,6 +100,30 @@ func (v *videoSource) Height() int {
 	return v.cfg.Height
 }
 
-func (v *videoSource) SetBitrate(bps int) error {
-	return v.dev.SetBitrate(bps)
+func (v *videoSource) SetBitrate(target int) error {
+	// TODO this control loop should probably be source agnostic. move elsewhere?
+
+	max := 3000000
+	min := 30000 // same as chrome
+
+	// Upper bound. No perceptual difference abover 3Mbps.
+	if target > max {
+		target = max
+	}
+	if target < min {
+		// TODO googSuspectBelowMinBitrate option
+		target = min
+	}
+
+	delta := target - v.current
+
+	// If available bitrate is less than current, or significant jump upward,
+	// adjust immediately
+	if target < v.current || (float32(delta) > (0.1 * float32(v.current))) {
+		v.current = target
+		log.Info("adjusting bitrate: %v", v.current)
+		return v.dev.SetBitrate(v.current)
+	}
+
+	return nil
 }

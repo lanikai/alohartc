@@ -445,32 +445,6 @@ func (pc *PeerConnection) Stream() error {
 	//	return err
 	//}
 
-	// Change bitrate every 3 seconds
-	go func() {
-		lowBitrate := 500000
-		highBitrate := 1500000
-		bitrate := highBitrate
-		ticker := time.NewTicker(15 * time.Second)
-		done := make(chan bool)
-		for {
-			select {
-			case <-done:
-				return
-			case t := <-ticker.C:
-				switch bitrate {
-				case lowBitrate:
-					bitrate = highBitrate
-				case highBitrate:
-					bitrate = lowBitrate
-				}
-				fmt.Println("Setting bitrate to", bitrate, "at", t)
-				if err := pc.localVideo.SetBitrate(bitrate); err != nil {
-					log.Fatal(err)
-				}
-			}
-		}
-	}()
-
 	// There are two termination conditions that we need to deal with here:
 	// 1. Context cancellation. If Close() is called explicitly, or if the
 	// parent context is canceled, we should terminate cleanly.

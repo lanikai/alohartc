@@ -40,13 +40,18 @@ func (s *Stream) SendVideo(quit <-chan struct{}, payloadType byte, src media.Vid
 			for _, pid := range p.getLostPackets() {
 				resendPackets <- pid
 			}
+		case *rembFeedbackMessage:
+			log.Debug("Received REMB for stream %d: %#v", payloadType, p)
+			if err := src.SetBitrate(p.getEstimatedBitrate()); err != nil {
+				log.Error("Failed to set bitrate: %v", err)
+			}
 		case *pliFeedbackMessage:
 			log.Debug("Received PLI for stream %d: %#v", payloadType, p)
 			// TODO: src.TriggerIFrame()
 		default:
 			log.Debug("Received unrecognized RTCP packet for stream %d: %#v", payloadType, p)
 		}
-		// TODO: FIR, REMB, others
+		// TODO: FIR, others
 		return nil
 	}
 
