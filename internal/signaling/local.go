@@ -6,11 +6,12 @@ package signaling
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"net/http"
 	"os"
 	"strings"
+
+	flag "github.com/spf13/pflag"
 
 	"github.com/gorilla/websocket"
 
@@ -24,7 +25,7 @@ var (
 )
 
 func init() {
-	flag.IntVar(&flagPort, "p", 8000, "HTTP port on which to listen")
+	flag.IntVarP(&flagPort, "port", "p", 8000, "HTTP port on which to listen")
 
 	RegisterListener(localWebsocketListener)
 }
