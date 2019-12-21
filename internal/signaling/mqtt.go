@@ -4,10 +4,11 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
-	"flag"
 	"fmt"
 	"strings"
 	"sync"
+
+	flag "github.com/spf13/pflag"
 
 	"github.com/lanikai/alohartc/internal/config"
 	"github.com/lanikai/alohartc/internal/ice"
@@ -21,9 +22,9 @@ var (
 )
 
 func init() {
-	flag.StringVar(&mqttBrokerFlag, "mqttbroker", config.MQTT_BROKER, "MQTT broker address")
-	flag.StringVar(&certFlag, "cert", "cert.pem", "Client certificate for connecting to MQTT broker")
-	flag.StringVar(&keyFlag, "key", "key.pem", "Private key corresponding to client certificate")
+	flag.StringVarP(&mqttBrokerFlag, "mqtt-address", "m", config.MQTT_BROKER, "MQTT broker address")
+	flag.StringVarP(&certFlag, "certificate", "c", "/etc/alohartcd/cert.pem", "Client certificate for connecting to MQTT broker")
+	flag.StringVarP(&keyFlag, "private-key", "k", "/etc/alohartcd/key.pem", "Private key corresponding to client certificate")
 
 	RegisterListener(mqttListener)
 }

@@ -2,6 +2,8 @@
 
 package media
 
+import "errors"
+
 func OpenMP4(filename string) (VideoSource, error) {
-	panic("MP4 support disabled")
+	return nil, errors.New("MP4 support disabled")
 }
