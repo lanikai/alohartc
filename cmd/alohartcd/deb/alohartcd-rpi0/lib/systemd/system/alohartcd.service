@@ -1,0 +1,11 @@
+[Unit]
+Description=AlohaRTC daemon
+After=network-online.target auditd.service
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/bin/alohartcd
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

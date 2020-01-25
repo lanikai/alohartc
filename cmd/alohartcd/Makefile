@@ -2,14 +2,13 @@ TOP := $(shell git rev-parse --show-cdup)
 
 default: alohartcd
 
-
 .PHONY: generate
 generate:
 	$(MAKE) -C $(TOP) generate
 
 # Command to build alohartcd binary
 define build
-    CGO_ENABLED=1 GOARCH=$(1) GOARM=$(2) GOOS=$(3) \
+    CGO_ENABLED=0 GOARCH=$(1) GOARM=$(2) GOOS=$(3) \
     go build -v -ldflags '-s -w' $(4) -o $@ .
 endef
 
