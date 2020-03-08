@@ -7,7 +7,6 @@ package rtp
 
 import (
 	"bytes"
-	"crypto/aes"
 	"crypto/cipher"
 	"crypto/hmac"
 	"crypto/sha1"
@@ -16,6 +15,7 @@ import (
 	"hash"
 	"sync"
 
+	"github.com/lanikai/alohartc/internal/aes"
 	"github.com/lanikai/alohartc/internal/packet"
 )
 
