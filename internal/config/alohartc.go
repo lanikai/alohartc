@@ -1,4 +1,4 @@
-// +build production alohartc
+// +build production,alohartc
 
 package config
 
