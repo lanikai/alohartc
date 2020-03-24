@@ -108,7 +108,9 @@ func mqttListener(handler SessionHandler) error {
 					log.Warn("Invalid 'ice-candidate' payload: %q", body)
 				}
 			}
-			if c, err := ice.ParseCandidate(desc, sdpMid); err != nil {
+			if desc == "" {
+				log.Debug("Empty ICE candidate: sdpMid = %d", sdpMid)
+			} else if c, err := ice.ParseCandidate(desc, sdpMid); err != nil {
 				log.Warn("Invalid ICE candidate (%q, %q): %v", desc, sdpMid, err)
 			} else {
 				call.rcandCh <- c
