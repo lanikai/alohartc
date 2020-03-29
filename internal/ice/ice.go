@@ -23,3 +23,16 @@ func init() {
 	flag.BoolVarP(&flagEnableIPv6, "enable-ipv6", "6", true, "Allow IPv6 ICE candidates")
 	flag.StringVarP(&flagStunServer, "stun-address", "s", config.STUN_SERVER, "STUN server address")
 }
+
+// Start background services necessary for ICE.
+func Start() error {
+	if err := mdnsStart(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func Stop() {
+	mdnsStop()
+}

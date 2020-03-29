@@ -80,6 +80,11 @@ func main() {
 		defer closer.Close()
 	}
 
+	if err := ice.Start(); err != nil {
+		log.Fatal(err)
+	}
+	defer ice.Stop()
+
 	signaling.Listen(doPeerSession)
 }
 

@@ -87,37 +87,7 @@ func mqttListener(handler SessionHandler) error {
 		}
 		callLock.Unlock()
 
-		// Handle the message.
-		switch what {
-		case "sdp-offer":
-			call.offerCh <- body
-		case "ice-candidate":
-			if len(body) == 0 {
-				close(call.rcandCh)
-				break
-			}
-			var desc, sdpMid string
-			for _, line := range strings.Split(body, "\n") {
-				if line == "" {
-					continue
-				} else if strings.HasPrefix(line, "candidate:") {
-					desc = line
-				} else if strings.HasPrefix(line, "mid:") {
-					sdpMid = line[4:]
-				} else {
-					log.Warn("Invalid 'ice-candidate' payload: %q", body)
-				}
-			}
-			if desc == "" {
-				log.Debug("Empty ICE candidate: sdpMid = %d", sdpMid)
-			} else if c, err := ice.ParseCandidate(desc, sdpMid); err != nil {
-				log.Warn("Invalid ICE candidate (%q, %q): %v", desc, sdpMid, err)
-			} else {
-				call.rcandCh <- c
-			}
-		default:
-			log.Warn("Unrecognized MQTT topic level: %s", what)
-		}
+		call.handleMessage(what, body)
 	})
 	defer mq.Unsubscribe(topicFilter)
 
@@ -162,4 +132,37 @@ type callState struct {
 	offerCh chan string
 	rcandCh chan ice.Candidate
 	session *Session
+}
+
+func (call *callState) handleMessage(what, body string) {
+	switch what {
+	case "sdp-offer":
+		call.offerCh <- body
+	case "ice-candidate":
+		if len(body) == 0 {
+			close(call.rcandCh)
+			break
+		}
+		var desc, sdpMid string
+		for _, line := range strings.Split(body, "\n") {
+			if line == "" {
+				continue
+			} else if strings.HasPrefix(line, "candidate:") {
+				desc = line
+			} else if strings.HasPrefix(line, "mid:") {
+				sdpMid = line[4:]
+			} else {
+				log.Warn("Invalid 'ice-candidate' payload: %q", body)
+			}
+		}
+		if desc == "" {
+			log.Debug("Empty ICE candidate: sdpMid = %s", sdpMid)
+		} else if c, err := ice.ParseCandidate(desc, sdpMid); err != nil {
+			log.Warn("Invalid ICE candidate (%q, %q): %v", desc, sdpMid, err)
+		} else {
+			call.rcandCh <- c
+		}
+	default:
+		log.Warn("Unrecognized MQTT topic level: %s", what)
+	}
 }

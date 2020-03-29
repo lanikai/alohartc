@@ -2,11 +2,13 @@ package ice
 
 import (
 	"bufio"
+	"context"
 	"encoding/base32"
 	"fmt"
 	"hash/fnv"
 	"net"
 	"strings"
+	"time"
 )
 
 // An ICE candidate (either local or remote).
@@ -170,14 +172,16 @@ func (c Candidate) String() string {
 }
 
 // An ICE candidate line is a string of the form
-//   candidate:{foundation} {component-id} {protocol} {priority} {address} {port} typ {type} ...
+//   candidate:{foundation} {component-id} {protocol} {priority} {host} {port} typ {type} ...
 // See https://tools.ietf.org/html/draft-ietf-mmusic-ice-sip-sdp-24#section-4.1
 func ParseCandidate(desc, sdpMid string) (c Candidate, err error) {
+	log.Debug("Parsing ICE candidate: %q", desc)
 	r := strings.NewReader(desc)
 
-	var protocol, ip, port string
-	_, err = fmt.Fscanf(r, "candidate:%s %d %s %d %s %s typ %s",
-		&c.foundation, &c.component, &protocol, &c.priority, &ip, &port, &c.typ)
+	var protocol, host string
+	var port int
+	_, err = fmt.Fscanf(r, "candidate:%s %d %s %d %s %d typ %s",
+		&c.foundation, &c.component, &protocol, &c.priority, &host, &port, &c.typ)
 	if err != nil {
 		return
 	}
@@ -186,13 +190,27 @@ func ParseCandidate(desc, sdpMid string) (c Candidate, err error) {
 		return
 	}
 
-	ipPort := net.JoinHostPort(ip, port)
-	network := strings.ToLower(protocol)
-	netAddr, err := resolveAddr(network, ipPort)
+	// Host should either be a plain IP address or an ephemeral mDNS domain.
+	var ip net.IP
+	if isEphemeralLocalDomain(host) {
+		ctx, _ := context.WithTimeout(context.Background(), 5*time.Second)
+		ip, err = mdnsResolve(ctx, host)
+	} else {
+		ip, err = parseIP(host)
+	}
 	if err != nil {
 		return
 	}
-	c.address = makeTransportAddress(netAddr)
+
+	switch strings.ToLower(protocol) {
+	case "tcp":
+		c.address = makeTransportAddress(&net.TCPAddr{IP: ip, Port: port})
+	case "udp":
+		c.address = makeTransportAddress(&net.UDPAddr{IP: ip, Port: port})
+	default:
+		err = fmt.Errorf("invalid protocol: %s", protocol)
+		return
+	}
 
 	// The rest of the candidate line consists of "name value" pairs.
 	scanner := bufio.NewScanner(r)
@@ -221,13 +239,10 @@ func ParseCandidate(desc, sdpMid string) (c Candidate, err error) {
 	return
 }
 
-func resolveAddr(network, address string) (net.Addr, error) {
-	switch strings.ToLower(network) {
-	case "tcp":
-		return net.ResolveTCPAddr(network, address)
-	case "udp":
-		return net.ResolveUDPAddr(network, address)
-	default:
-		return nil, fmt.Errorf("Invalid network type: %s", network)
+func parseIP(host string) (net.IP, error) {
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return nil, fmt.Errorf("invalid IP address: %s", host)
 	}
+	return ip, nil
 }
