@@ -74,7 +74,7 @@ func cand(priority uint32, ip string, port int) Candidate {
 	c := Candidate{}
 	c.priority = priority
 	c.address.protocol = "udp"
+	c.address.ip = IPAddress(net.ParseIP(ip))
 	c.address.port = port
-	copy(c.address.ip[:], net.ParseIP(ip).To16())
 	return c
 }

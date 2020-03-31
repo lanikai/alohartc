@@ -4,6 +4,7 @@ import (
 	"context"
 	"net"
 	"sync"
+	"time"
 )
 
 // RFC 8445: https://tools.ietf.org/html/rfc8445
@@ -29,6 +30,9 @@ type Agent struct {
 const (
 	// How many incoming packets can be enqueued before dropping data.
 	packetQueueLength = 64
+
+	// How long to wait for mDNS resolution.
+	mdnsResolveTimeout = 3 * time.Second
 )
 
 func NewAgent() *Agent {
@@ -143,7 +147,16 @@ func (a *Agent) addAllRemoteCandidates(ctx context.Context, rcand <-chan Candida
 				return
 			}
 			if c.address.protocol == UDP {
-				a.addRemoteCandidate(c)
+				if c.address.resolved() {
+					a.addRemoteCandidate(c)
+				} else {
+					// Resolve the candidate address first, then add.
+					go func() {
+						if a.resolveCandidate(ctx, &c) {
+							a.addRemoteCandidate(c)
+						}
+					}()
+				}
 			} else {
 				log.Debug("Ignoring non-UDP remote candidate: %s", c)
 			}
@@ -151,6 +164,20 @@ func (a *Agent) addAllRemoteCandidates(ctx context.Context, rcand <-chan Candida
 			return
 		}
 	}
+}
+
+func (a *Agent) resolveCandidate(ctx context.Context, c *Candidate) bool {
+	log.Debug("Resolving ICE candidate address: %s", c.address.ip)
+
+	timeoutCtx, _ := context.WithTimeout(ctx, mdnsResolveTimeout)
+	ip, err := mdnsResolve(timeoutCtx, string(c.address.ip))
+	if err != nil {
+		log.Debug("Failed to resolve %s: %v", c.address.ip, err)
+		return false
+	}
+
+	c.address.setIP(ip)
+	return true
 }
 
 func (a *Agent) addLocalCandidate(c Candidate) {
