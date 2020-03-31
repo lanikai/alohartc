@@ -4,17 +4,20 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"runtime"
-	"strings"
 	"sync"
 	"time"
 )
+
+const timestampFormat = "2006-01-02 15:04:05.000"
 
 type Logger struct {
 	// The level at which this logger logs. Any log messages intended for a higher
 	// (more verbose) log level are ignored.
 	Level
 
+	// Tag used to filter and classify log messages.
 	Tag string
 
 	out io.Writer
@@ -52,7 +55,30 @@ func (log *Logger) WithDefaultLevel(level Level) *Logger {
 	return &Logger{determineLevel(log.Tag, level), log.Tag, log.out, log.mu}
 }
 
-var newline = []byte{'\n'}
+// Wrapper for []byte that implements io.Writer. Simpler and cheaper than
+// bytes.Buffer.
+type buffer []byte
+
+func (b *buffer) Write(p []byte) (int, error) {
+	*b = append(*b, p...)
+	return len(p), nil
+}
+
+func (b *buffer) writeString(s string) {
+	*b = append(*b, s...)
+}
+
+func (b *buffer) writeByte(c byte) {
+	*b = append(*b, c)
+}
+
+// A global buffer pool, shared across all loggers. Initial length is 256 to
+// accommodate *most* log lines.
+var bufPool = sync.Pool{
+	New: func() interface{} {
+		return make(buffer, 256)
+	},
+}
 
 // Log a message at the given level. Include the file and line number from
 // 'calldepth' steps up the call stack.
@@ -62,54 +88,42 @@ func (log *Logger) Log(level Level, calldepth int, format string, a ...interface
 		return
 	}
 
-	now := time.Now()
+	// Grab an empty buffer from the pool.
+	buf := bufPool.Get().(buffer)
+	// When we're done, reset the buffer and return it to the pool.
+	defer bufPool.Put(buf[:0])
+
+	buf.Write(ansiWhite)
+
+	// Write the current timestamp.
+	buf = time.Now().AppendFormat(buf, timestampFormat)
+
+	// Write level and tag.
+	fmt.Fprintf(&buf, " %s%c/%s", level.color(), level.letter(), log.Tag)
 
 	// Get the caller of Error()/Warn()/Info()/etc.
 	_, file, line, ok := runtime.Caller(calldepth + 1)
 	if !ok {
 		file = "?"
 	}
-	// Truncate full path to just the filename.
-	finalSlash := strings.LastIndexByte(file, os.PathSeparator)
-	file = file[finalSlash+1:]
 
-	// Lock to prevent log messages from interleaving.
-	log.mu.Lock()
-	defer log.mu.Unlock()
-
-	// Write timestamp, e.g. "2019-01-25 04:14:10.523"
-	log.Write(ansiWhite)
-	if ts, err := now.Round(time.Millisecond).MarshalText(); err != nil {
-		panic("Invalid time conversion: " + err.Error())
-	} else {
-		ts[10] = ' '  // Replace 'T' with a space for readability, as per RFC 3339
-		ts = ts[0:23] // Strip timezone offset
-		log.Write(ts)
-	}
-
-	// Write level, tag, file, and line number.
-	fmt.Fprintf(log, " %s%c/%s[%s:%d] ", level.color(), level.letter(), log.Tag, file, line)
+	// Write file and line number.
+	fmt.Fprintf(&buf, "[%s:%d] %s", filepath.Base(file), line, ansiReset)
 
 	// Write formatted log message.
-	fmt.Fprintf(log, format, a...)
+	fmt.Fprintf(&buf, format, a...)
 
 	// Append newline if necessary.
-	lf := len(format)
-	if lf == 0 || format[lf-1] != '\n' {
-		log.Write(newline)
+	if n := len(format); n == 0 || format[n-1] != '\n' {
+		buf.writeByte('\n')
 	}
 
-	log.Write(ansiReset)
-}
-
-// Implement io.Writer but panic on error, because if we're unable to log then
-// we have no other way of surfacing an error.
-func (log *Logger) Write(b []byte) (n int, err error) {
-	n, err = log.out.Write(b)
-	if err != nil {
+	// Lock before writing to avoid interleaving of log messages.
+	log.mu.Lock()
+	if _, err := log.out.Write(buf); err != nil {
 		panic(fmt.Sprintf("Failed to log to %v: %v", log.out, err))
 	}
-	return
+	log.mu.Unlock()
 }
 
 func (log *Logger) Error(format string, a ...interface{}) {
