@@ -13,18 +13,19 @@ func TestParseCandidate(t *testing.T) {
 		t.Error(err)
 	}
 
-	assert.Equal(t, c.foundation, "0")
-	assert.Equal(t, c.component, 1)
-	assert.Equal(t, c.address.protocol, UDP)
-	assert.Equal(t, c.address.ip.String(), "192.168.1.1")
-	assert.Equal(t, c.address.port, 12345)
-	assert.EqualValues(t, c.priority, 123456789)
-	assert.Equal(t, c.typ, "host")
+	assert.Equal(t, "0", c.foundation)
+	assert.Equal(t, 1, c.component)
+	assert.Equal(t, UDP, c.address.protocol)
+	assert.Equal(t, IPAddress("\xc0\xa8\x01\x01"), c.address.ip)
+	assert.Equal(t, "192.168.1.1", c.address.displayIP())
+	assert.Equal(t, 12345, c.address.port)
+	assert.Equal(t, uint32(123456789), c.priority)
+	assert.Equal(t, "host", c.typ)
 }
 
 func TestCandidateString(t *testing.T) {
 	desc := "candidate:0 1 udp 123456789 192.168.1.1 12345 typ host"
 	c, _ := ParseCandidate(desc, "mid")
 
-	assert.Equal(t, c.String(), desc)
+	assert.Equal(t, desc, c.String())
 }

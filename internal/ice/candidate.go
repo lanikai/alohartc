@@ -2,13 +2,11 @@ package ice
 
 import (
 	"bufio"
-	"context"
 	"encoding/base32"
 	"fmt"
 	"hash/fnv"
 	"net"
 	"strings"
-	"time"
 )
 
 // An ICE candidate (either local or remote).
@@ -154,13 +152,12 @@ func (c *Candidate) peerPriority(pt *PriorityTable) uint32 {
 }
 
 func (c *Candidate) sdpString() string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "candidate:%s %d %s %d %s %d typ %s",
-		c.foundation, c.component, c.address.protocol, c.priority, c.address.ip, c.address.port, c.typ)
+	s := fmt.Sprintf("candidate:%s %d %s %d %s %d typ %s",
+		c.foundation, c.component, c.address.protocol, c.priority, c.address.displayIP(), c.address.port, c.typ)
 	for _, a := range c.attrs {
-		fmt.Fprintf(&b, " %s %s", a.name, a.value)
+		s += fmt.Sprintf(" %s %s", a.name, a.value)
 	}
-	return b.String()
+	return s
 }
 
 func (c *Candidate) Mid() string {
@@ -172,16 +169,16 @@ func (c Candidate) String() string {
 }
 
 // An ICE candidate line is a string of the form
-//   candidate:{foundation} {component-id} {protocol} {priority} {host} {port} typ {type} ...
+//   candidate:{foundation} {component-id} {transport} {priority} {connection-address} {port} typ {cand-type} ...
 // See https://tools.ietf.org/html/draft-ietf-mmusic-ice-sip-sdp-24#section-4.1
 func ParseCandidate(desc, sdpMid string) (c Candidate, err error) {
 	log.Debug("Parsing ICE candidate: %q", desc)
 	r := strings.NewReader(desc)
 
-	var protocol, host string
+	var transport, connectionAddress string
 	var port int
 	_, err = fmt.Fscanf(r, "candidate:%s %d %s %d %s %d typ %s",
-		&c.foundation, &c.component, &protocol, &c.priority, &host, &port, &c.typ)
+		&c.foundation, &c.component, &transport, &c.priority, &connectionAddress, &port, &c.typ)
 	if err != nil {
 		return
 	}
@@ -190,59 +187,38 @@ func ParseCandidate(desc, sdpMid string) (c Candidate, err error) {
 		return
 	}
 
-	// Host should either be a plain IP address or an ephemeral mDNS domain.
-	var ip net.IP
-	if isEphemeralLocalDomain(host) {
-		ctx, _ := context.WithTimeout(context.Background(), 5*time.Second)
-		ip, err = mdnsResolve(ctx, host)
-	} else {
-		ip, err = parseIP(host)
-	}
-	if err != nil {
+	switch strings.ToLower(transport) {
+	case "tcp":
+		c.address.protocol = TCP
+	case "udp":
+		c.address.protocol = UDP
+	default:
+		err = fmt.Errorf("invalid protocol: %s", transport)
 		return
 	}
 
-	switch strings.ToLower(protocol) {
-	case "tcp":
-		c.address = makeTransportAddress(&net.TCPAddr{IP: ip, Port: port})
-	case "udp":
-		c.address = makeTransportAddress(&net.UDPAddr{IP: ip, Port: port})
-	default:
-		err = fmt.Errorf("invalid protocol: %s", protocol)
-		return
+	if ip := net.ParseIP(connectionAddress); ip != nil {
+		c.address.setIP(ip)
+	} else {
+		// If connectionAddress isn't a valid IP address, leave the transport
+		// address in an unresolved state, to be dealt with later.
+		c.address.ip = IPAddress(connectionAddress)
 	}
+	c.address.port = port
 
 	// The rest of the candidate line consists of "name value" pairs.
 	scanner := bufio.NewScanner(r)
 	scanner.Split(bufio.ScanWords)
-	var name string
 	for scanner.Scan() {
-		if name == "" {
-			name = scanner.Text()
-			continue
+		name := scanner.Text()
+		if !scanner.Scan() {
+			err = fmt.Errorf("Unmatched attribute name: %s", name)
+			return
 		}
 		value := scanner.Text()
-		switch name {
-		case "typ":
-			c.typ = value
-		default:
-			c.addAttribute(name, value)
-		}
-		name = ""
-	}
-	if name != "" {
-		err = fmt.Errorf("Unmatched attribute name: %s", name)
-		return
+		c.addAttribute(name, value)
 	}
 
 	c.mid = sdpMid
 	return
-}
-
-func parseIP(host string) (net.IP, error) {
-	ip := net.ParseIP(host)
-	if ip == nil {
-		return nil, fmt.Errorf("invalid IP address: %s", host)
-	}
-	return ip, nil
 }
