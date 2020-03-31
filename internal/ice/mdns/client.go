@@ -13,11 +13,16 @@ import (
 	"golang.org/x/net/ipv6"
 )
 
-// High bit of CLASS bit in questions and resource records, repurposed by mDNS.
-const classMask = 1 << 15
+const (
+	// High bit of CLASS bit in questions and resource records, repurposed by mDNS.
+	classMask = 1 << 15
 
-// Query interval when waiting for a name to resolve.
-const queryInterval = 50 * time.Millisecond
+	// Query interval when waiting for a name to resolve.
+	initialQueryInterval = 100 * time.Millisecond
+
+	// Initial size limit before pruning the cache.
+	initialPruneSize = 8
+)
 
 // Multicast DNS addresses, per RFC 6762.
 var mdnsGroupAddr4 = &net.UDPAddr{
@@ -41,6 +46,9 @@ type Client struct {
 	// of the domain (i.e. without the ".local." suffix).
 	cache map[string]*record
 
+	// When the cache reaches this size, go through and prune expired records.
+	pruneSize int
+
 	sync.Mutex
 }
 
@@ -57,10 +65,11 @@ func NewClient() (*Client, error) {
 	}
 
 	c := &Client{
-		conn4:   conn4,
-		conn6:   conn6,
-		stopped: false,
-		cache:   make(map[string]*record),
+		conn4:     conn4,
+		conn6:     conn6,
+		stopped:   false,
+		cache:     make(map[string]*record),
+		pruneSize: initialPruneSize,
 	}
 
 	// Enable multicast loopback, for the case when we're running on the same
@@ -235,6 +244,8 @@ func (c *Client) handleAnswer(a *dnsmessage.Resource) {
 		}
 	}
 	c.Unlock()
+
+	c.maybePruneCache()
 }
 
 func (c *Client) sendResponse(r *record, dst *net.UDPAddr, conn *net.UDPConn) error {
@@ -330,6 +341,8 @@ func (c *Client) Announce(ctx context.Context, name string, ip net.IP, ttl time.
 	c.cache[uuid] = r
 	c.Unlock()
 
+	c.maybePruneCache()
+
 	conn, dst := c.conn4, mdnsGroupAddr4
 	if ip.To4() == nil {
 		conn, dst = c.conn6, mdnsGroupAddr6
@@ -357,12 +370,15 @@ func (c *Client) Resolve(ctx context.Context, name string) (net.IP, error) {
 		// Construct a new unresolved record.
 		r = &record{
 			name:    dnsmessage.MustNewName(name + "."),
+			expires: time.Now().Add(2 * time.Minute),
 			ready:   new(uint32),
 			readyCh: make(chan struct{}),
 		}
 		c.cache[uuid] = r
 	}
 	c.Unlock()
+
+	c.maybePruneCache()
 
 	return c.waitUntilResolved(ctx, r)
 }
@@ -374,8 +390,9 @@ func (c *Client) waitUntilResolved(ctx context.Context, r *record) (net.IP, erro
 	}
 
 	// Re-send the query repeatedly until we either get an answer or time out.
-	ticker := time.NewTicker(queryInterval)
-	defer ticker.Stop()
+	wait := initialQueryInterval
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
 
 	for {
 		if err := c.sendQuery(r); err != nil {
@@ -384,7 +401,9 @@ func (c *Client) waitUntilResolved(ctx context.Context, r *record) (net.IP, erro
 
 		// Wait for pending query to resolve.
 		select {
-		case <-ticker.C:
+		case <-timer.C:
+			wait *= 2 // exponential backoff
+			timer.Reset(wait)
 			continue
 		case <-ctx.Done():
 			return nil, fmt.Errorf("failed to resolve %s: %w", r.name, ctx.Err())
@@ -393,6 +412,30 @@ func (c *Client) waitUntilResolved(ctx context.Context, r *record) (net.IP, erro
 			return r.ip, nil
 		}
 	}
+}
+
+// Prune expired records from the cache, if it has grown too large. (The goal is
+// just to prevent the cache from growing unboundedly, we don't actually need to
+// prune very often.)
+func (c *Client) maybePruneCache() {
+	if len(c.cache) > c.pruneSize {
+		go c.doPruneCache()
+	}
+}
+
+func (c *Client) doPruneCache() {
+	c.Lock()
+	defer c.Unlock()
+
+	now := time.Now()
+	for key, r := range c.cache {
+		if now.After(r.expires) {
+			delete(c.cache, key)
+		}
+	}
+
+	// Reset the prune size based on the current number of non-expired records.
+	c.pruneSize = len(c.cache) + initialPruneSize
 }
 
 // Check if the given address is an ephemeral mDNS hostname.
