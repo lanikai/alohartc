@@ -5,6 +5,8 @@ import (
 	"net"
 	"sync"
 	"time"
+
+	"github.com/lanikai/alohartc/internal/ice/mdns"
 )
 
 // RFC 8445: https://tools.ietf.org/html/rfc8445
@@ -60,6 +62,9 @@ func (a *Agent) Configure(mid, username, localPassword, remotePassword string) {
 	}
 }
 
+// Begin the ICE protocol to negotiate a peer-to-peer connection. Remote
+// candidates are passed in through rcand, and local candidates are delivered
+// through the returned channel (to be passed on to the signaling server).
 func (a *Agent) Start(ctx context.Context, rcand <-chan Candidate) <-chan Candidate {
 	a.dataIn = make(chan []byte, packetQueueLength)
 	lcand := make(chan Candidate, 2)
@@ -150,7 +155,7 @@ func (a *Agent) addAllRemoteCandidates(ctx context.Context, rcand <-chan Candida
 				if c.address.resolved() {
 					a.addRemoteCandidate(c)
 				} else {
-					// Resolve the candidate address first, then add.
+					// Resolve the address first, then add the candidate.
 					go func() {
 						if a.resolveCandidate(ctx, &c) {
 							a.addRemoteCandidate(c)
@@ -170,7 +175,7 @@ func (a *Agent) resolveCandidate(ctx context.Context, c *Candidate) bool {
 	log.Debug("Resolving ICE candidate address: %s", c.address.ip)
 
 	timeoutCtx, _ := context.WithTimeout(ctx, mdnsResolveTimeout)
-	ip, err := mdnsResolve(timeoutCtx, string(c.address.ip))
+	ip, err := mdns.Resolve(timeoutCtx, string(c.address.ip))
 	if err != nil {
 		log.Debug("Failed to resolve %s: %v", c.address.ip, err)
 		return false
