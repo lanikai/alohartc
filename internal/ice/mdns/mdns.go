@@ -6,6 +6,7 @@ package mdns
 
 import (
 	"context"
+	"errors"
 	"net"
 	"time"
 
@@ -19,6 +20,10 @@ var _client *Client
 
 // Initialize global mDNS client.
 func Start() error {
+	if _client != nil {
+		return errors.New("mdns: global client already started")
+	}
+
 	c, err := NewClient()
 	if err != nil {
 		return err
@@ -31,6 +36,7 @@ func Start() error {
 func Stop() {
 	checkStarted()
 	_client.Close()
+	_client = nil
 }
 
 func Resolve(ctx context.Context, name string) (net.IP, error) {
