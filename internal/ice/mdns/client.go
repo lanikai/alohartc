@@ -439,9 +439,9 @@ func (c *Client) doPruneCache() {
 }
 
 // Check if the given address is an ephemeral mDNS hostname.
-func isEphemeralLocalDomain(addr string) bool {
+func isEphemeralLocalDomain(host string) bool {
 	// Per https://tools.ietf.org/html/draft-ietf-rtcweb-mdns-ice-candidates-04#section-3.1.1,
 	// an ephemeral hostname should consist of a version 4 UUID followed by
 	// ".local". We check for the latter and make a rough guess for the rest.
-	return strings.HasSuffix(addr, ".local") && strings.Count(addr, ".") == 1 && len(addr) >= 36+6
+	return strings.HasSuffix(host, ".local") && strings.Count(host, ".") == 1 && len(host) >= 36+6
 }

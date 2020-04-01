@@ -12,6 +12,7 @@ import (
 
 	"github.com/lanikai/alohartc"
 	"github.com/lanikai/alohartc/internal/ice"
+	"github.com/lanikai/alohartc/internal/ice/mdns"
 	"github.com/lanikai/alohartc/internal/media"
 	"github.com/lanikai/alohartc/internal/media/rtsp"
 	"github.com/lanikai/alohartc/internal/signaling"
@@ -74,6 +75,11 @@ func main() {
 	if closer, ok := videoSource.(io.Closer); ok {
 		defer closer.Close()
 	}
+
+	if err := mdns.Start(); err != nil {
+		log.Fatal(err)
+	}
+	defer mdns.Stop()
 
 	signaling.Listen(doPeerSession)
 }
