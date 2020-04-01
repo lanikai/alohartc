@@ -27,8 +27,8 @@ const (
 	UDP TransportProtocol = "udp"
 
 	Unresolved AddressFamily = 0
-	IPv4                     = 4
-	IPv6                     = 6
+	IPv4       AddressFamily = 4
+	IPv6       AddressFamily = 6
 )
 
 type TransportAddress struct {
