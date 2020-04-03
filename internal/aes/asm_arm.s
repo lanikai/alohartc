@@ -1,148 +1,190 @@
-// Derived from Nettle's ARMv5 assembly implementation:
-//   https://github.com/gnutls/nettle/blob/0fc4c0e/arm/aes-encrypt-internal.asm
+// ARM assembly implementation for AES encryption.
 //
-// Reassigned registers to avoid R10 and R11 (reserved for the Go
-// compiler/linker on ARM). But since encryptBlockAsm only operates on a single
-// 16-byte block, we don't need the LENGTH parameter.
+// Originally based on code from the Nettle library:
+// (https://github.com/gnutls/nettle/blob/0fc4c0e/arm/aes-encrypt-internal.asm)
+// but rewritten for better compatibility with the Go standard library's
+// crypto/aes package.
 //
-// See also:
-//    https://en.wikipedia.org/wiki/Advanced_Encryption_Standard#High-level_description_of_the_algorithm
+// For a high-level description of the algorithm, see:
+//    https://en.wikipedia.org/wiki/Advanced_Encryption_Standard
 
 #include "textflag.h"
 
-#define COUNT R2
+// Register assignments for encryptBlockAsm. We use all available registers,
+// including R11 which is usually reserved for the Go linker.
+
+// 16-byte AES state.
+#define S0 R0
+#define S1 R1
+#define S2 R2
+#define S3 R3
+
+// 16-byte AES state (output).
+#define T0 R4
+#define T1 R5
+#define T2 R6
+#define T3 R7
+
+// Loop counter (nr).
+#define COUNT R8
+
+// Precomputed round keys (xk).
 #define KEY R9
-#define SRC R1
-#define DST R1
 
-#define W0 R4
-#define W1 R5
-#define W2 R6
-#define W3 R7
+// Temporary values.
+#define TMP R11
 
-// Mask set to 0x3fc (or 0xff << 2). Storing it in a register allows us to
-// combine 8-byte truncation with left-shift-by-2 into a single operation.
-#define MASK R0
+// Source (src), destination (dst), and precomputed tables (sbox0, te0-te3). SRC
+// is needed only at the beginning of the function, DST only at the end.
+#define SRC R12
+#define DST R12
+#define TABLE R12
 
-// Precomputed table lookup (overlaps COUNT).
-#define TABLE R2
-
-// For temporary values
-#define T0 R8
-
-#define X0 R1
-#define X1 R3
-#define X2 R12
-#define X3 R14
+// Mask set to either 0xff or 0x3fc (0xff << 2). Storing it in a register allows
+// us to combine masking (specifically 8-byte truncation) and shifting into a
+// single operation. This takes advantage of the ARM instruction set's "flexible
+// second operand", where Operand2 is a register with optional shift.
+#define MASK R14
 
 // Golang assembly Rosetta Stone:
-//    .P  means post-increment, so "MOVBU.P 1(SRC), W0" translates to "LDR W0, [SRC], #+1"
+//    .P  means post-increment, so "MOVBU.P 1(R4), R0" == "ldr r0, [r4], #+1"
+//    ·   middle dot (U+00B7), replaces . (period) in assembly expressions
+//    ∕   division slash (U+2215), replaces / (slash) in assembly expressions
+// Register order is reversed compared to normal ARM assembly. In Go, data
+// always flows left to right:
+//    "AND R1<<2, R0, R8"  ==  "and r8, r0, r1, lsl #2"
+// In particular this means that ARM's "flexible second operand" actually comes
+// first.
 
 // push {r}
-#define PUSHW(r) \
+#define PushWord(r) \
 	MOVW.W	r, -4(R13)
 
 // pop {r}
-#define POPW(r) \
+#define PopWord(r) \
 	MOVW.P	4(R13), r
 
-// Loads one word, and adds it to the subkey. Uses T0.
-// See https://github.com/gnutls/nettle/blob/f6360a0/arm/aes.m4
-#define AES_LOAD(src, key, dst) \
-	MOVBU.P	1(src), dst; \
-	MOVBU.P	1(src), T0; \
-	ORR	T0<<8, dst, dst; \
-	MOVBU.P	1(src), T0; \
-	ORR	T0<<16, dst, dst; \
-	MOVBU.P	1(src), T0; \
-	ORR	T0<<24, dst, dst; \
-	MOVW.P	4(key), T0; \
-	EOR	T0, dst, dst
+// Load one word from src and advance src pointer.
+#define LoadWord(src, x) \
+	MOVW.P	4(src), x
 
-// Stores one word. Destroys input.
-#define AES_STORE(dst, x) \
-	MOVBU.P	x, 1(dst); \
-	MOVW	x@>8, x; \
-	MOVBU.P	x, 1(dst); \
-	MOVW	x@>8, x; \
-	MOVBU.P	x, 1(dst); \
-	MOVW	x@>8, x; \
-	MOVBU.P	x, 1(dst)
+// Store one word to dst and advance dst pointer.
+#define StoreWord(x, dst) \
+	MOVW.P	x, 4(dst)
 
-// The mask argument should hold the constant 0xff.
-#define AES_FINAL_ROUND_V5(a, b, c, d, key, res, mask) \
-	AND	a, mask, T0; \
-	MOVBU	T0<<0(TABLE), res; \
-	AND	b@>8, mask, T0; \
-	MOVBU	T0<<0(TABLE), T0; \
-	EOR	T0<<8, res, res; \
-	AND	c@>16, mask, T0; \
-	MOVBU	T0<<0(TABLE), T0; \
-	EOR	T0<<16, res, res; \
-	MOVBU	d>>24(TABLE), T0; \
-	EOR	T0<<24, res, res; \
-	MOVW.P	4(key), T0; \
-	EOR	T0, res, res
+// Load next 4 words from key and xor with s0-s3, using t0-t3 for temporaries.
+#define AddRoundKey(t0, t1, t2, t3, s0, s1, s2, s3) \
+	MOVM.IA.W	(KEY), [t0,t1,t2,t3]; \
+	EOR	t0, s0; \
+	EOR	t1, s1; \
+	EOR	t2, s2; \
+	EOR	t3, s3
 
-// MASK should hold the constant 0x3fc.
-#define AES_ENCRYPT_ROUND(x0,x1,x2,x3,w0,w1,w2,w3,key) \
+// Perform one AES round, reading current state from s0-s3 and writing to t0-t3.
+// MASK should be set to 0x3cf.
+#define InnerRound(s0, s1, s2, s3, t0, t1, t2, t3) \
 	MOVW	$·dtable(SB), TABLE; \
-	AND	x0<<2, MASK, T0; \
-	MOVW	T0<<0(TABLE), w0; \
-	AND	x1<<2, MASK, T0; \
-	MOVW	T0<<0(TABLE), w1; \
-	AND	x2<<2, MASK, T0; \
-	MOVW	T0<<0(TABLE), w2; \
-	AND	x3<<2, MASK, T0; \
-	MOVW	T0<<0(TABLE), w3; \
+	AND	s0<<2, MASK, TMP; \
+	MOVW	TMP<<0(TABLE), t0; \
+	AND	s1<<2, MASK, TMP; \
+	MOVW	TMP<<0(TABLE), t1; \
+	AND	s2<<2, MASK, TMP; \
+	MOVW	TMP<<0(TABLE), t2; \
+	AND	s3<<2, MASK, TMP; \
+	MOVW	TMP<<0(TABLE), t3; \
 	\
-	AND	x1@>6, MASK, T0; \
 	ADD	$1024, TABLE; \
-	MOVW	T0<<0(TABLE), T0; \
-	EOR	T0, w0, w0; \
-	AND	x2@>6, MASK, T0; \
-	MOVW	T0<<0(TABLE), T0; \
-	EOR	T0, w1, w1; \
-	AND	x3@>6, MASK, T0; \
-	MOVW	T0<<0(TABLE), T0; \
-	EOR	T0, w2, w2; \
-	AND	x0@>6, MASK, T0; \
-	MOVW	T0<<0(TABLE), T0; \
-	EOR	T0, w3, w3; \
+	AND	s1@>6, MASK, TMP; \
+	MOVW	TMP<<0(TABLE), TMP; \
+	EOR	TMP, t0, t0; \
+	AND	s2@>6, MASK, TMP; \
+	MOVW	TMP<<0(TABLE), TMP; \
+	EOR	TMP, t1, t1; \
+	AND	s3@>6, MASK, TMP; \
+	MOVW	TMP<<0(TABLE), TMP; \
+	EOR	TMP, t2, t2; \
+	AND	s0@>6, MASK, TMP; \
+	MOVW	TMP<<0(TABLE), TMP; \
+	EOR	TMP, t3, t3; \
 	\
-	AND	x2@>14, MASK, T0; \
 	ADD	$1024, TABLE; \
-	MOVW	T0<<0(TABLE), T0; \
-	EOR	T0, w0, w0; \
-	AND	x3@>14, MASK, T0; \
-	MOVW	T0<<0(TABLE), T0; \
-	EOR	T0, w1, w1; \
-	AND	x0@>14, MASK, T0; \
-	MOVW	T0<<0(TABLE), T0; \
-	EOR	T0, w2, w2; \
-	AND	x1@>14, MASK, T0; \
-	MOVW	T0<<0(TABLE), T0; \
-	EOR	T0, w3, w3; \
+	AND	s2@>14, MASK, TMP; \
+	MOVW	TMP<<0(TABLE), TMP; \
+	EOR	TMP, t0, t0; \
+	AND	s3@>14, MASK, TMP; \
+	MOVW	TMP<<0(TABLE), TMP; \
+	EOR	TMP, t1, t1; \
+	AND	s0@>14, MASK, TMP; \
+	MOVW	TMP<<0(TABLE), TMP; \
+	EOR	TMP, t2, t2; \
+	AND	s1@>14, MASK, TMP; \
+	MOVW	TMP<<0(TABLE), TMP; \
+	EOR	TMP, t3, t3; \
 	\
-	AND	x3@>22, MASK, T0; \
 	ADD	$1024, TABLE; \
-	MOVW	T0<<0(TABLE), T0; \
-	EOR	T0, w0, w0; \
-	AND	x0@>22, MASK, T0; \
-	MOVW	T0<<0(TABLE), T0; \
-	EOR	T0, w1, w1; \
-	AND	x1@>22, MASK, T0; \
-	MOVW	T0<<0(TABLE), T0; \
-	EOR	T0, w2, w2; \
-	AND	x2@>22, MASK, T0; \
-	MOVW	T0<<0(TABLE), T0; \
+	AND	s3@>22, MASK, TMP; \
+	MOVW	TMP<<0(TABLE), TMP; \
+	EOR	TMP, t0, t0; \
+	AND	s0@>22, MASK, TMP; \
+	MOVW	TMP<<0(TABLE), TMP; \
+	EOR	TMP, t1, t1; \
+	AND	s1@>22, MASK, TMP; \
+	MOVW	TMP<<0(TABLE), TMP; \
+	EOR	TMP, t2, t2; \
+	AND	s2@>22, MASK, TMP; \
+	MOVW	TMP<<0(TABLE), TMP; \
+	EOR	TMP, t3, t3
+
+// Perform final AES round, reading current state from t0-t3 and writing to
+// s0-s3.
+#define FinalRound(t0, t1, t2, t3, s0, s1, s2, s3) \
+	MOVW	$0xff, MASK; \
+	MOVW	$crypto∕aes·sbox0(SB), TABLE; \
 	\
-	MOVM.IA.W	(key), [x0,x1,x2,x3]; \
-	EOR	T0, w3, w3; \
-	EOR	x0, w0; \
-	EOR	x1, w1; \
-	EOR	x2, w2; \
-	EOR	x3, w3
+	AND	t0, MASK, TMP; \
+	MOVBU	TMP<<0(TABLE), s0; \
+	AND	t1>>8, MASK, TMP; \
+	MOVBU	TMP<<0(TABLE), TMP; \
+	EOR	TMP<<8, s0; \
+	AND	t2>>16, MASK, TMP; \
+	MOVBU	TMP<<0(TABLE), TMP; \
+	EOR	TMP<<16, s0; \
+	MOVBU	t3>>24(TABLE), TMP; \
+	EOR	TMP<<24, s0; \
+	\
+	AND	t1, MASK, TMP; \
+	MOVBU	TMP<<0(TABLE), s1; \
+	AND	t2>>8, MASK, TMP; \
+	MOVBU	TMP<<0(TABLE), TMP; \
+	EOR	TMP<<8, s1; \
+	AND	t3>>16, MASK, TMP; \
+	MOVBU	TMP<<0(TABLE), TMP; \
+	EOR	TMP<<16, s1; \
+	MOVBU	t0>>24(TABLE), TMP; \
+	EOR	TMP<<24, s1; \
+	\
+	AND	t2, MASK, TMP; \
+	MOVBU	TMP<<0(TABLE), s2; \
+	AND	t3>>8, MASK, TMP; \
+	MOVBU	TMP<<0(TABLE), TMP; \
+	EOR	TMP<<8, s2; \
+	AND	t0>>16, MASK, TMP; \
+	MOVBU	TMP<<0(TABLE), TMP; \
+	EOR	TMP<<16, s2; \
+	MOVBU	t1>>24(TABLE), TMP; \
+	EOR	TMP<<24, s2; \
+	\
+	AND	t3, MASK, TMP; \
+	MOVBU	TMP<<0(TABLE), s3; \
+	AND	t0>>8, MASK, TMP; \
+	MOVBU	TMP<<0(TABLE), TMP; \
+	EOR	TMP<<8, s3; \
+	AND	t1>>16, MASK, TMP; \
+	MOVBU	TMP<<0(TABLE), TMP; \
+	EOR	TMP<<16, s3; \
+	MOVBU	t2>>24(TABLE), TMP; \
+	EOR	TMP<<24, s3
+
 
 
 // func encryptBlockAsm(nr int, xk *uint32, dst, src *byte)
@@ -151,58 +193,52 @@ TEXT ·encryptBlockAsm(SB), NOSPLIT, $0
 	MOVW	xk+4(FP), KEY
 	MOVW	src+12(FP), SRC
 
-	// Save link register R14 (overlaps with X3).
-	PUSHW(R14)
+	// Save link register R14 to the stack (overlaps with MASK).
+	PushWord(R14)
 
-	// Load 16 bytes from SRC into registers W0-W3, xor'ing with initial
-	// round key.
-	AES_LOAD(SRC, KEY, W0)
-	AES_LOAD(SRC, KEY, W1)
-	AES_LOAD(SRC, KEY, W2)
-	AES_LOAD(SRC, KEY, W3)
+	// Set MASK to 0xff << 2 == 0x3fc.
+	MOVW	$0xff<<2, MASK
 
-	// Set MASK to 0xff << 2.
-	MOVW	$0x3fc, MASK
+	// Load 16 bytes from SRC into registers S0-S3.
+	LoadWord(SRC, S0)
+	LoadWord(SRC, S1)
+	LoadWord(SRC, S2)
+	LoadWord(SRC, S3)
 
-	// Save COUNT on the stack (here and at the start of each new round).
-	PUSHW(COUNT)
+	// Xor with round key using registers T0-T3 for scratch.
+	AddRoundKey(T0, T1, T2, T3, S0, S1, S2, S3)
 
-	// Perform nr-1 rounds of AES, alternately using registers W0-W3 or
-	// X0-X3 for the current state.
-	B	Lentry
+	// Perform nr-1 rounds of AES, alternately using registers S0-S3 or
+	// T0-T3 for the current state. We perform two rounds per loop, so start
+	// in the middle since we need an odd number of rounds. (This saves a
+	// few JMP instructions compared to a more natural loop counting.)
+	B	Lstart
 
-Lround_loop:
-	PUSHW(COUNT)
+Lround2:
+	// Transform T* -> S*.
+	InnerRound(T0, T1, T2, T3, S0, S1, S2, S3)
+	AddRoundKey(T0, T1, T2, T3, S0, S1, S2, S3)
 
-	// Transform X -> W
-	AES_ENCRYPT_ROUND(X0, X1, X2, X3, W0, W1, W2, W3, KEY)
+Lstart:
+	// Transform S* -> T*.
+	InnerRound(S0, S1, S2, S3, T0, T1, T2, T3)
+	AddRoundKey(S0, S1, S2, S3, T0, T1, T2, T3)
 
-Lentry:
-	// Transform W -> X
-	AES_ENCRYPT_ROUND(W0, W1, W2, W3, X0, X1, X2, X3, KEY)
-
-	// Load COUNT from stack and decrement.
-	POPW(COUNT)
 	SUB.S	$2, COUNT, COUNT
+	B.NE	Lround2
 
-	B.NE	Lround_loop
-
-	// Final round
-	MOVW	$0xff, MASK
-	MOVW	$·sbox0(SB), TABLE
-	AES_FINAL_ROUND_V5(X0, X1, X2, X3, KEY, W0, MASK)
-	AES_FINAL_ROUND_V5(X1, X2, X3, X0, KEY, W1, MASK)
-	AES_FINAL_ROUND_V5(X2, X3, X0, X1, KEY, W2, MASK)
-	AES_FINAL_ROUND_V5(X3, X0, X1, X2, KEY, W3, MASK)
+	FinalRound(T0, T1, T2, T3, S0, S1, S2, S3)
+	AddRoundKey(T0, T1, T2, T3, S0, S1, S2, S3)
 
 	// Pop link register.
-	POPW(R14)
+	PopWord(R14)
 
+	// Store 16 bytes back to DST.
 	MOVW	dst+8(FP), DST
-	AES_STORE(DST, W0)
-	AES_STORE(DST, W1)
-	AES_STORE(DST, W2)
-	AES_STORE(DST, W3)
+	StoreWord(S0, DST)
+	StoreWord(S1, DST)
+	StoreWord(S2, DST)
+	StoreWord(S3, DST)
 
 	RET
 

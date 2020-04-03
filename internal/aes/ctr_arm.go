@@ -21,7 +21,7 @@ var _ ctrAble = (*aesCipher)(nil)
 const streamBufferSize = 32 * BlockSize
 
 type aesctr struct {
-	block   *aesCipher             // block cipher
+	cipher  *aesCipher             // block cipher
 	ctr     [2]uint64              // next value of the counter (big endian)
 	buffer  []byte                 // buffer for the encrypted counter values
 	storage [streamBufferSize]byte // array backing buffer slice
@@ -34,7 +34,7 @@ func (c *aesCipher) NewCTR(iv []byte) cipher.Stream {
 		panic("cipher.NewCTR: IV length must equal block size")
 	}
 	var ac aesctr
-	ac.block = c
+	ac.cipher = c
 	ac.ctr[0] = binary.BigEndian.Uint64(iv[0:]) // high bits
 	ac.ctr[1] = binary.BigEndian.Uint64(iv[8:]) // low bits
 	ac.buffer = ac.storage[:0]
@@ -43,7 +43,7 @@ func (c *aesCipher) NewCTR(iv []byte) cipher.Stream {
 
 func (c *aesctr) refill() {
 	// Either 10, 12, or 14 rounds, corresponding to AES-128, -192, and -256.
-	nr := len(c.block.enc)/4 - 1
+	nr := len(c.cipher.enc)/4 - 1
 
 	// Fill up the buffer with an incrementing count.
 	c.buffer = c.storage[:streamBufferSize]
@@ -53,7 +53,7 @@ func (c *aesctr) refill() {
 		binary.BigEndian.PutUint64(c.buffer[i+8:], c1)
 
 		// Encrypt counter in place to produce the key stream.
-		encryptBlockAsm(nr, &c.block.enc[0], &c.buffer[i], &c.buffer[i])
+		encryptBlockAsm(nr, &c.cipher.enc[0], &c.buffer[i], &c.buffer[i])
 
 		// Increment counter in big endian: c0 is high, c1 is low
 		c1++
@@ -63,6 +63,24 @@ func (c *aesctr) refill() {
 	}
 
 	c.ctr[0], c.ctr[1] = c0, c1
+}
+
+func (c *aesctr) XORKeyStream(dst, src []byte) {
+	if len(dst) < len(src) {
+		panic("crypto/cipher: output smaller than input")
+	}
+	if inexactOverlap(dst[:len(src)], src) {
+		panic("crypto/cipher: invalid buffer overlap")
+	}
+	for len(src) > 0 {
+		if len(c.buffer) == 0 {
+			c.refill()
+		}
+		n := xorBytes(dst, src, c.buffer)
+		c.buffer = c.buffer[n:]
+		src = src[n:]
+		dst = dst[n:]
+	}
 }
 
 // xorBytes xors the contents of a and b and places the resulting values into
@@ -85,22 +103,3 @@ func xorBytes(dst, a, b []byte) int {
 
 //go:noescape
 func xorBytesAsm(dst, a, b *byte, n int)
-
-func (c *aesctr) XORKeyStream(dst, src []byte) {
-	if len(dst) < len(src) {
-		panic("crypto/cipher: output smaller than input")
-	}
-	// TODO
-	//if subtle.InexactOverlap(dst[:len(src)], src) {
-	//	panic("crypto/cipher: invalid buffer overlap")
-	//}
-	for len(src) > 0 {
-		if len(c.buffer) == 0 {
-			c.refill()
-		}
-		n := xorBytes(dst, src, c.buffer)
-		c.buffer = c.buffer[n:]
-		src = src[n:]
-		dst = dst[n:]
-	}
-}
