@@ -8,17 +8,6 @@
   <a href="https://codecov.io/gh/lanikai/alohartc"><img src="https://codecov.io/gh/lanikai/alohartc/branch/master/graph/badge.svg?token=c5vL4R61Y0" /></a>
 </p>
 
-## Setup
-
-Set a pre-commit hook to `go fmt` code (see https://golang.org/misc/git/pre-commit)
-
-Translate `https://github.com/...` URLs to `ssh://git@github.com/...` when
-fetching Go dependencies, so that it uses our already-configured SSH key:
-```console
-git config --global url."ssh://git@github.com/".insteadOf "https://github.com/"
-```
-
-
 ## Building
 
 First, download dependencies:
